@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -81,6 +82,7 @@ func payrollResponse(run models.PayrollRun, detailAllowed bool) models.PayrollRu
 	if !detailAllowed {
 		run.Items = nil
 		run.Settlements = nil
+		run.Documents = nil
 	}
 
 	return models.PayrollRunResponse{
@@ -766,6 +768,11 @@ func (c *PayrollController) GetPayrollRuns(ctx *gin.Context) {
 		Preload("RejectedBy").
 		Preload("EmployeeLoanAccount").
 		Order("created_at DESC")
+	if detailAllowed {
+		query = query.Preload("Documents", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at ASC")
+		}).Preload("Documents.Uploader")
+	}
 
 	if status := strings.TrimSpace(ctx.Query("status")); status != "" {
 		query = query.Where("status = ?", strings.ToUpper(status))
@@ -801,7 +808,11 @@ func (c *PayrollController) GetPayrollRun(ctx *gin.Context) {
 			return db.Order("id ASC")
 		}).Preload("Settlements", func(db *gorm.DB) *gorm.DB {
 			return db.Order("payment_date ASC, id ASC")
-		}).Preload("Settlements.CashBank")
+		}).Preload("Settlements.CashBank").
+			Preload("Documents", func(db *gorm.DB) *gorm.DB {
+				return db.Order("created_at ASC")
+			}).
+			Preload("Documents.Uploader")
 	}
 
 	var run models.PayrollRun
@@ -815,6 +826,103 @@ func (c *PayrollController) GetPayrollRun(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"data": payrollResponse(run, detailAllowed)})
+}
+
+func (c *PayrollController) UploadDocuments(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payroll ID"})
+		return
+	}
+
+	userID, ok := currentUserID(ctx)
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized request"})
+		return
+	}
+
+	var run models.PayrollRun
+	if err := c.db.First(&run, uint(id)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payroll not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payroll"})
+		return
+	}
+	if run.Status == models.PayrollStatusRejected {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "documents cannot be uploaded to a rejected payroll"})
+		return
+	}
+
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form", "details": err.Error()})
+		return
+	}
+
+	documentFiles := append([]*multipart.FileHeader{}, form.File["documents"]...)
+	documentFiles = append(documentFiles, form.File["billing_documents"]...)
+	documentFiles = append(documentFiles, form.File["realization_documents"]...)
+	documentFiles = append(documentFiles, form.File["attachments"]...)
+	documentFiles = append(documentFiles, form.File["document"]...)
+	if len(documentFiles) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "No files uploaded"})
+		return
+	}
+
+	const uploadDir = "./uploads/payroll"
+	documents := make([]models.PayrollDocument, 0, len(documentFiles))
+	savedPaths := make([]string, 0, len(documentFiles))
+
+	for _, fileHeader := range documentFiles {
+		filename, filePath, mimeType, err := prepareValidatedDocumentUpload(fileHeader, uint(id), uploadDir)
+		if err != nil {
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save uploaded file"})
+			return
+		}
+		savedPaths = append(savedPaths, filePath)
+		documents = append(documents, models.PayrollDocument{
+			PayrollRunID: uint(id),
+			DocumentType: models.PayrollDocumentBillingRealization,
+			FileName:     fileHeader.Filename,
+			FilePath:     "/uploads/payroll/" + filename,
+			FileSize:     fileHeader.Size,
+			MimeType:     mimeType,
+			UploadedBy:   userID,
+		})
+	}
+
+	if err := c.db.Create(&documents).Error; err != nil {
+		cleanupUploadedFiles(savedPaths)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save payroll documents"})
+		return
+	}
+
+	documentIDs := make([]uint, 0, len(documents))
+	for _, document := range documents {
+		documentIDs = append(documentIDs, document.ID)
+	}
+
+	var savedDocuments []models.PayrollDocument
+	if err := c.db.Preload("Uploader").
+		Where("id IN ?", documentIDs).
+		Order("created_at ASC").
+		Find(&savedDocuments).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payroll documents"})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"message":   "Payroll documents uploaded successfully",
+		"documents": savedDocuments,
+	})
 }
 
 func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {

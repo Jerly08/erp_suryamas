@@ -39,10 +39,18 @@ func (r *purchaseRequestRepository) withDefaultPreloads(query *gorm.DB) *gorm.DB
 		Preload("Items.Purchase").
 		Preload("Documents").
 		Preload("Documents.Uploader").
+		Preload("RevisionSnapshots", func(db *gorm.DB) *gorm.DB {
+			return db.Order("revision_number asc")
+		}).
+		Preload("RevisionSnapshots.Opener").
+		Preload("RevisionSnapshots.Submitter").
 		Preload("Approver").
 		Preload("FinanceStaffApprover").
 		Preload("FinanceManagerApprover").
-		Preload("DirectorApprover")
+		Preload("DirectorApprover").
+		Preload("Canceller").
+		Preload("VendorInvoiceRequester").
+		Preload("VendorInvoiceSubmitter")
 
 	if r.db.Migrator().HasTable(&models.PurchasePayment{}) {
 		query = query.

@@ -12,6 +12,7 @@ import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/u
 import accountService from '@/services/accountService';
 import type { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
+import { getImageUrl } from '@/utils/imageUrl';
 import {
   Alert,
   AlertDescription,
@@ -57,7 +58,10 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react';
-import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiRefreshCw, FiUpload, FiUsers, FiXCircle } from 'react-icons/fi';
+import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiPaperclip, FiRefreshCw, FiUpload, FiUsers, FiX, FiXCircle } from 'react-icons/fi';
+
+const ACCEPTED_DOCUMENT_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp';
+const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('id-ID', {
@@ -72,6 +76,14 @@ const formatDate = (date?: string | null) => {
   const parsed = new Date(date);
   if (Number.isNaN(parsed.getTime())) return '-';
   return parsed.toLocaleDateString('id-ID');
+};
+
+const formatFileSize = (bytes?: number) => {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, index);
+  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 };
 
 const toDateInputValue = (date: Date) => {
@@ -312,6 +324,8 @@ export default function PayrollPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [selectedPayroll, setSelectedPayroll] = useState<PayrollRun | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [payrollDocumentFiles, setPayrollDocumentFiles] = useState<File[]>([]);
+  const [payrollDocumentUploading, setPayrollDocumentUploading] = useState(false);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
   const [employeeLoanAccounts, setEmployeeLoanAccounts] = useState<AccountCatalogItem[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -502,6 +516,79 @@ export default function PayrollPage() {
     }
   };
 
+  const validatePayrollDocument = (file: File) => {
+    const allowedExtensions = ACCEPTED_DOCUMENT_TYPES.split(',');
+    const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
+
+    if (!allowedExtensions.includes(extension)) {
+      return 'Format dokumen belum didukung. Gunakan PDF, Word, Excel, CSV, TXT, JPG, PNG, atau WebP.';
+    }
+
+    if (file.size > MAX_DOCUMENT_SIZE) {
+      return 'Ukuran dokumen maksimal 20MB per file.';
+    }
+
+    return null;
+  };
+
+  const handlePayrollDocumentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validatePayrollDocument(file));
+    if (invalidFile) {
+      toast({
+        title: 'Dokumen payroll tidak bisa diunggah',
+        description: validatePayrollDocument(invalidFile) || undefined,
+        status: 'warning',
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setPayrollDocumentFiles((currentFiles) => {
+      const existing = new Set(currentFiles.map((file) => `${file.name}-${file.size}`));
+      const uniqueFiles = selectedFiles.filter((file) => !existing.has(`${file.name}-${file.size}`));
+      return [...currentFiles, ...uniqueFiles];
+    });
+  };
+
+  const removePayrollDocumentDraft = (index: number) => {
+    setPayrollDocumentFiles((files) => files.filter((_, fileIndex) => fileIndex !== index));
+  };
+
+  const uploadPayrollDocuments = async () => {
+    if (!selectedPayroll || payrollDocumentFiles.length === 0) return;
+
+    setPayrollDocumentUploading(true);
+    try {
+      await payrollService.uploadDocuments(selectedPayroll.id, payrollDocumentFiles);
+      const detail = await payrollService.getPayrollRun(selectedPayroll.id);
+      setSelectedPayroll(detail);
+      setPayrollDocumentFiles([]);
+      await loadPayroll();
+      toast({
+        title: 'Dokumen payroll berhasil diunggah',
+        description: 'Dokumen billing/realisasi tersimpan di detail payroll.',
+        status: 'success',
+        duration: 3500,
+        isClosable: true,
+      });
+    } catch (error: unknown) {
+      toast({
+        title: 'Gagal upload dokumen payroll',
+        description: getApiErrorMessage(error, 'Dokumen payroll belum bisa diunggah.'),
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+    } finally {
+      setPayrollDocumentUploading(false);
+    }
+  };
+
   const handlePreviewImport = async () => {
     if (!importFile) {
       toast({
@@ -603,6 +690,7 @@ export default function PayrollPage() {
   const openDetail = async (payroll: PayrollRun) => {
     setSelectedPayroll(payroll);
     setRejectReason('');
+    setPayrollDocumentFiles([]);
     setSelectedExpenseAccount('');
     setSelectedEmployeeLoanAccount('');
     setPostingDate((payroll.payment_date || payroll.period_end || '').slice(0, 10));
@@ -909,6 +997,14 @@ export default function PayrollPage() {
       setSubmitting(false);
     }
   };
+
+  const selectedPayrollDocuments = selectedPayroll?.documents || [];
+  const canUploadPayrollDocuments = Boolean(
+    selectedPayroll &&
+      selectedPayroll.detail_allowed &&
+      payrollPermissions.canEdit &&
+      selectedPayroll.status !== 'REJECTED',
+  );
 
   return (
     <ProtectedModule module="payroll">
@@ -1509,6 +1605,77 @@ export default function PayrollPage() {
                         <AlertDescription>Anda hanya memiliki akses summary payroll. Detail per karyawan tidak ditampilkan untuk role ini.</AlertDescription>
                       </Alert>
                     )}
+
+                    <Box borderWidth="1px" borderColor={borderColor} borderRadius="xl" p={4}>
+                      <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} gap={3} direction={{ base: 'column', md: 'row' }} mb={3}>
+                        <HStack spacing={2}>
+                          <Icon as={FiPaperclip} color="teal.500" />
+                          <Text fontWeight="semibold">Dokumen Billing/Realisasi Payroll</Text>
+                          <Badge colorScheme="teal">{selectedPayrollDocuments.length} file</Badge>
+                        </HStack>
+                        {canUploadPayrollDocuments && (
+                          <Button as="label" leftIcon={<FiUpload />} size="sm" colorScheme="teal" variant="outline" cursor="pointer" isLoading={payrollDocumentUploading}>
+                            Pilih Dokumen
+                            <Input type="file" multiple accept={ACCEPTED_DOCUMENT_TYPES} display="none" onChange={handlePayrollDocumentChange} />
+                          </Button>
+                        )}
+                      </Flex>
+
+                      {selectedPayrollDocuments.length > 0 ? (
+                        <VStack align="stretch" spacing={2}>
+                          {selectedPayrollDocuments.map((document) => (
+                            <Flex key={document.id} align={{ base: 'stretch', md: 'center' }} justify="space-between" gap={3} direction={{ base: 'column', md: 'row' }} borderWidth="1px" borderColor={borderColor} borderRadius="lg" p={3}>
+                              <HStack align="start" spacing={3} minW={0}>
+                                <Icon as={FiFileText} color="teal.500" mt={1} />
+                                <Box minW={0}>
+                                  <Text fontWeight="medium" noOfLines={1}>{document.file_name}</Text>
+                                  <Text fontSize="xs" color={mutedText}>
+                                    {formatFileSize(document.file_size)}
+                                    {document.uploader && ` - diunggah oleh ${document.uploader.first_name || document.uploader.username} ${document.uploader.last_name || ''}`.trim()}
+                                  </Text>
+                                </Box>
+                              </HStack>
+                              <Button as="a" href={getImageUrl(document.file_path) || '#'} target="_blank" rel="noopener noreferrer" leftIcon={<FiDownload />} size="sm" variant="outline" colorScheme="teal">
+                                Buka
+                              </Button>
+                            </Flex>
+                          ))}
+                        </VStack>
+                      ) : (
+                        <Text fontSize="sm" color={mutedText}>Belum ada dokumen billing/realisasi payroll.</Text>
+                      )}
+
+                      {payrollDocumentFiles.length > 0 && (
+                        <Box mt={4} pt={4} borderTopWidth="1px" borderColor={borderColor}>
+                          <Flex justify="space-between" align="center" mb={2} gap={3}>
+                            <Box minW={0}>
+                              <Text fontSize="sm" fontWeight="semibold">Draft Dokumen</Text>
+                              <Text fontSize="xs" color={mutedText}>File belum tersimpan sampai tombol upload ditekan.</Text>
+                            </Box>
+                            <Badge colorScheme="orange">{payrollDocumentFiles.length} draft</Badge>
+                          </Flex>
+                          <VStack align="stretch" spacing={2}>
+                            {payrollDocumentFiles.map((file, index) => (
+                              <Flex key={`${file.name}-${file.size}-${index}`} justify="space-between" align="center" gap={3}>
+                                <HStack spacing={2} minW={0}>
+                                  <Icon as={FiFileText} color="orange.500" />
+                                  <Box minW={0}>
+                                    <Text fontSize="sm" fontWeight="medium" noOfLines={1}>{file.name}</Text>
+                                    <Text fontSize="xs" color={mutedText}>{formatFileSize(file.size)}</Text>
+                                  </Box>
+                                </HStack>
+                                <IconButton aria-label={`Hapus draft ${file.name}`} icon={<FiX />} size="sm" variant="ghost" colorScheme="red" onClick={() => removePayrollDocumentDraft(index)} />
+                              </Flex>
+                            ))}
+                          </VStack>
+                          <Flex justify="flex-end" mt={3}>
+                            <Button leftIcon={<FiCheckCircle />} size="sm" colorScheme="teal" onClick={uploadPayrollDocuments} isLoading={payrollDocumentUploading}>
+                              Upload Dokumen
+                            </Button>
+                          </Flex>
+                        </Box>
+                      )}
+                    </Box>
 
                     {selectedPayroll.detail_allowed && (
                       <TableContainer borderWidth="1px" borderColor={borderColor} borderRadius="xl">

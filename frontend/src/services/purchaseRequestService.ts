@@ -101,6 +101,34 @@ export interface PurchaseRequestDocument {
   uploader?: User;
 }
 
+export interface PurchaseRequestRevisionSnapshot {
+  id: number;
+  purchase_request_id: number;
+  revision_number: number;
+  reapproval_reason: string;
+  previous_status: string;
+  previous_approval_stage: string;
+  previous_total_estimated_amount: number;
+  new_total_estimated_amount?: number | null;
+  item_snapshot?: string;
+  opened_by: number;
+  opened_at: string;
+  open_reason?: string;
+  submitted_by?: number | null;
+  submitted_at?: string | null;
+  submitted_notes?: string;
+  approved_by?: number | null;
+  approved_at?: string | null;
+  finance_staff_approved_by?: number | null;
+  finance_staff_approved_at?: string | null;
+  finance_manager_approved_by?: number | null;
+  finance_manager_approved_at?: string | null;
+  director_approved_by?: number | null;
+  director_approved_at?: string | null;
+  opener?: User;
+  submitter?: User;
+}
+
 export interface PurchaseRequest {
   id: number;
   pr_number: string;
@@ -112,15 +140,43 @@ export interface PurchaseRequest {
   vendor_invoice_received_date?: string | null;
   payment_terms_days?: number | null;
   due_date?: string | null;
+  requires_vendor_invoice?: boolean;
+  vendor_invoice_status?:
+    | "NOT_REQUIRED"
+    | "AWAITING_INVOICE"
+    | "PENDING_APPROVAL"
+    | "APPROVED"
+    | string;
+  vendor_invoice_requested_by?: number | null;
+  vendor_invoice_requested_at?: string | null;
+  vendor_invoice_submitted_by?: number | null;
+  vendor_invoice_submitted_at?: string | null;
+  vendor_invoice_revision_notes?: string;
+  revision_opened_by?: number | null;
+  revision_opened_at?: string | null;
+  revision_reason?: string;
+  revision_submitted_by?: number | null;
+  revision_submitted_at?: string | null;
   total_estimated_amount: number;
-  status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED" | "COMPLETED";
+  status:
+    | "DRAFT"
+    | "PENDING_APPROVAL"
+    | "APPROVED"
+    | "REJECTED"
+    | "COMPLETED"
+    | "CANCELLED"
+    | "AWAITING_REVISION";
   current_approval_stage?:
     | "FINANCE_STAFF"
     | "FINANCE_MANAGER"
     | "DIRECTOR"
     | "FINALIZED";
   approval_revision?: number;
-  reapproval_reason?: "ADDITIONAL_DOCUMENTS" | "";
+  reapproval_reason?:
+    | "ADDITIONAL_DOCUMENTS"
+    | "INVOICE_REVISION"
+    | "REQUESTER_REVISION"
+    | "";
   notes: string;
   approved_by: number | null;
   approved_at: string | null;
@@ -133,6 +189,9 @@ export interface PurchaseRequest {
   director_approved_by?: number | null;
   director_approved_at?: string | null;
   rejection_reason: string;
+  cancelled_by?: number | null;
+  cancelled_at?: string | null;
+  cancelled_reason?: string;
   created_at: string;
   updated_at: string;
   requester?: User;
@@ -140,6 +199,11 @@ export interface PurchaseRequest {
   finance_staff_approver?: User;
   finance_manager_approver?: User;
   director_approver?: User;
+  canceller?: User;
+  revision_opener?: User;
+  revision_submitter?: User;
+  vendor_invoice_requester?: User;
+  vendor_invoice_submitter?: User;
   project?: {
     id: number;
     code: string;
@@ -148,6 +212,7 @@ export interface PurchaseRequest {
   vendor?: Contact;
   items?: PurchaseRequestItem[];
   documents?: PurchaseRequestDocument[];
+  revision_snapshots?: PurchaseRequestRevisionSnapshot[];
 }
 
 export interface PurchaseRequestItemPayload {
@@ -183,6 +248,7 @@ export interface PurchaseRequestReviewPayload {
   items: PurchaseRequestReviewItemPayload[];
   reason?: string;
   escalate_to_director?: boolean;
+  require_vendor_invoice?: boolean;
 }
 
 export interface PurchaseRequestProjectUpdatePayload {
@@ -193,6 +259,34 @@ export interface PurchaseRequestInvoiceTermsUpdatePayload {
   vendor_invoice_received_date?: string | null;
   payment_terms_days?: number | null;
   due_date?: string | null;
+}
+
+export interface PurchaseRequestInvoiceRevisionItemPayload {
+  item_id: number;
+  quantity: number;
+  estimated_price: number;
+  notes?: string;
+}
+
+export interface PurchaseRequestInvoiceRevisionPayload {
+  notes?: string;
+  items: PurchaseRequestInvoiceRevisionItemPayload[];
+}
+
+export interface PurchaseRequestOpenRevisionPayload {
+  reason: string;
+}
+
+export interface PurchaseRequestRequesterRevisionItemPayload {
+  item_id: number;
+  quantity: number;
+  estimated_price: number;
+  notes?: string;
+}
+
+export interface PurchaseRequestRequesterRevisionPayload {
+  notes?: string;
+  items: PurchaseRequestRequesterRevisionItemPayload[];
 }
 
 const BASE_URL = "/api/v1/purchase-requests";
@@ -264,6 +358,28 @@ export const purchaseRequestService = {
     return response.data;
   },
 
+  uploadRealizationDocuments: async (
+    id: number,
+    documents: File[],
+  ): Promise<{
+    message: string;
+    documents: PurchaseRequestDocument[];
+  }> => {
+    const formData = new FormData();
+    documents.forEach((file) => {
+      formData.append("realization_documents", file);
+    });
+
+    const response = await api.post(
+      `${BASE_URL}/${id}/realization-documents`,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+      },
+    );
+    return response.data;
+  },
+
   getDocuments: async (id: number): Promise<PurchaseRequestDocument[]> => {
     const response = await api.get(`${BASE_URL}/${id}/documents`);
     return response.data;
@@ -298,6 +414,51 @@ export const purchaseRequestService = {
     return response.data;
   },
 
+  openRequesterRevision: async (
+    id: number,
+    payload: PurchaseRequestOpenRevisionPayload,
+  ): Promise<PurchaseRequest> => {
+    const response = await api.put(
+      `${BASE_URL}/${id}/open-requester-revision`,
+      payload,
+    );
+    return response.data.data;
+  },
+
+  submitRequesterRevision: async (
+    id: number,
+    payload: PurchaseRequestRequesterRevisionPayload,
+    documents: File[],
+  ): Promise<PurchaseRequest> => {
+    const formData = new FormData();
+    formData.append("payload", JSON.stringify(payload));
+    documents.forEach((file) => {
+      formData.append("documents", file);
+    });
+
+    const response = await api.post(`${BASE_URL}/${id}/requester-revision`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return response.data.data;
+  },
+
+  submitInvoiceRevision: async (
+    id: number,
+    payload: PurchaseRequestInvoiceRevisionPayload,
+    documents: File[],
+  ): Promise<PurchaseRequest> => {
+    const formData = new FormData();
+    formData.append("payload", JSON.stringify(payload));
+    documents.forEach((file) => {
+      formData.append("documents", file);
+    });
+
+    const response = await api.post(`${BASE_URL}/${id}/invoice-revision`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return response.data.data;
+  },
+
   approve: async (id: number): Promise<{ message: string }> => {
     const response = await api.put(`${BASE_URL}/${id}/approve`);
     return response.data;
@@ -306,5 +467,10 @@ export const purchaseRequestService = {
   reject: async (id: number, reason: string): Promise<{ message: string }> => {
     const response = await api.put(`${BASE_URL}/${id}/reject`, { reason });
     return response.data;
+  },
+
+  cancel: async (id: number, reason: string): Promise<PurchaseRequest> => {
+    const response = await api.put(`${BASE_URL}/${id}/cancel`, { reason });
+    return response.data.data;
   },
 };

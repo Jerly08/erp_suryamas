@@ -106,6 +106,7 @@ import purchaseService, {
   PurchaseFilterParams,
   PurchaseItem,
   PurchasePayment,
+  PurchaseRequestDocumentSummary,
   PurchaseSummary,
 } from "@/services/purchaseService";
 import {
@@ -139,12 +140,45 @@ import {
   filterOperationalCashBankAccounts,
 } from "@/utils/accountFilters";
 import { getPurchasePPhStatus } from "@/utils/taxPaymentStatus";
+import { getImageUrl } from "@/utils/imageUrl";
 // SSOT Journal Integration
 import PurchaseJournalEntriesModal from "../../src/components/purchase/PurchaseJournalEntriesModal";
 import purchaseJournalService from "../../src/services/purchaseJournalService";
 import { API_ENDPOINTS } from "@/config/api";
 
 const PAYMENT_PROOF_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp";
+const PR_REALIZATION_DOCUMENT_TYPE = "REALIZATION_DOCUMENT";
+
+const formatFileSize = (size?: number) => {
+  const bytes = Number(size || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const getDocumentUrl = (path?: string) => getImageUrl(path || "") || "#";
+
+const getPurchaseRequestRealizationDocuments = (
+  purchase?: Purchase | null,
+): PurchaseRequestDocumentSummary[] => {
+  return (purchase?.purchase_request?.documents || []).filter(
+    (document) =>
+      (document.document_type || "").toUpperCase() ===
+      PR_REALIZATION_DOCUMENT_TYPE,
+  );
+};
+
+const getUploaderDisplayName = (
+  document: PurchaseRequestDocumentSummary,
+) => {
+  const uploader = document.uploader;
+  const fullName = [uploader?.first_name, uploader?.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return fullName || uploader?.username || "";
+};
 
 // Types for form data
 interface PurchaseFormData {
@@ -6786,6 +6820,156 @@ const PurchasesPage: React.FC = () => {
                             {renderExistingPurchasePaymentProofUpload(
                               selectedPurchase,
                             )}
+                          </Box>
+                        )}
+
+                        {selectedPurchase.purchase_request_id && (
+                          <Box
+                            p={4}
+                            borderWidth="1px"
+                            borderRadius="md"
+                            borderColor={borderColor}
+                            bg={notesBoxBg}
+                          >
+                            {(() => {
+                              const realizationDocuments =
+                                getPurchaseRequestRealizationDocuments(
+                                  selectedPurchase,
+                                );
+
+                              return (
+                                <VStack align="stretch" spacing={3}>
+                                  <Flex
+                                    justify="space-between"
+                                    align={{ base: "flex-start", sm: "center" }}
+                                    direction={{ base: "column", sm: "row" }}
+                                    gap={2}
+                                  >
+                                    <HStack spacing={2} minW={0}>
+                                      <Icon as={FiFileText} color="green.500" />
+                                      <Text fontWeight="semibold">
+                                        Dokumen Realisasi PIC dari PR
+                                      </Text>
+                                      <Badge colorScheme="green">
+                                        {realizationDocuments.length} file
+                                      </Badge>
+                                    </HStack>
+                                    <Text
+                                      fontSize="xs"
+                                      color={textSecondary}
+                                      overflowWrap="anywhere"
+                                    >
+                                      {selectedPurchase.purchase_request
+                                        ?.pr_number || "PR terkait"}
+                                    </Text>
+                                  </Flex>
+
+                                  {realizationDocuments.length > 0 ? (
+                                    <VStack align="stretch" spacing={2}>
+                                      {realizationDocuments.map((document) => {
+                                        const uploaderName =
+                                          getUploaderDisplayName(document);
+
+                                        return (
+                                          <Flex
+                                            key={document.id}
+                                            align={{
+                                              base: "stretch",
+                                              sm: "center",
+                                            }}
+                                            justify="space-between"
+                                            direction={{
+                                              base: "column",
+                                              sm: "row",
+                                            }}
+                                            gap={3}
+                                            p={3}
+                                            borderWidth="1px"
+                                            borderRadius="md"
+                                            borderColor={borderColor}
+                                          >
+                                            <HStack
+                                              align="flex-start"
+                                              spacing={3}
+                                              minW={0}
+                                              flex="1"
+                                            >
+                                              <Icon
+                                                as={FiFileText}
+                                                color="green.500"
+                                                mt={1}
+                                                flexShrink={0}
+                                              />
+                                              <Box minW={0}>
+                                                <Text
+                                                  fontWeight="medium"
+                                                  overflowWrap="anywhere"
+                                                  wordBreak="break-word"
+                                                  noOfLines={2}
+                                                >
+                                                  {document.file_name}
+                                                </Text>
+                                                <Text
+                                                  fontSize="xs"
+                                                  color={textSecondary}
+                                                  overflowWrap="anywhere"
+                                                >
+                                                  {formatFileSize(
+                                                    document.file_size,
+                                                  )}
+                                                  {uploaderName
+                                                    ? ` - diunggah oleh ${uploaderName}`
+                                                    : ""}
+                                                </Text>
+                                                {document.created_at && (
+                                                  <Text
+                                                    fontSize="xs"
+                                                    color={textSecondary}
+                                                    mt={1}
+                                                  >
+                                                    {new Date(
+                                                      document.created_at,
+                                                    ).toLocaleString("id-ID")}
+                                                  </Text>
+                                                )}
+                                              </Box>
+                                            </HStack>
+
+                                            <Button
+                                              as={Link}
+                                              href={getDocumentUrl(
+                                                document.file_path,
+                                              )}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              leftIcon={<FiDownload />}
+                                              size="sm"
+                                              variant="outline"
+                                              colorScheme="green"
+                                              textDecoration="none"
+                                              w={{ base: "100%", sm: "auto" }}
+                                              _hover={{
+                                                textDecoration: "none",
+                                              }}
+                                            >
+                                              Buka
+                                            </Button>
+                                          </Flex>
+                                        );
+                                      })}
+                                    </VStack>
+                                  ) : (
+                                    <Alert status="info" variant="left-accent">
+                                      <AlertIcon />
+                                      <AlertDescription>
+                                        Belum ada dokumen realisasi PIC yang
+                                        diunggah di PR terkait.
+                                      </AlertDescription>
+                                    </Alert>
+                                  )}
+                                </VStack>
+                              );
+                            })()}
                           </Box>
                         )}
 

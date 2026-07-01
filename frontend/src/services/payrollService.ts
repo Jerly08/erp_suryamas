@@ -20,6 +20,25 @@ export interface PayrollSettlement {
   cash_bank?: { id: number; code: string; name: string };
 }
 
+export interface PayrollDocument {
+  id: number;
+  payroll_run_id: number;
+  document_type: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  mime_type: string;
+  uploaded_by: number;
+  created_at: string;
+  updated_at: string;
+  uploader?: {
+    id: number;
+    username: string;
+    first_name?: string;
+    last_name?: string;
+  };
+}
+
 export interface PayrollItem {
   id?: number;
   payroll_run_id?: number;
@@ -113,6 +132,7 @@ export interface PayrollRun {
   } | null;
   items?: PayrollItem[];
   settlements?: PayrollSettlement[];
+  documents?: PayrollDocument[];
 }
 
 export interface PayrollCreatePayload {
@@ -199,6 +219,22 @@ const payrollService = {
       responseType: 'blob',
     });
     return response.data;
+  },
+
+  async uploadDocuments(
+    id: number,
+    documents: File[],
+  ): Promise<PayrollDocument[]> {
+    const formData = new FormData();
+    documents.forEach((file) => {
+      formData.append('documents', file);
+    });
+
+    const response = await api.post(`/api/v1/payroll/${id}/documents`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const body = response.data as { documents?: PayrollDocument[] };
+    return body.documents || [];
   },
 
   async approvePayrollRun(

@@ -166,6 +166,8 @@ func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 		Preload("User").
 		Preload("PurchaseRequest").
 		Preload("PurchaseRequest.Project").
+		Preload("PurchaseRequest.Documents", "document_type = ?", models.PurchaseRequestDocumentRealization).
+		Preload("PurchaseRequest.Documents.Uploader").
 		Preload("Project").
 		Preload("PurchaseItems.Product").
 		Preload("PurchaseItems.PurchaseRequestItem").
@@ -191,6 +193,8 @@ func (r *PurchaseRepository) FindAll() ([]models.Purchase, error) {
 		Preload("User").
 		Preload("PurchaseRequest").
 		Preload("PurchaseRequest.Project").
+		Preload("PurchaseRequest.Documents", "document_type = ?", models.PurchaseRequestDocumentRealization).
+		Preload("PurchaseRequest.Documents.Uploader").
 		Preload("Project").
 		Preload("PurchaseItems").
 		Preload("OtherCostAccount").
@@ -210,6 +214,8 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("User").
 		Preload("PurchaseRequest").
 		Preload("PurchaseRequest.Project").
+		Preload("PurchaseRequest.Documents", "document_type = ?", models.PurchaseRequestDocumentRealization).
+		Preload("PurchaseRequest.Documents.Uploader").
 		Preload("Project").
 		Preload("PurchaseItems.Product").
 		Preload("PurchaseItems.PurchaseRequestItem").

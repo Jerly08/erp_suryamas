@@ -110,6 +110,26 @@ export interface Vendor {
   phone?: string;
 }
 
+export interface PurchaseRequestDocumentSummary {
+  id: number;
+  purchase_request_id: number;
+  document_type: string;
+  file_name: string;
+  file_path: string;
+  file_size: number;
+  mime_type?: string;
+  uploaded_by?: number;
+  approval_revision?: number;
+  created_at?: string;
+  updated_at?: string;
+  uploader?: {
+    id: number;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+  };
+}
+
 export interface PurchaseRequestSummary {
   id: number;
   pr_number?: string;
@@ -124,6 +144,7 @@ export interface PurchaseRequestSummary {
     code: string;
     name: string;
   };
+  documents?: PurchaseRequestDocumentSummary[];
 }
 
 export interface ProjectSummary {

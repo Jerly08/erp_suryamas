@@ -691,6 +691,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.PurchaseRequest{},
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
+		&models.PurchaseRequestRevisionSnapshot{},
 
 		// Expenses
 		&models.ExpenseCategory{},
@@ -711,6 +712,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Payroll
 		&models.PayrollRun{},
 		&models.PayrollItem{},
+		&models.PayrollDocument{},
 		&models.PayrollSettlement{},
 
 		// Journals and reports

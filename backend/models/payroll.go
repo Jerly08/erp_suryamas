@@ -30,6 +30,10 @@ const (
 	PayrollSettlementTypeBPJS   = "BPJS"
 )
 
+const (
+	PayrollDocumentBillingRealization = "BILLING_REALIZATION_DOCUMENT"
+)
+
 type PayrollRun struct {
 	ID                         uint           `json:"id" gorm:"primaryKey"`
 	PayrollNumber              string         `json:"payroll_number" gorm:"uniqueIndex;not null;size:50"`
@@ -80,7 +84,25 @@ type PayrollRun struct {
 	RejectedBy          *User               `json:"rejected_by,omitempty" gorm:"foreignKey:RejectedByID"`
 	Items               []PayrollItem       `json:"items,omitempty" gorm:"foreignKey:PayrollRunID"`
 	Settlements         []PayrollSettlement `json:"settlements,omitempty" gorm:"foreignKey:PayrollRunID"`
+	Documents           []PayrollDocument   `json:"documents,omitempty" gorm:"foreignKey:PayrollRunID"`
 	EmployeeLoanAccount *Account            `json:"employee_loan_account,omitempty" gorm:"foreignKey:EmployeeLoanAccountID"`
+}
+
+type PayrollDocument struct {
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	PayrollRunID uint           `json:"payroll_run_id" gorm:"not null;index"`
+	DocumentType string         `json:"document_type" gorm:"size:50;default:'BILLING_REALIZATION_DOCUMENT'"`
+	FileName     string         `json:"file_name" gorm:"not null;size:255"`
+	FilePath     string         `json:"file_path" gorm:"not null;size:500"`
+	FileSize     int64          `json:"file_size"`
+	MimeType     string         `json:"mime_type" gorm:"size:100"`
+	UploadedBy   uint           `json:"uploaded_by" gorm:"not null;index"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
+
+	PayrollRun PayrollRun `json:"-" gorm:"foreignKey:PayrollRunID"`
+	Uploader   User       `json:"uploader" gorm:"foreignKey:UploadedBy"`
 }
 
 // PayrollSettlement is the immutable audit trail for every salary or PPh 21

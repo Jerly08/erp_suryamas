@@ -30,6 +30,12 @@ import {
   ModalCloseButton,
   ModalBody,
   ModalFooter,
+  AlertDialog,
+  AlertDialogOverlay,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogBody,
+  AlertDialogFooter,
   FormControl,
   FormLabel,
   useToast,
@@ -97,9 +103,14 @@ const PURCHASE_REQUEST_PROGRESS_FILTERS = [
     value: "FINANCE_MANAGER_APPROVED_WITHOUT_PURCHASE",
     label: "FM Approved - Belum Pembelian",
   },
+  { value: "AWAITING_VENDOR_INVOICE", label: "Menunggu Invoice Aktual" },
+  { value: "VENDOR_INVOICE_REVIEW", label: "Invoice Aktual Dalam Review" },
+  { value: "AWAITING_REQUESTER_REVISION", label: "Menunggu Revisi PIC" },
+  { value: "REQUESTER_REVISION_REVIEW", label: "Revisi PIC Dalam Review" },
   { value: "WAITING_DIRECTOR", label: "Menunggu Director" },
   { value: "APPROVED", label: "PR Approved" },
   { value: "REJECTED", label: "PR Rejected" },
+  { value: "CANCELLED", label: "PR Cancelled" },
   { value: "PURCHASE_CREATED", label: "Sudah Dibuat Pembelian" },
   { value: "PAYMENT_CREATED", label: "Sudah Ada Pembayaran" },
 ] as const;
@@ -110,6 +121,14 @@ type PurchaseRequestProgressFilter =
 type PurchaseRequestFormItem = {
   source: "catalog" | "manual";
   product_id: string;
+  item_name: string;
+  quantity: number | string;
+  estimated_price: number | string;
+  notes: string;
+};
+
+type InvoiceRevisionFormItem = {
+  item_id: number;
   item_name: string;
   quantity: number | string;
   estimated_price: number | string;
@@ -160,10 +179,21 @@ export default function PurchaseRequestsPage() {
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
   const [isUpdatingProject, setIsUpdatingProject] = useState(false);
   const [isUpdatingInvoiceTerms, setIsUpdatingInvoiceTerms] = useState(false);
+  const [isSubmittingInvoiceRevision, setIsSubmittingInvoiceRevision] =
+    useState(false);
+  const [isOpeningRequesterRevision, setIsOpeningRequesterRevision] =
+    useState(false);
+  const [isSubmittingRequesterRevision, setIsSubmittingRequesterRevision] =
+    useState(false);
+  const [isCancellingRequest, setIsCancellingRequest] = useState(false);
+  const [isUploadingRealizationDocuments, setIsUploadingRealizationDocuments] =
+    useState(false);
   const [pendingAdditionalDocuments, setPendingAdditionalDocuments] = useState<
     File[]
   >([]);
-  const { canCreate, canEdit } = usePermissions();
+  const [pendingRealizationDocuments, setPendingRealizationDocuments] =
+    useState<File[]>([]);
+  const { canCreate, canEdit, canApprove } = usePermissions();
   const formatCurrency = (value: number) => {
     const numericValue = Number(value) || 0;
     const hasFraction = Math.abs(numericValue % 1) > Number.EPSILON;
@@ -184,6 +214,9 @@ export default function PurchaseRequestsPage() {
     roleNorm === "director" || isFinanceTeamRole(roleNorm);
   const canUpdatePurchaseRequestProject =
     roleNorm === "admin" || isFinanceTeamRole(roleNorm);
+  const canCancelPurchaseRequests =
+    canEdit("purchase_requests") &&
+    (roleNorm === "admin" || isFinanceManagerRole(roleNorm));
 
   const {
     isOpen: isCreateOpen,
@@ -195,6 +228,16 @@ export default function PurchaseRequestsPage() {
     onOpen: onViewOpen,
     onClose: onViewClose,
   } = useDisclosure();
+  const {
+    isOpen: isCancelOpen,
+    onOpen: onCancelOpen,
+    onClose: onCancelClose,
+  } = useDisclosure();
+  const {
+    isOpen: isRequesterRevisionOpen,
+    onOpen: onRequesterRevisionOpen,
+    onClose: onRequesterRevisionClose,
+  } = useDisclosure();
 
   const [selectedRequest, setSelectedRequest] =
     useState<PurchaseRequest | null>(null);
@@ -205,10 +248,31 @@ export default function PurchaseRequestsPage() {
   const [invoiceTermsUpdateDays, setInvoiceTermsUpdateDays] = useState("");
   const [reviewNeedsDirectorApproval, setReviewNeedsDirectorApproval] =
     useState(false);
+  const [reviewRequiresVendorInvoice, setReviewRequiresVendorInvoice] =
+    useState(false);
   const [reviewDecisions, setReviewDecisions] = useState<
     Record<number, "APPROVED" | "REJECTED" | "">
   >({});
+  const [invoiceRevisionItems, setInvoiceRevisionItems] = useState<
+    InvoiceRevisionFormItem[]
+  >([]);
+  const [invoiceRevisionDocuments, setInvoiceRevisionDocuments] = useState<
+    File[]
+  >([]);
+  const [invoiceRevisionNotes, setInvoiceRevisionNotes] = useState("");
+  const [requesterRevisionOpenReason, setRequesterRevisionOpenReason] =
+    useState("");
+  const [requesterRevisionItems, setRequesterRevisionItems] = useState<
+    InvoiceRevisionFormItem[]
+  >([]);
+  const [requesterRevisionDocuments, setRequesterRevisionDocuments] = useState<
+    File[]
+  >([]);
+  const [requesterRevisionNotes, setRequesterRevisionNotes] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
   const handledNotificationRequestId = useRef<string | null>(null);
+  const cancelLeastDestructiveRef = useRef<HTMLButtonElement>(null);
+  const requesterRevisionLeastDestructiveRef = useRef<HTMLButtonElement>(null);
 
   // Form state
   const [title, setTitle] = useState("");
@@ -597,6 +661,148 @@ export default function PurchaseRequestsPage() {
     );
   };
 
+  const handleRealizationDocumentChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    if (!selectedRequest) return;
+
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validateDocument(file));
+    if (invalidFile) {
+      toast({
+        title: "Dokumen realisasi tidak bisa diunggah",
+        description: validateDocument(invalidFile) || undefined,
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    setPendingRealizationDocuments((currentFiles) => {
+      const existing = new Set(
+        currentFiles.map((file) => `${file.name}-${file.size}`),
+      );
+      const uniqueFiles = selectedFiles.filter(
+        (file) => !existing.has(`${file.name}-${file.size}`),
+      );
+      return [...currentFiles, ...uniqueFiles];
+    });
+  };
+
+  const handleRemovePendingRealizationDocument = (index: number) => {
+    setPendingRealizationDocuments((files) =>
+      files.filter((_, fileIndex) => fileIndex !== index),
+    );
+  };
+
+  const buildInvoiceRevisionItems = (
+    pr?: PurchaseRequest | null,
+  ): InvoiceRevisionFormItem[] =>
+    (pr?.items || []).map((item) => ({
+      item_id: item.id,
+      item_name: item.product?.name || item.item_name || `Item #${item.id}`,
+      quantity: item.quantity,
+      estimated_price: item.estimated_price,
+      notes: item.notes || "",
+    }));
+
+  const handleInvoiceRevisionDocumentChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validateDocument(file));
+    if (invalidFile) {
+      toast({
+        title: "Invoice tidak bisa diunggah",
+        description: validateDocument(invalidFile) || undefined,
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    setInvoiceRevisionDocuments((currentFiles) => {
+      const existing = new Set(
+        currentFiles.map((file) => `${file.name}-${file.size}`),
+      );
+      const uniqueFiles = selectedFiles.filter(
+        (file) => !existing.has(`${file.name}-${file.size}`),
+      );
+      return [...currentFiles, ...uniqueFiles];
+    });
+  };
+
+  const handleRemoveInvoiceRevisionDocument = (index: number) => {
+    setInvoiceRevisionDocuments((files) =>
+      files.filter((_, fileIndex) => fileIndex !== index),
+    );
+  };
+
+  const handleInvoiceRevisionItemChange = (
+    itemId: number,
+    field: "quantity" | "estimated_price" | "notes",
+    value: string,
+  ) => {
+    setInvoiceRevisionItems((currentItems) =>
+      currentItems.map((item) =>
+        item.item_id === itemId ? { ...item, [field]: value } : item,
+      ),
+    );
+  };
+
+  const handleRequesterRevisionDocumentChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validateDocument(file));
+    if (invalidFile) {
+      toast({
+        title: "Dokumen revisi tidak bisa diunggah",
+        description: validateDocument(invalidFile) || undefined,
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    setRequesterRevisionDocuments((currentFiles) => {
+      const existing = new Set(
+        currentFiles.map((file) => `${file.name}-${file.size}`),
+      );
+      const uniqueFiles = selectedFiles.filter(
+        (file) => !existing.has(`${file.name}-${file.size}`),
+      );
+      return [...currentFiles, ...uniqueFiles];
+    });
+  };
+
+  const handleRemoveRequesterRevisionDocument = (index: number) => {
+    setRequesterRevisionDocuments((files) =>
+      files.filter((_, fileIndex) => fileIndex !== index),
+    );
+  };
+
+  const handleRequesterRevisionItemChange = (
+    itemId: number,
+    field: "quantity" | "estimated_price" | "notes",
+    value: string,
+  ) => {
+    setRequesterRevisionItems((currentItems) =>
+      currentItems.map((item) =>
+        item.item_id === itemId ? { ...item, [field]: value } : item,
+      ),
+    );
+  };
+
   const handleSubmitAdditionalDocuments = async () => {
     if (!selectedRequest || pendingAdditionalDocuments.length === 0) return;
 
@@ -631,6 +837,219 @@ export default function PurchaseRequestsPage() {
       });
     } finally {
       setIsUploadingDocuments(false);
+    }
+  };
+
+  const handleUploadRealizationDocuments = async () => {
+    if (!selectedRequest || pendingRealizationDocuments.length === 0) return;
+
+    try {
+      setIsUploadingRealizationDocuments(true);
+      await purchaseRequestService.uploadRealizationDocuments(
+        selectedRequest.id,
+        pendingRealizationDocuments,
+      );
+      const refreshed = await purchaseRequestService.getById(selectedRequest.id);
+      setSelectedRequest(refreshed);
+      setProjectUpdateId(refreshed.project_id?.toString() || "");
+      initializeReviewForm(refreshed);
+      setPendingRealizationDocuments([]);
+      await fetchData();
+      toast({
+        title: "Dokumen realisasi berhasil diunggah",
+        description:
+          "Dokumen tersimpan sebagai bukti billing/realisasi PIC tanpa memulai approval ulang.",
+        status: "success",
+        duration: 4500,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal upload dokumen realisasi",
+        description:
+          err.response?.data?.error ||
+          "Dokumen realisasi belum bisa diunggah.",
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsUploadingRealizationDocuments(false);
+    }
+  };
+
+  const handleSubmitInvoiceRevision = async () => {
+    if (!selectedRequest) return;
+
+    if (invoiceRevisionDocuments.length === 0) {
+      return toast({
+        title: "Upload invoice aktual dulu",
+        description:
+          "Lampirkan invoice vendor sebelum mengirim revisi nominal PR.",
+        status: "warning",
+        duration: 4000,
+      });
+    }
+
+    const invalidItemIndex = invoiceRevisionItems.findIndex(
+      (item) => Number(item.quantity) < 1 || Number(item.estimated_price) < 0,
+    );
+    if (invalidItemIndex >= 0) {
+      return toast({
+        title: `Nominal invoice baris ${invalidItemIndex + 1} belum valid`,
+        description: "Pastikan qty minimal 1 dan harga invoice tidak negatif.",
+        status: "warning",
+        duration: 4000,
+      });
+    }
+
+    try {
+      setIsSubmittingInvoiceRevision(true);
+      const updated = await purchaseRequestService.submitInvoiceRevision(
+        selectedRequest.id,
+        {
+          notes: invoiceRevisionNotes.trim() || undefined,
+          items: invoiceRevisionItems.map((item) => ({
+            item_id: item.item_id,
+            quantity: Number(item.quantity),
+            estimated_price: Number(item.estimated_price),
+            notes: item.notes,
+          })),
+        },
+        invoiceRevisionDocuments,
+      );
+      setSelectedRequest(updated);
+      setInvoiceRevisionItems(buildInvoiceRevisionItems(updated));
+      setInvoiceRevisionDocuments([]);
+      setInvoiceRevisionNotes("");
+      initializeReviewForm(updated);
+      await fetchData();
+      toast({
+        title: "Invoice aktual dikirim untuk approval ulang",
+        description:
+          "PR kembali ke Finance Staff untuk review nominal invoice.",
+        status: "success",
+        duration: 5000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal mengirim invoice aktual",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsSubmittingInvoiceRevision(false);
+    }
+  };
+
+  const handleOpenRequesterRevisionRequest = () => {
+    setRequesterRevisionOpenReason("");
+    onRequesterRevisionOpen();
+  };
+
+  const handleOpenRequesterRevision = async () => {
+    if (!selectedRequest) return;
+
+    const reason = requesterRevisionOpenReason.trim();
+    if (!reason) {
+      return toast({
+        title: "Alasan buka revisi wajib diisi",
+        status: "warning",
+        duration: 3000,
+      });
+    }
+
+    try {
+      setIsOpeningRequesterRevision(true);
+      const updated = await purchaseRequestService.openRequesterRevision(
+        selectedRequest.id,
+        { reason },
+      );
+      setSelectedRequest(updated);
+      setRequesterRevisionItems(buildInvoiceRevisionItems(updated));
+      setRequesterRevisionDocuments([]);
+      setRequesterRevisionNotes("");
+      setRequesterRevisionOpenReason("");
+      await fetchData();
+      onRequesterRevisionClose();
+      toast({
+        title: "PR dibuka untuk revisi PIC",
+        description: "PIC dapat mengubah nominal dan upload dokumen pendukung.",
+        status: "success",
+        duration: 4000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal membuka revisi PR",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsOpeningRequesterRevision(false);
+    }
+  };
+
+  const handleSubmitRequesterRevision = async () => {
+    if (!selectedRequest) return;
+
+    if (requesterRevisionDocuments.length === 0) {
+      return toast({
+        title: "Upload dokumen pendukung dulu",
+        description:
+          "Lampirkan dokumen pendukung sebelum mengirim revisi nominal PR.",
+        status: "warning",
+        duration: 4000,
+      });
+    }
+
+    const invalidItemIndex = requesterRevisionItems.findIndex(
+      (item) => Number(item.quantity) < 1 || Number(item.estimated_price) < 0,
+    );
+    if (invalidItemIndex >= 0) {
+      return toast({
+        title: `Nominal revisi baris ${invalidItemIndex + 1} belum valid`,
+        description: "Pastikan qty minimal 1 dan harga revisi tidak negatif.",
+        status: "warning",
+        duration: 4000,
+      });
+    }
+
+    try {
+      setIsSubmittingRequesterRevision(true);
+      const updated = await purchaseRequestService.submitRequesterRevision(
+        selectedRequest.id,
+        {
+          notes: requesterRevisionNotes.trim() || undefined,
+          items: requesterRevisionItems.map((item) => ({
+            item_id: item.item_id,
+            quantity: Number(item.quantity),
+            estimated_price: Number(item.estimated_price),
+            notes: item.notes,
+          })),
+        },
+        requesterRevisionDocuments,
+      );
+      setSelectedRequest(updated);
+      setRequesterRevisionItems(buildInvoiceRevisionItems(updated));
+      setRequesterRevisionDocuments([]);
+      setRequesterRevisionNotes("");
+      initializeReviewForm(updated);
+      await fetchData();
+      toast({
+        title: "Revisi PR dikirim untuk approval ulang",
+        description: "PR kembali ke Finance Staff dan Finance Manager.",
+        status: "success",
+        duration: 5000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal mengirim revisi PR",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsSubmittingRequesterRevision(false);
     }
   };
 
@@ -1095,6 +1514,19 @@ export default function PurchaseRequestsPage() {
     };
   };
 
+  const canCancelPurchaseRequest = (pr?: PurchaseRequest | null) => {
+    if (!pr || !canCancelPurchaseRequests) return false;
+    if (pr.status !== "APPROVED") return false;
+    return !getPurchaseRealizationSummary(pr).hasPurchase;
+  };
+
+  const canOpenRequesterRevision = (pr?: PurchaseRequest | null) => {
+    if (!pr || !canApprove("purchase_requests")) return false;
+    if (roleNorm !== "admin" && !isFinanceTeamRole(roleNorm)) return false;
+    if (pr.status !== "APPROVED") return false;
+    return !getPurchaseRealizationSummary(pr).hasPurchase;
+  };
+
   const renderPaymentProofRealization = (
     pr?: PurchaseRequest | null,
     compact = false,
@@ -1247,12 +1679,37 @@ export default function PurchaseRequestsPage() {
         return hasManagerReview;
       case "FINANCE_MANAGER_APPROVED_WITHOUT_PURCHASE":
         return hasManagerReview && !realization.hasPurchase;
+      case "AWAITING_VENDOR_INVOICE":
+        return (
+          pr.requires_vendor_invoice &&
+          pr.status === "APPROVED" &&
+          (pr.vendor_invoice_status || "").toUpperCase() ===
+            "AWAITING_INVOICE"
+        );
+      case "VENDOR_INVOICE_REVIEW":
+        return (
+          pr.requires_vendor_invoice &&
+          pr.status === "PENDING_APPROVAL" &&
+          pr.reapproval_reason === "INVOICE_REVISION"
+        );
+      case "AWAITING_REQUESTER_REVISION":
+        return (
+          pr.status === "AWAITING_REVISION" &&
+          pr.reapproval_reason === "REQUESTER_REVISION"
+        );
+      case "REQUESTER_REVISION_REVIEW":
+        return (
+          pr.status === "PENDING_APPROVAL" &&
+          pr.reapproval_reason === "REQUESTER_REVISION"
+        );
       case "WAITING_DIRECTOR":
         return pr.status === "PENDING_APPROVAL" && stage === "DIRECTOR";
       case "APPROVED":
         return pr.status === "APPROVED";
       case "REJECTED":
         return pr.status === "REJECTED";
+      case "CANCELLED":
+        return pr.status === "CANCELLED";
       case "PURCHASE_CREATED":
         return realization.hasPurchase;
       case "PAYMENT_CREATED":
@@ -1320,6 +1777,7 @@ export default function PurchaseRequestsPage() {
     setReviewDecisions(nextDecisions);
     setReviewReason(pr.rejection_reason || "");
     setReviewNeedsDirectorApproval(false);
+    setReviewRequiresVendorInvoice(Boolean(pr.requires_vendor_invoice));
   };
 
   const setAllReviewDecisions = (decision: "APPROVED" | "REJECTED") => {
@@ -1359,6 +1817,9 @@ export default function PurchaseRequestsPage() {
         escalate_to_director:
           canRequestDirectorApproval(selectedRequest) &&
           reviewNeedsDirectorApproval,
+        require_vendor_invoice:
+          getCurrentReviewStage(selectedRequest) === "FINANCE_STAFF" &&
+          reviewRequiresVendorInvoice,
       });
       toast({
         title: "Review PR berhasil dikirim",
@@ -1462,6 +1923,50 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const handleOpenCancelRequest = () => {
+    setCancelReason("");
+    onCancelOpen();
+  };
+
+  const handleCancelPurchaseRequest = async () => {
+    if (!selectedRequest) return;
+
+    const reason = cancelReason.trim();
+    if (!reason) {
+      toast({
+        title: "Alasan pembatalan wajib diisi",
+        status: "warning",
+        duration: 3000,
+      });
+      return;
+    }
+
+    try {
+      setIsCancellingRequest(true);
+      const updated = await purchaseRequestService.cancel(
+        selectedRequest.id,
+        reason,
+      );
+      setSelectedRequest(updated);
+      await fetchData();
+      onCancelClose();
+      toast({
+        title: "Purchase request berhasil dibatalkan",
+        status: "success",
+        duration: 3000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal membatalkan PR",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsCancellingRequest(false);
+    }
+  };
+
   const handleView = async (pr: PurchaseRequest) => {
     try {
       setLoading(true);
@@ -1475,6 +1980,15 @@ export default function PurchaseRequestsPage() {
         getInvoiceTermsDaysInputValue(detail),
       );
       setPendingAdditionalDocuments([]);
+      setPendingRealizationDocuments([]);
+      setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
+      setInvoiceRevisionDocuments([]);
+      setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
+      setRequesterRevisionItems(buildInvoiceRevisionItems(detail));
+      setRequesterRevisionDocuments([]);
+      setRequesterRevisionNotes("");
+      setRequesterRevisionOpenReason("");
+      setCancelReason("");
       initializeReviewForm(detail);
       onViewOpen();
     } catch {
@@ -1527,6 +2041,16 @@ export default function PurchaseRequestsPage() {
         setInvoiceTermsUpdateDays(
           getInvoiceTermsDaysInputValue(detail),
         );
+        setPendingAdditionalDocuments([]);
+        setPendingRealizationDocuments([]);
+        setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
+        setInvoiceRevisionDocuments([]);
+        setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
+        setRequesterRevisionItems(buildInvoiceRevisionItems(detail));
+        setRequesterRevisionDocuments([]);
+        setRequesterRevisionNotes("");
+        setRequesterRevisionOpenReason("");
+        setCancelReason("");
         initializeReviewForm(detail);
         onViewOpen();
       } catch {
@@ -1616,15 +2140,39 @@ export default function PurchaseRequestsPage() {
       case "DRAFT":
         return <Badge colorScheme="gray">Draft</Badge>;
       case "PENDING_APPROVAL":
+        if (request.reapproval_reason === "REQUESTER_REVISION") {
+          return (
+            <Badge colorScheme="purple">
+              Revisi PIC - {getStageLabel(request) || "Review"}
+            </Badge>
+          );
+        }
         return (
           <Badge colorScheme="orange">
             {getStageLabel(request) || "Pending Review"}
           </Badge>
         );
       case "APPROVED":
+        if (
+          request.requires_vendor_invoice &&
+          (request.vendor_invoice_status || "").toUpperCase() ===
+            "AWAITING_INVOICE"
+        ) {
+          return <Badge colorScheme="yellow">Approved - Butuh Invoice</Badge>;
+        }
         return <Badge colorScheme="green">Approved</Badge>;
       case "REJECTED":
         return <Badge colorScheme="red">Rejected</Badge>;
+      case "CANCELLED":
+        return (
+          <Badge colorScheme="orange">
+            {request.finance_manager_approved_by || request.finance_manager_approved_at
+              ? "FM Approved - Cancelled"
+              : "Cancelled"}
+          </Badge>
+        );
+      case "AWAITING_REVISION":
+        return <Badge colorScheme="purple">Menunggu Revisi PIC</Badge>;
       case "COMPLETED":
         return <Badge colorScheme="blue">PO Processed</Badge>;
       default:
@@ -1801,6 +2349,15 @@ export default function PurchaseRequestsPage() {
   const selectedRequestSummary = getReviewSummary(selectedRequest, true);
   const selectedRequestDueDateSummary =
     getPurchaseDueDateSummary(selectedRequest);
+  const selectedRequestRealizationSummary =
+    getPurchaseRealizationSummary(selectedRequest);
+  const selectedRequestDocuments = selectedRequest?.documents || [];
+  const selectedRequestRealizationDocuments = selectedRequestDocuments.filter(
+    (document) => (document.document_type || "").toUpperCase() === "REALIZATION_DOCUMENT",
+  );
+  const selectedRequestSupportingDocuments = selectedRequestDocuments.filter(
+    (document) => (document.document_type || "").toUpperCase() !== "REALIZATION_DOCUMENT",
+  );
   const createDueDatePreview = getCalculatedDueDateInput(
     vendorInvoiceReceivedDate,
     paymentTermsDays,
@@ -1816,8 +2373,81 @@ export default function PurchaseRequestsPage() {
     selectedRequest &&
       canEdit("purchase_requests") &&
       selectedRequest.status !== "COMPLETED" &&
-      selectedRequest.status !== "REJECTED",
+      selectedRequest.status !== "REJECTED" &&
+      selectedRequest.status !== "CANCELLED" &&
+      selectedRequest.status !== "AWAITING_REVISION",
   );
+  const canEditSelectedRequestProject = Boolean(
+    selectedRequest &&
+      canUpdatePurchaseRequestProject &&
+      selectedRequest.status !== "CANCELLED",
+  );
+  const canSubmitSelectedRequestInvoiceRevision = Boolean(
+    selectedRequest &&
+      canEdit("purchase_requests") &&
+      selectedRequest.requires_vendor_invoice &&
+      selectedRequest.status === "APPROVED" &&
+      !selectedRequestRealizationSummary.hasPurchase &&
+      (roleNorm === "admin" || selectedRequest.requester_id === Number(user?.id)),
+  );
+  const canSubmitSelectedRequesterRevision = Boolean(
+    selectedRequest &&
+      canEdit("purchase_requests") &&
+      selectedRequest.status === "AWAITING_REVISION" &&
+      selectedRequest.reapproval_reason === "REQUESTER_REVISION" &&
+      !selectedRequestRealizationSummary.hasPurchase &&
+      (roleNorm === "admin" || selectedRequest.requester_id === Number(user?.id)),
+  );
+  const canUploadSelectedRequestRealizationDocuments = Boolean(
+    selectedRequest &&
+      canEdit("purchase_requests") &&
+      (selectedRequest.status === "APPROVED" ||
+        selectedRequest.status === "COMPLETED") &&
+      (roleNorm === "admin" ||
+        isFinanceTeamRole(roleNorm) ||
+        selectedRequest.requester_id === Number(user?.id)),
+  );
+
+  const getVendorInvoiceStatusBadge = (pr?: PurchaseRequest | null) => {
+    if (!pr?.requires_vendor_invoice) {
+      return <Badge colorScheme="gray">Tidak Perlu Invoice Aktual</Badge>;
+    }
+
+    switch ((pr.vendor_invoice_status || "").toUpperCase()) {
+      case "PENDING_APPROVAL":
+        return <Badge colorScheme="orange">Invoice Menunggu Review</Badge>;
+      case "APPROVED":
+        return <Badge colorScheme="green">Invoice Aktual Approved</Badge>;
+      case "AWAITING_INVOICE":
+      default:
+        return <Badge colorScheme="yellow">Menunggu Invoice Aktual</Badge>;
+    }
+  };
+
+  const getDocumentTypeBadge = (documentType?: string) => {
+    if ((documentType || "").toUpperCase() === "VENDOR_INVOICE") {
+      return (
+        <Badge mt={1} colorScheme="purple">
+          Invoice Aktual
+        </Badge>
+      );
+    }
+    if ((documentType || "").toUpperCase() === "REQUESTER_REVISION_DOCUMENT") {
+      return (
+        <Badge mt={1} colorScheme="orange">
+          Revisi PIC
+        </Badge>
+      );
+    }
+    if ((documentType || "").toUpperCase() === "REALIZATION_DOCUMENT") {
+      return (
+        <Badge mt={1} colorScheme="green">
+          Realisasi PIC
+        </Badge>
+      );
+    }
+    return null;
+  };
 
   return (
     <ProtectedModule module="purchase_requests">
@@ -2042,6 +2672,11 @@ export default function PurchaseRequestsPage() {
 	                              FM Approved
 	                            </Badge>
 	                          )}
+                            {pr.requires_vendor_invoice && (
+                              <Box mt={1}>
+                                {getVendorInvoiceStatusBadge(pr)}
+                              </Box>
+                            )}
 	                        </Td>
 		                        <Td minW="260px">
 		                          {renderPaymentProofRealization(pr, true)}
@@ -2761,6 +3396,67 @@ export default function PurchaseRequestsPage() {
 			                      </Text>
 			                    )}
 			                  </Box>
+                        <Box>
+                          <Text fontSize="sm" color={mutedTextColor}>
+                            Invoice Aktual Vendor
+                          </Text>
+                          <Flex mt={1} direction="column" gap={1} align="flex-start">
+                            {getVendorInvoiceStatusBadge(selectedRequest)}
+                            {selectedRequest.vendor_invoice_requested_at && (
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                Ditandai Finance Staff pada{" "}
+                                {new Date(
+                                  selectedRequest.vendor_invoice_requested_at,
+                                ).toLocaleString()}
+                              </Text>
+                            )}
+                            {selectedRequest.vendor_invoice_submitted_at && (
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                Invoice dikirim pada{" "}
+                                {new Date(
+                                  selectedRequest.vendor_invoice_submitted_at,
+                                ).toLocaleString()}
+                              </Text>
+                            )}
+                          </Flex>
+                        </Box>
+                        {(selectedRequest.revision_opened_at ||
+                          selectedRequest.reapproval_reason ===
+                            "REQUESTER_REVISION") && (
+                          <Box>
+                            <Text fontSize="sm" color={mutedTextColor}>
+                              Revisi PIC
+                            </Text>
+                            <Flex
+                              mt={1}
+                              direction="column"
+                              gap={1}
+                              align="flex-start"
+                            >
+                              <Badge colorScheme="purple">
+                                {selectedRequest.status === "AWAITING_REVISION"
+                                  ? "Menunggu PIC Submit"
+                                  : selectedRequest.status === "PENDING_APPROVAL"
+                                    ? "Dalam Review Ulang"
+                                    : "Riwayat Revisi"}
+                              </Badge>
+                              {selectedRequest.revision_opener && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Dibuka oleh{" "}
+                                  {selectedRequest.revision_opener.first_name}{" "}
+                                  {selectedRequest.revision_opener.last_name}
+                                  {selectedRequest.revision_opened_at &&
+                                    ` pada ${new Date(selectedRequest.revision_opened_at).toLocaleString()}`}
+                                </Text>
+                              )}
+                              {selectedRequest.revision_reason && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Alasan: {selectedRequest.revision_reason}
+                                </Text>
+                              )}
+                            </Flex>
+                          </Box>
+                        )}
 			                  {canEditSelectedRequestInvoiceTerms && (
 			                    <Box gridColumn={{ base: "auto", md: "1 / -1" }}>
 			                      <Text fontSize="sm" color={mutedTextColor} mb={2}>
@@ -2865,12 +3561,12 @@ export default function PurchaseRequestsPage() {
                       </Text>
                     </Box>
                   )}
-	                  {(selectedRequest.project || canUpdatePurchaseRequestProject) && (
+	                  {(selectedRequest.project || canEditSelectedRequestProject) && (
 	                    <Box>
 	                      <Text fontSize="sm" color={mutedTextColor}>
 	                        Dialokasikan ke Proyek
 	                      </Text>
-	                      {canUpdatePurchaseRequestProject ? (
+	                      {canEditSelectedRequestProject ? (
 	                        <Flex
 	                          mt={1}
 	                          gap={2}
@@ -3014,6 +3710,27 @@ export default function PurchaseRequestsPage() {
                         </Text>
                       </Box>
                     )}
+                  {selectedRequest.status === "CANCELLED" && (
+                    <Box gridColumn={{ base: "auto", md: "1 / -1" }}>
+                      <Text fontSize="sm" color={mutedTextColor}>
+                        Dibatalkan
+                      </Text>
+                      <Text fontWeight="medium" color="orange.600">
+                        {selectedRequest.canceller
+                          ? `${selectedRequest.canceller.first_name} ${selectedRequest.canceller.last_name}`.trim()
+                          : selectedRequest.cancelled_by
+                            ? `User ID ${selectedRequest.cancelled_by}`
+                            : "-"}
+                        {selectedRequest.cancelled_at &&
+                          ` pada ${new Date(selectedRequest.cancelled_at).toLocaleString()}`}
+                      </Text>
+                      {selectedRequest.cancelled_reason && (
+                        <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                          Alasan: {selectedRequest.cancelled_reason}
+                        </Text>
+                      )}
+                    </Box>
+                  )}
                 </Grid>
               )}
 
@@ -3203,6 +3920,757 @@ export default function PurchaseRequestsPage() {
                 </Box>
               )}
 
+              {selectedRequest?.reapproval_reason === "REQUESTER_REVISION" && (
+                <Box
+                  mt={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={infoPanelBg}
+                >
+                  <Flex
+                    justify="space-between"
+                    align={{ base: "flex-start", md: "center" }}
+                    direction={{ base: "column", md: "row" }}
+                    gap={2}
+                    mb={3}
+                  >
+                    <Flex align="center" gap={2} wrap="wrap">
+                      <Icon as={FiEdit3} color="purple.500" />
+                      <Text fontWeight="bold">Revisi PR oleh PIC</Text>
+                      <Badge colorScheme="purple">
+                        {selectedRequest.status === "AWAITING_REVISION"
+                          ? "Menunggu PIC"
+                          : "Review Ulang"}
+                      </Badge>
+                    </Flex>
+                    {selectedRequest.revision_submitted_at && (
+                      <Text fontSize="xs" color={mutedTextColor}>
+                        Dikirim pada{" "}
+                        {new Date(
+                          selectedRequest.revision_submitted_at,
+                        ).toLocaleString()}
+                      </Text>
+                    )}
+                  </Flex>
+
+                  {selectedRequest.status === "AWAITING_REVISION" &&
+                  canSubmitSelectedRequesterRevision ? (
+                    <Box>
+                      <Text fontSize="sm" color={mutedTextColor} mb={3}>
+                        Ubah nominal sesuai informasi terbaru, lampirkan dokumen
+                        pendukung, lalu submit untuk approval ulang Finance
+                        Staff dan Finance Manager.
+                      </Text>
+                      <TableContainer
+                        overflowX="auto"
+                        borderWidth="1px"
+                        borderColor={borderColor}
+                        rounded="md"
+                      >
+                        <Table size="sm" minW="760px">
+                          <Thead bg={tableHeaderBg}>
+                            <Tr>
+                              <Th>Item</Th>
+                              <Th isNumeric w="120px">
+                                Qty
+                              </Th>
+                              <Th isNumeric w="190px">
+                                Harga Revisi
+                              </Th>
+                              <Th isNumeric w="160px">
+                                Total
+                              </Th>
+                              <Th minW="180px">Catatan</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {requesterRevisionItems.map((item) => (
+                              <Tr key={item.item_id}>
+                                <Td verticalAlign="top">
+                                  <Text fontWeight="medium" noOfLines={2}>
+                                    {item.item_name}
+                                  </Text>
+                                </Td>
+                                <Td verticalAlign="top">
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    size="sm"
+                                    textAlign="right"
+                                    value={item.quantity}
+                                    onChange={(e) =>
+                                      handleRequesterRevisionItemChange(
+                                        item.item_id,
+                                        "quantity",
+                                        e.currentTarget.value,
+                                      )
+                                    }
+                                    bg={inputBg}
+                                    borderColor={inputBorderColor}
+                                    color={textColor}
+                                    _hover={{ borderColor: inputBorderColor }}
+                                    _focusVisible={fieldFocusStyles}
+                                  />
+                                </Td>
+                                <Td verticalAlign="top">
+                                  <CurrencyInput
+                                    value={Number(item.estimated_price) || 0}
+                                    onChange={(value) =>
+                                      handleRequesterRevisionItemChange(
+                                        item.item_id,
+                                        "estimated_price",
+                                        value.toString(),
+                                      )
+                                    }
+                                    size="sm"
+                                    showLabel={false}
+                                    allowDecimals
+                                    decimalScale={2}
+                                  />
+                                </Td>
+                                <Td
+                                  isNumeric
+                                  verticalAlign="top"
+                                  whiteSpace="nowrap"
+                                >
+                                  {formatCurrency(
+                                    (Number(item.quantity) || 0) *
+                                      (Number(item.estimated_price) || 0),
+                                  )}
+                                </Td>
+                                <Td verticalAlign="top">
+                                  <Input
+                                    size="sm"
+                                    value={item.notes}
+                                    onChange={(e) =>
+                                      handleRequesterRevisionItemChange(
+                                        item.item_id,
+                                        "notes",
+                                        e.currentTarget.value,
+                                      )
+                                    }
+                                    placeholder="Catatan revisi"
+                                    bg={inputBg}
+                                    borderColor={inputBorderColor}
+                                    color={textColor}
+                                    _hover={{ borderColor: inputBorderColor }}
+                                    _focusVisible={fieldFocusStyles}
+                                  />
+                                </Td>
+                              </Tr>
+                            ))}
+                          </Tbody>
+                        </Table>
+                      </TableContainer>
+
+                      <FormControl mt={3}>
+                        <FormLabel color={textColor}>Catatan Revisi</FormLabel>
+                        <Textarea
+                          value={requesterRevisionNotes}
+                          onChange={(e) =>
+                            setRequesterRevisionNotes(e.target.value)
+                          }
+                          placeholder="Opsional, jelaskan perubahan nominal PR."
+                          rows={3}
+                          bg={inputBg}
+                          borderColor={inputBorderColor}
+                          color={textColor}
+                          _hover={{ borderColor: inputBorderColor }}
+                          _focusVisible={fieldFocusStyles}
+                          _placeholder={{ color: mutedTextColor }}
+                        />
+                      </FormControl>
+
+                      <Box mt={3}>
+                        <Button
+                          as="label"
+                          leftIcon={<FiPaperclip />}
+                          size="sm"
+                          variant="outline"
+                          colorScheme="purple"
+                          cursor="pointer"
+                        >
+                          Pilih Dokumen Pendukung
+                          <Input
+                            type="file"
+                            multiple
+                            accept={ACCEPTED_DOCUMENT_TYPES}
+                            display="none"
+                            onChange={handleRequesterRevisionDocumentChange}
+                          />
+                        </Button>
+                        <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                          Wajib lampirkan dokumen pendukung. Format PDF, Word,
+                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 20MB
+                          per file.
+                        </Text>
+                      </Box>
+
+                      {requesterRevisionDocuments.length > 0 && (
+                        <Box mt={3}>
+                          {requesterRevisionDocuments.map((file, index) => (
+                            <Flex
+                              key={`${file.name}-${file.size}-${index}`}
+                              align="center"
+                              justify="space-between"
+                              gap={3}
+                              py={2}
+                              borderTopWidth={index === 0 ? "0" : "1px"}
+                              borderColor={borderColor}
+                            >
+                              <Flex align="center" gap={2} minW={0}>
+                                <Icon as={FiFileText} color="purple.500" />
+                                <Box minW={0}>
+                                  <Text
+                                    fontSize="sm"
+                                    fontWeight="medium"
+                                    noOfLines={1}
+                                  >
+                                    {file.name}
+                                  </Text>
+                                  <Text fontSize="xs" color={mutedTextColor}>
+                                    {formatFileSize(file.size)}
+                                  </Text>
+                                </Box>
+                              </Flex>
+                              <IconButton
+                                aria-label={`Hapus dokumen revisi ${file.name}`}
+                                icon={<FiX />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                onClick={() =>
+                                  handleRemoveRequesterRevisionDocument(index)
+                                }
+                              />
+                            </Flex>
+                          ))}
+                        </Box>
+                      )}
+
+                      <Flex justify="flex-end" mt={4}>
+                        <Button
+                          colorScheme="purple"
+                          leftIcon={<FiCheck />}
+                          onClick={handleSubmitRequesterRevision}
+                          isLoading={isSubmittingRequesterRevision}
+                          isDisabled={requesterRevisionDocuments.length === 0}
+                        >
+                          Submit Revisi untuk Approval
+                        </Button>
+                      </Flex>
+                    </Box>
+                  ) : (
+                    <Box p={3} rounded="md" bg={notePanelBg} color={notePanelColor}>
+                      <Text fontSize="sm" fontWeight="semibold">
+                        {selectedRequest.status === "AWAITING_REVISION"
+                          ? "PR sedang menunggu PIC/Requester mengirim revisi."
+                          : `Revisi PR sedang menunggu approval ulang: ${
+                              getStageLabel(selectedRequest) || "Finance"
+                            }.`}
+                      </Text>
+                      {selectedRequest.revision_reason && (
+                        <Text fontSize="xs" mt={1}>
+                          Alasan buka revisi: {selectedRequest.revision_reason}
+                        </Text>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              {(selectedRequest?.revision_snapshots || []).length > 0 && (
+                <Box
+                  mt={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={infoPanelBg}
+                >
+                  <Flex align="center" gap={2} mb={3} wrap="wrap">
+                    <Icon as={FiFileText} color="purple.500" />
+                    <Text fontWeight="bold">Riwayat Revisi PR</Text>
+                    <Badge colorScheme="purple">
+                      {selectedRequest?.revision_snapshots?.length || 0} revisi
+                    </Badge>
+                  </Flex>
+                  <Flex direction="column" gap={3}>
+                    {(selectedRequest?.revision_snapshots || []).map(
+                      (snapshot) => (
+                        <Box
+                          key={snapshot.id}
+                          borderWidth="1px"
+                          borderColor={borderColor}
+                          rounded="md"
+                          p={3}
+                        >
+                          <Flex
+                            justify="space-between"
+                            align={{ base: "flex-start", md: "center" }}
+                            direction={{ base: "column", md: "row" }}
+                            gap={2}
+                          >
+                            <Box>
+                              <Text fontWeight="semibold">
+                                Revision {snapshot.revision_number}
+                              </Text>
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                Dibuka{" "}
+                                {new Date(snapshot.opened_at).toLocaleString()}
+                                {snapshot.opener
+                                  ? ` oleh ${snapshot.opener.first_name} ${snapshot.opener.last_name}`
+                                  : ""}
+                              </Text>
+                            </Box>
+                            <Flex gap={2} wrap="wrap">
+                              <Badge colorScheme="gray">
+                                Lama{" "}
+                                {formatCurrency(
+                                  snapshot.previous_total_estimated_amount,
+                                )}
+                              </Badge>
+                              {snapshot.new_total_estimated_amount != null && (
+                                <Badge colorScheme="purple">
+                                  Baru{" "}
+                                  {formatCurrency(
+                                    snapshot.new_total_estimated_amount,
+                                  )}
+                                </Badge>
+                              )}
+                            </Flex>
+                          </Flex>
+                          {snapshot.open_reason && (
+                            <Text fontSize="sm" color={mutedTextColor} mt={2}>
+                              Alasan: {snapshot.open_reason}
+                            </Text>
+                          )}
+                          {snapshot.submitted_notes && (
+                            <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                              Catatan PIC: {snapshot.submitted_notes}
+                            </Text>
+                          )}
+                        </Box>
+                      ),
+                    )}
+                  </Flex>
+                </Box>
+              )}
+
+              {selectedRequest?.requires_vendor_invoice && (
+                <Box
+                  mt={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={infoPanelBg}
+                >
+                  <Flex
+                    justify="space-between"
+                    align={{ base: "flex-start", md: "center" }}
+                    direction={{ base: "column", md: "row" }}
+                    gap={2}
+                    mb={3}
+                  >
+                    <Flex align="center" gap={2} wrap="wrap">
+                      <Icon as={FiEdit3} color="purple.500" />
+                      <Text fontWeight="bold">Revisi Invoice Aktual</Text>
+                      {getVendorInvoiceStatusBadge(selectedRequest)}
+                    </Flex>
+                    {selectedRequest.vendor_invoice_submitter && (
+                      <Text fontSize="xs" color={mutedTextColor}>
+                        Terakhir dikirim oleh{" "}
+                        {selectedRequest.vendor_invoice_submitter.first_name}{" "}
+                        {selectedRequest.vendor_invoice_submitter.last_name}
+                      </Text>
+                    )}
+                  </Flex>
+
+                  {selectedRequest.status === "PENDING_APPROVAL" &&
+                  selectedRequest.reapproval_reason === "INVOICE_REVISION" ? (
+                    <Box p={3} rounded="md" bg={notePanelBg} color={notePanelColor}>
+                      <Text fontSize="sm" fontWeight="semibold">
+                        Invoice aktual sedang menunggu approval ulang:{" "}
+                        {getStageLabel(selectedRequest) || "Menunggu Finance"}.
+                      </Text>
+                      <Text fontSize="xs" mt={1}>
+                        Nominal PR sudah dikirim ulang dan tidak bisa diubah
+                        sampai review selesai.
+                      </Text>
+                    </Box>
+                  ) : canSubmitSelectedRequestInvoiceRevision ? (
+                    <Box>
+                      <Text fontSize="sm" color={mutedTextColor} mb={3}>
+                        Ubah nominal sesuai invoice asli vendor, lampirkan invoice,
+                        lalu submit untuk approval ulang Finance Staff dan Finance
+                        Manager.
+                      </Text>
+                      <TableContainer overflowX="auto" borderWidth="1px" borderColor={borderColor} rounded="md">
+                        <Table size="sm" minW="760px">
+                          <Thead bg={tableHeaderBg}>
+                            <Tr>
+                              <Th>Item</Th>
+                              <Th isNumeric w="120px">Qty</Th>
+                              <Th isNumeric w="190px">Harga Invoice</Th>
+                              <Th isNumeric w="160px">Total</Th>
+                              <Th minW="180px">Catatan</Th>
+                            </Tr>
+                          </Thead>
+                          <Tbody>
+                            {invoiceRevisionItems.map((item) => (
+                              <Tr key={item.item_id}>
+                                <Td verticalAlign="top">
+                                  <Text fontWeight="medium" noOfLines={2}>
+                                    {item.item_name}
+                                  </Text>
+                                </Td>
+                                <Td verticalAlign="top">
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    size="sm"
+                                    textAlign="right"
+                                    value={item.quantity}
+                                    onChange={(e) =>
+                                      handleInvoiceRevisionItemChange(
+                                        item.item_id,
+                                        "quantity",
+                                        e.currentTarget.value,
+                                      )
+                                    }
+                                    bg={inputBg}
+                                    borderColor={inputBorderColor}
+                                    color={textColor}
+                                    _hover={{ borderColor: inputBorderColor }}
+                                    _focusVisible={fieldFocusStyles}
+                                  />
+                                </Td>
+                                <Td verticalAlign="top">
+                                  <CurrencyInput
+                                    value={Number(item.estimated_price) || 0}
+                                    onChange={(value) =>
+                                      handleInvoiceRevisionItemChange(
+                                        item.item_id,
+                                        "estimated_price",
+                                        value.toString(),
+                                      )
+                                    }
+                                    size="sm"
+                                    showLabel={false}
+                                    allowDecimals
+                                    decimalScale={2}
+                                  />
+                                </Td>
+                                <Td isNumeric verticalAlign="top" whiteSpace="nowrap">
+                                  {formatCurrency(
+                                    (Number(item.quantity) || 0) *
+                                      (Number(item.estimated_price) || 0),
+                                  )}
+                                </Td>
+                                <Td verticalAlign="top">
+                                  <Input
+                                    size="sm"
+                                    value={item.notes}
+                                    onChange={(e) =>
+                                      handleInvoiceRevisionItemChange(
+                                        item.item_id,
+                                        "notes",
+                                        e.currentTarget.value,
+                                      )
+                                    }
+                                    placeholder="Catatan invoice"
+                                    bg={inputBg}
+                                    borderColor={inputBorderColor}
+                                    color={textColor}
+                                    _hover={{ borderColor: inputBorderColor }}
+                                    _focusVisible={fieldFocusStyles}
+                                  />
+                                </Td>
+                              </Tr>
+                            ))}
+                          </Tbody>
+                        </Table>
+                      </TableContainer>
+
+                      <FormControl mt={3}>
+                        <FormLabel color={textColor}>Catatan Revisi</FormLabel>
+                        <Textarea
+                          value={invoiceRevisionNotes}
+                          onChange={(e) => setInvoiceRevisionNotes(e.target.value)}
+                          placeholder="Opsional, jelaskan perbedaan invoice aktual dengan estimasi awal."
+                          rows={3}
+                          bg={inputBg}
+                          borderColor={inputBorderColor}
+                          color={textColor}
+                          _hover={{ borderColor: inputBorderColor }}
+                          _focusVisible={fieldFocusStyles}
+                          _placeholder={{ color: mutedTextColor }}
+                        />
+                      </FormControl>
+
+                      <Box mt={3}>
+                        <Button
+                          as="label"
+                          leftIcon={<FiPaperclip />}
+                          size="sm"
+                          variant="outline"
+                          colorScheme="purple"
+                          cursor="pointer"
+                        >
+                          Pilih Invoice Aktual
+                          <Input
+                            type="file"
+                            multiple
+                            accept={ACCEPTED_DOCUMENT_TYPES}
+                            display="none"
+                            onChange={handleInvoiceRevisionDocumentChange}
+                          />
+                        </Button>
+                        <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                          Wajib lampirkan invoice vendor. Format PDF, Word,
+                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 20MB
+                          per file.
+                        </Text>
+                      </Box>
+
+                      {invoiceRevisionDocuments.length > 0 && (
+                        <Box mt={3}>
+                          {invoiceRevisionDocuments.map((file, index) => (
+                            <Flex
+                              key={`${file.name}-${file.size}-${index}`}
+                              align="center"
+                              justify="space-between"
+                              gap={3}
+                              py={2}
+                              borderTopWidth={index === 0 ? "0" : "1px"}
+                              borderColor={borderColor}
+                            >
+                              <Flex align="center" gap={2} minW={0}>
+                                <Icon as={FiFileText} color="purple.500" />
+                                <Box minW={0}>
+                                  <Text fontSize="sm" fontWeight="medium" noOfLines={1}>
+                                    {file.name}
+                                  </Text>
+                                  <Text fontSize="xs" color={mutedTextColor}>
+                                    {formatFileSize(file.size)}
+                                  </Text>
+                                </Box>
+                              </Flex>
+                              <IconButton
+                                aria-label={`Hapus invoice ${file.name}`}
+                                icon={<FiX />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                onClick={() =>
+                                  handleRemoveInvoiceRevisionDocument(index)
+                                }
+                              />
+                            </Flex>
+                          ))}
+                        </Box>
+                      )}
+
+                      <Flex justify="flex-end" mt={4}>
+                        <Button
+                          leftIcon={<FiCheck />}
+                          colorScheme="purple"
+                          onClick={handleSubmitInvoiceRevision}
+                          isLoading={isSubmittingInvoiceRevision}
+                          loadingText="Mengirim..."
+                        >
+                          Submit Invoice Aktual
+                        </Button>
+                      </Flex>
+                    </Box>
+                  ) : (
+                    <Box p={3} rounded="md" bg={notePanelBg} color={notePanelColor}>
+                      <Text fontSize="sm" fontWeight="semibold">
+                        Revisi invoice aktual tidak tersedia.
+                      </Text>
+                      <Text fontSize="xs" mt={1}>
+                        Revisi hanya bisa dilakukan oleh pemohon/admin setelah PR
+                        approved dan sebelum PR dibuat pembelian.
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              {(selectedRequestRealizationDocuments.length > 0 ||
+                canUploadSelectedRequestRealizationDocuments) && (
+                <Box
+                  mt={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={infoPanelBg}
+                >
+                  <Flex
+                    justify="space-between"
+                    align={{ base: "flex-start", md: "center" }}
+                    direction={{ base: "column", md: "row" }}
+                    gap={3}
+                    mb={3}
+                  >
+                    <Flex align="center" gap={2}>
+                      <Icon as={FiFileText} color="green.500" />
+                      <Text fontWeight="bold">Dokumen Realisasi PIC</Text>
+                      <Badge colorScheme="green">
+                        {selectedRequestRealizationDocuments.length} file
+                      </Badge>
+                    </Flex>
+                    {canUploadSelectedRequestRealizationDocuments && (
+                      <Button
+                        as="label"
+                        leftIcon={<FiPaperclip />}
+                        size="sm"
+                        variant="outline"
+                        colorScheme="green"
+                        cursor="pointer"
+                        isLoading={isUploadingRealizationDocuments}
+                      >
+                        Pilih Billing/Realisasi
+                        <Input
+                          type="file"
+                          multiple
+                          accept={ACCEPTED_DOCUMENT_TYPES}
+                          display="none"
+                          onChange={handleRealizationDocumentChange}
+                        />
+                      </Button>
+                    )}
+                  </Flex>
+
+                  {selectedRequestRealizationDocuments.length > 0 ? (
+                    <Box>
+                      {selectedRequestRealizationDocuments.map(
+                        (document, index) => (
+                          <Flex
+                            key={document.id}
+                            align={{ base: "flex-start", md: "center" }}
+                            justify="space-between"
+                            direction={{ base: "column", md: "row" }}
+                            gap={3}
+                            py={3}
+                            borderTopWidth={index === 0 ? "0" : "1px"}
+                            borderColor={borderColor}
+                          >
+                            <Flex align="center" gap={3} minW={0}>
+                              <Icon as={FiFileText} color="green.500" />
+                              <Box minW={0}>
+                                <Text fontWeight="medium" noOfLines={1}>
+                                  {document.file_name}
+                                </Text>
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  {formatFileSize(document.file_size)}
+                                  {document.uploader &&
+                                    ` - diunggah oleh ${document.uploader.first_name} ${document.uploader.last_name}`}
+                                </Text>
+                                {getDocumentTypeBadge(document.document_type)}
+                              </Box>
+                            </Flex>
+                            <Button
+                              as={Link}
+                              href={getDocumentUrl(document.file_path)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              leftIcon={<FiDownload />}
+                              size="sm"
+                              variant="outline"
+                              colorScheme="green"
+                              textDecoration="none"
+                              _hover={{ textDecoration: "none" }}
+                            >
+                              Buka
+                            </Button>
+                          </Flex>
+                        ),
+                      )}
+                    </Box>
+                  ) : (
+                    <Text fontSize="sm" color={mutedTextColor}>
+                      Belum ada dokumen billing/realisasi yang diunggah.
+                    </Text>
+                  )}
+
+                  {pendingRealizationDocuments.length > 0 && (
+                    <Box
+                      mt={4}
+                      pt={4}
+                      borderTopWidth="1px"
+                      borderColor={borderColor}
+                    >
+                      <Flex justify="space-between" align="center" gap={3} mb={2}>
+                        <Box minW={0}>
+                          <Text fontSize="sm" fontWeight="bold">
+                            Draft Dokumen Realisasi
+                          </Text>
+                          <Text fontSize="xs" color={mutedTextColor}>
+                            File akan disimpan sebagai bukti realisasi tanpa
+                            approval ulang.
+                          </Text>
+                        </Box>
+                        <Badge colorScheme="green">
+                          {pendingRealizationDocuments.length} draft
+                        </Badge>
+                      </Flex>
+
+                      {pendingRealizationDocuments.map((file, index) => (
+                        <Flex
+                          key={`${file.name}-${file.size}-${index}`}
+                          align="center"
+                          justify="space-between"
+                          gap={3}
+                          py={2}
+                          borderTopWidth={index === 0 ? "0" : "1px"}
+                          borderColor={borderColor}
+                        >
+                          <Flex align="center" gap={2} minW={0}>
+                            <Icon as={FiFileText} color="green.500" />
+                            <Box minW={0}>
+                              <Text fontSize="sm" fontWeight="medium" noOfLines={1}>
+                                {file.name}
+                              </Text>
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                {formatFileSize(file.size)}
+                              </Text>
+                            </Box>
+                          </Flex>
+                          <IconButton
+                            aria-label={`Hapus realisasi ${file.name}`}
+                            icon={<FiX />}
+                            size="sm"
+                            variant="ghost"
+                            colorScheme="red"
+                            onClick={() =>
+                              handleRemovePendingRealizationDocument(index)
+                            }
+                          />
+                        </Flex>
+                      ))}
+
+                      <Flex justify="flex-end" mt={3}>
+                        <Button
+                          leftIcon={<FiCheck />}
+                          size="sm"
+                          colorScheme="green"
+                          onClick={handleUploadRealizationDocuments}
+                          isLoading={isUploadingRealizationDocuments}
+                          loadingText="Mengunggah..."
+                        >
+                          Upload Dokumen Realisasi
+                        </Button>
+                      </Flex>
+                    </Box>
+                  )}
+                </Box>
+              )}
+
               <Box
                 mt={4}
                 borderWidth="1px"
@@ -3222,13 +4690,15 @@ export default function PurchaseRequestsPage() {
                     <Icon as={FiPaperclip} color="blue.500" />
                     <Text fontWeight="bold">Dokumen Pendukung</Text>
                     <Badge colorScheme="blue">
-                      {selectedRequest?.documents?.length || 0} file
+                      {selectedRequestSupportingDocuments.length} file
                     </Badge>
                   </Flex>
                   {selectedRequest &&
                     canEdit("purchase_requests") &&
                     selectedRequest.status !== "COMPLETED" &&
                     selectedRequest.status !== "REJECTED" &&
+                    selectedRequest.status !== "CANCELLED" &&
+                    selectedRequest.status !== "AWAITING_REVISION" &&
                     !(
                       selectedRequest.status === "PENDING_APPROVAL" &&
                       selectedRequest.reapproval_reason ===
@@ -3276,9 +4746,9 @@ export default function PurchaseRequestsPage() {
                     </Box>
                   )}
 
-                {selectedRequest?.documents?.length ? (
+                {selectedRequestSupportingDocuments.length ? (
                   <Box>
-                    {selectedRequest.documents.map((document, index) => (
+                    {selectedRequestSupportingDocuments.map((document, index) => (
                       <Flex
                         key={document.id}
                         align={{ base: "flex-start", md: "center" }}
@@ -3305,6 +4775,7 @@ export default function PurchaseRequestsPage() {
                                 Dokumen tambahan - Approval ulang
                               </Badge>
                             )}
+                            {getDocumentTypeBadge(document.document_type)}
                           </Box>
                         </Flex>
                         <Button
@@ -3451,6 +4922,31 @@ export default function PurchaseRequestsPage() {
                       _placeholder={{ color: mutedTextColor }}
                     />
                   </FormControl>
+                  {getCurrentReviewStage(selectedRequest) ===
+                    "FINANCE_STAFF" && (
+                    <Box mt={3}>
+                      <Checkbox
+                        isChecked={reviewRequiresVendorInvoice}
+                        isDisabled={
+                          Boolean(selectedRequest?.requires_vendor_invoice) ||
+                          selectedRequest?.reapproval_reason ===
+                            "INVOICE_REVISION"
+                        }
+                        onChange={(e) =>
+                          setReviewRequiresVendorInvoice(e.target.checked)
+                        }
+                        colorScheme="purple"
+                      >
+                        Butuh invoice aktual dari PIC/Staff
+                      </Checkbox>
+                      <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                        Jika dicentang, setelah Finance Manager approve PIC/Staff
+                        boleh upload invoice vendor dan revisi nominal PR untuk
+                        approval ulang. Jika tidak dicentang, nominal PR terkunci
+                        setelah approval final.
+                      </Text>
+                    </Box>
+                  )}
                   {canRequestDirectorApproval(selectedRequest) && (
                     <Box mt={3}>
                       <Checkbox
@@ -3512,13 +5008,162 @@ export default function PurchaseRequestsPage() {
                   </Button>
                 </Flex>
               ) : (
-                <Button variant="ghost" onClick={onViewClose}>
-                  Tutup
-                </Button>
+                <Flex
+                  w="full"
+                  justify="space-between"
+                  align={{ base: "stretch", md: "center" }}
+                  direction={{ base: "column-reverse", md: "row" }}
+                  gap={2}
+                >
+                  <Button
+                    variant="ghost"
+                    onClick={onViewClose}
+                    w={{ base: "full", md: "auto" }}
+                  >
+                    Tutup
+                  </Button>
+                  <Flex
+                    gap={2}
+                    direction={{ base: "column", md: "row" }}
+                    w={{ base: "full", md: "auto" }}
+                  >
+                    {canOpenRequesterRevision(selectedRequest) && (
+                      <Button
+                        leftIcon={<FiEdit3 />}
+                        colorScheme="purple"
+                        variant="outline"
+                        onClick={handleOpenRequesterRevisionRequest}
+                        w={{ base: "full", md: "auto" }}
+                      >
+                        Buka Revisi PIC
+                      </Button>
+                    )}
+                    {canCancelPurchaseRequest(selectedRequest) && (
+                      <Button
+                        leftIcon={<FiX />}
+                        colorScheme="orange"
+                        variant="outline"
+                        onClick={handleOpenCancelRequest}
+                        w={{ base: "full", md: "auto" }}
+                      >
+                        Cancel PR
+                      </Button>
+                    )}
+                  </Flex>
+                </Flex>
               )}
             </ModalFooter>
           </ModalContent>
         </Modal>
+        <AlertDialog
+          isOpen={isRequesterRevisionOpen}
+          leastDestructiveRef={requesterRevisionLeastDestructiveRef}
+          onClose={onRequesterRevisionClose}
+          isCentered
+        >
+          <AlertDialogOverlay>
+            <AlertDialogContent bg={modalBg} color={textColor}>
+              <AlertDialogHeader fontSize="lg" fontWeight="bold">
+                Buka Revisi PR untuk PIC
+              </AlertDialogHeader>
+              <AlertDialogBody>
+                <Text mb={3}>
+                  PR {selectedRequest?.pr_number} akan dibuka agar PIC dapat
+                  memperbarui nominal dan menambahkan dokumen pendukung. Setelah
+                  PIC submit, PR akan masuk approval ulang Finance Staff dan
+                  Finance Manager.
+                </Text>
+                <FormControl isRequired>
+                  <FormLabel>Alasan buka revisi</FormLabel>
+                  <Textarea
+                    value={requesterRevisionOpenReason}
+                    onChange={(e) =>
+                      setRequesterRevisionOpenReason(e.target.value)
+                    }
+                    placeholder="Contoh: PIC perlu menyesuaikan nominal berdasarkan dokumen vendor terbaru."
+                    bg={inputBg}
+                    borderColor={inputBorderColor}
+                    color={textColor}
+                    _hover={{ borderColor: inputBorderColor }}
+                    _focusVisible={fieldFocusStyles}
+                    minH="110px"
+                  />
+                </FormControl>
+              </AlertDialogBody>
+              <AlertDialogFooter>
+                <Button
+                  ref={requesterRevisionLeastDestructiveRef}
+                  onClick={onRequesterRevisionClose}
+                  isDisabled={isOpeningRequesterRevision}
+                >
+                  Batal
+                </Button>
+                <Button
+                  colorScheme="purple"
+                  onClick={handleOpenRequesterRevision}
+                  isLoading={isOpeningRequesterRevision}
+                  isDisabled={!requesterRevisionOpenReason.trim()}
+                  ml={3}
+                >
+                  Buka Revisi
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialogOverlay>
+        </AlertDialog>
+        <AlertDialog
+          isOpen={isCancelOpen}
+          leastDestructiveRef={cancelLeastDestructiveRef}
+          onClose={onCancelClose}
+          isCentered
+        >
+          <AlertDialogOverlay>
+            <AlertDialogContent bg={modalBg} color={textColor}>
+              <AlertDialogHeader fontSize="lg" fontWeight="bold">
+                Cancel Purchase Request
+              </AlertDialogHeader>
+              <AlertDialogBody>
+                <Text mb={3}>
+                  PR {selectedRequest?.pr_number} akan dibatalkan tanpa
+                  menghapus histori approval. Tindakan ini hanya bisa dilakukan
+                  jika PR belum dibuat pembelian.
+                </Text>
+                <FormControl isRequired>
+                  <FormLabel>Alasan pembatalan</FormLabel>
+                  <Textarea
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    placeholder="Contoh: PR sudah tidak dilanjutkan ke pembelian karena kebutuhan dibatalkan."
+                    bg={inputBg}
+                    borderColor={inputBorderColor}
+                    color={textColor}
+                    _hover={{ borderColor: inputBorderColor }}
+                    _focusVisible={fieldFocusStyles}
+                    minH="110px"
+                  />
+                </FormControl>
+              </AlertDialogBody>
+              <AlertDialogFooter>
+                <Button
+                  ref={cancelLeastDestructiveRef}
+                  onClick={onCancelClose}
+                  isDisabled={isCancellingRequest}
+                >
+                  Batal
+                </Button>
+                <Button
+                  colorScheme="orange"
+                  onClick={handleCancelPurchaseRequest}
+                  isLoading={isCancellingRequest}
+                  isDisabled={!cancelReason.trim()}
+                  ml={3}
+                >
+                  Batalkan PR
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialogOverlay>
+        </AlertDialog>
       </Layout>
     </ProtectedModule>
   );

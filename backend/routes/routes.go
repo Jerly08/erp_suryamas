@@ -713,14 +713,19 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchaseRequests.POST("", permMiddleware.CanCreate("purchase_requests"), purchaseRequestController.Create)
 				purchaseRequests.GET("/:id/documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetDocuments)
 				purchaseRequests.POST("/:id/documents", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UploadDocuments)
+				purchaseRequests.POST("/:id/realization-documents", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UploadRealizationDocuments)
 				purchaseRequests.DELETE("/documents/:document_id", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.DeleteDocument)
 				purchaseRequests.PUT("/:id/project", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UpdateProject)
 				purchaseRequests.PUT("/:id/invoice-terms", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UpdateInvoiceTerms)
+				purchaseRequests.PUT("/:id/open-requester-revision", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.OpenRequesterRevision)
+				purchaseRequests.POST("/:id/requester-revision", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.SubmitRequesterRevision)
+				purchaseRequests.POST("/:id/invoice-revision", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.SubmitInvoiceRevision)
 
 				// Approval & Rejection workflows
 				purchaseRequests.PUT("/:id/review", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Review)
 				purchaseRequests.PUT("/:id/approve", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Approve)
 				purchaseRequests.PUT("/:id/reject", permMiddleware.CanReviewPurchaseRequests(), purchaseRequestController.Reject)
+				purchaseRequests.PUT("/:id/cancel", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.Cancel)
 			}
 
 			// Projects routes with permission checks
@@ -1016,6 +1021,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				payroll.POST("/import/preview", permMiddleware.CanCreate("payroll"), payrollController.ImportPayrollPreview)
 				payroll.GET("/:id", permMiddleware.CanView("payroll"), payrollController.GetPayrollRun)
 				payroll.POST("", permMiddleware.CanCreate("payroll"), payrollController.CreatePayrollRun)
+				payroll.POST("/:id/documents", permMiddleware.CanEdit("payroll"), payrollController.UploadDocuments)
 				payroll.POST("/:id/approve", permMiddleware.CanApprove("payroll"), payrollController.ApprovePayrollRun)
 				payroll.POST("/:id/reject", permMiddleware.CanApprove("payroll"), payrollController.RejectPayrollRun)
 				payroll.POST("/:id/pay-salary", permMiddleware.CanApprove("payroll"), payrollController.PayPayrollSalary)

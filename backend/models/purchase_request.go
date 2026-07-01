@@ -27,6 +27,20 @@ type PurchaseRequest struct {
 	ReapprovalReason     string  `json:"reapproval_reason" gorm:"size:50"`
 	Notes                string  `json:"notes" gorm:"type:text"`
 
+	RevisionOpenedBy    *uint      `json:"revision_opened_by" gorm:"index"`
+	RevisionOpenedAt    *time.Time `json:"revision_opened_at"`
+	RevisionReason      string     `json:"revision_reason" gorm:"type:text"`
+	RevisionSubmittedBy *uint      `json:"revision_submitted_by" gorm:"index"`
+	RevisionSubmittedAt *time.Time `json:"revision_submitted_at"`
+
+	RequiresVendorInvoice      bool       `json:"requires_vendor_invoice" gorm:"default:false"`
+	VendorInvoiceStatus        string     `json:"vendor_invoice_status" gorm:"size:30;default:'NOT_REQUIRED'"`
+	VendorInvoiceRequestedBy   *uint      `json:"vendor_invoice_requested_by" gorm:"index"`
+	VendorInvoiceRequestedAt   *time.Time `json:"vendor_invoice_requested_at"`
+	VendorInvoiceSubmittedBy   *uint      `json:"vendor_invoice_submitted_by" gorm:"index"`
+	VendorInvoiceSubmittedAt   *time.Time `json:"vendor_invoice_submitted_at"`
+	VendorInvoiceRevisionNotes string     `json:"vendor_invoice_revision_notes" gorm:"type:text"`
+
 	// Approval Tracking
 	ApprovedBy                *uint      `json:"approved_by" gorm:"index"`
 	ApprovedAt                *time.Time `json:"approved_at"`
@@ -39,21 +53,30 @@ type PurchaseRequest struct {
 	DirectorApprovedBy        *uint      `json:"director_approved_by" gorm:"index"`
 	DirectorApprovedAt        *time.Time `json:"director_approved_at"`
 	RejectionReason           string     `json:"rejection_reason" gorm:"type:text"`
+	CancelledBy               *uint      `json:"cancelled_by" gorm:"index"`
+	CancelledAt               *time.Time `json:"cancelled_at"`
+	CancelledReason           string     `json:"cancelled_reason" gorm:"type:text"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Requester              User                      `json:"requester" gorm:"foreignKey:RequesterID"`
-	Project                *Project                  `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
-	Vendor                 *Contact                  `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
-	Items                  []PurchaseRequestItem     `json:"items" gorm:"foreignKey:PurchaseRequestID"`
-	Documents              []PurchaseRequestDocument `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
-	Approver               *User                     `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	FinanceStaffApprover   *User                     `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
-	FinanceManagerApprover *User                     `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
-	DirectorApprover       *User                     `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	Requester              User                              `json:"requester" gorm:"foreignKey:RequesterID"`
+	Project                *Project                          `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor                 *Contact                          `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
+	Items                  []PurchaseRequestItem             `json:"items" gorm:"foreignKey:PurchaseRequestID"`
+	Documents              []PurchaseRequestDocument         `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
+	RevisionSnapshots      []PurchaseRequestRevisionSnapshot `json:"revision_snapshots" gorm:"foreignKey:PurchaseRequestID"`
+	Approver               *User                             `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	FinanceStaffApprover   *User                             `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
+	FinanceManagerApprover *User                             `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User                             `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	Canceller              *User                             `json:"canceller,omitempty" gorm:"foreignKey:CancelledBy"`
+	RevisionOpener         *User                             `json:"revision_opener,omitempty" gorm:"foreignKey:RevisionOpenedBy"`
+	RevisionSubmitter      *User                             `json:"revision_submitter,omitempty" gorm:"foreignKey:RevisionSubmittedBy"`
+	VendorInvoiceRequester *User                             `json:"vendor_invoice_requester,omitempty" gorm:"foreignKey:VendorInvoiceRequestedBy"`
+	VendorInvoiceSubmitter *User                             `json:"vendor_invoice_submitter,omitempty" gorm:"foreignKey:VendorInvoiceSubmittedBy"`
 }
 
 // PurchaseRequestItem represents the details of items requested
@@ -103,13 +126,48 @@ type PurchaseRequestDocument struct {
 	Uploader        User            `json:"uploader" gorm:"foreignKey:UploadedBy"`
 }
 
+type PurchaseRequestRevisionSnapshot struct {
+	ID                           uint           `json:"id" gorm:"primaryKey"`
+	PurchaseRequestID            uint           `json:"purchase_request_id" gorm:"not null;index"`
+	RevisionNumber               int            `json:"revision_number" gorm:"not null;index"`
+	ReapprovalReason             string         `json:"reapproval_reason" gorm:"size:50"`
+	PreviousStatus               string         `json:"previous_status" gorm:"size:30"`
+	PreviousApprovalStage        string         `json:"previous_approval_stage" gorm:"size:30"`
+	PreviousTotalEstimatedAmount float64        `json:"previous_total_estimated_amount" gorm:"type:decimal(15,2);default:0"`
+	NewTotalEstimatedAmount      *float64       `json:"new_total_estimated_amount" gorm:"type:decimal(15,2)"`
+	ItemSnapshot                 string         `json:"item_snapshot" gorm:"type:text"`
+	OpenedBy                     uint           `json:"opened_by" gorm:"not null;index"`
+	OpenedAt                     time.Time      `json:"opened_at" gorm:"not null"`
+	OpenReason                   string         `json:"open_reason" gorm:"type:text"`
+	SubmittedBy                  *uint          `json:"submitted_by" gorm:"index"`
+	SubmittedAt                  *time.Time     `json:"submitted_at"`
+	SubmittedNotes               string         `json:"submitted_notes" gorm:"type:text"`
+	ApprovedBy                   *uint          `json:"approved_by" gorm:"index"`
+	ApprovedAt                   *time.Time     `json:"approved_at"`
+	FinanceStaffApprovedBy       *uint          `json:"finance_staff_approved_by" gorm:"index"`
+	FinanceStaffApprovedAt       *time.Time     `json:"finance_staff_approved_at"`
+	FinanceManagerApprovedBy     *uint          `json:"finance_manager_approved_by" gorm:"index"`
+	FinanceManagerApprovedAt     *time.Time     `json:"finance_manager_approved_at"`
+	DirectorApprovedBy           *uint          `json:"director_approved_by" gorm:"index"`
+	DirectorApprovedAt           *time.Time     `json:"director_approved_at"`
+	CreatedAt                    time.Time      `json:"created_at"`
+	UpdatedAt                    time.Time      `json:"updated_at"`
+	DeletedAt                    gorm.DeletedAt `json:"-" gorm:"index"`
+
+	PurchaseRequest PurchaseRequest `json:"-" gorm:"foreignKey:PurchaseRequestID"`
+	Opener          User            `json:"opener" gorm:"foreignKey:OpenedBy"`
+	Submitter       *User           `json:"submitter,omitempty" gorm:"foreignKey:SubmittedBy"`
+}
+
 // PurchaseRequest Status Constants
 const (
-	PRStatusDraft           = "DRAFT"
-	PRStatusPendingApproval = "PENDING_APPROVAL" // Menunggu Finance
-	PRStatusApproved        = "APPROVED"
-	PRStatusRejected        = "REJECTED"
-	PRStatusCompleted       = "COMPLETED" // Sudah terealisasi jadi Purchase/Invoice sepenuhnya
+	PRStatusDraft            = "DRAFT"
+	PRStatusPendingApproval  = "PENDING_APPROVAL" // Menunggu Finance
+	PRStatusApproved         = "APPROVED"
+	PRStatusRejected         = "REJECTED"
+	PRStatusCompleted        = "COMPLETED"         // Sudah terealisasi jadi Purchase/Invoice sepenuhnya
+	PRStatusCancelled        = "CANCELLED"         // Dibatalkan setelah approved, tanpa menghapus histori
+	PRStatusAwaitingRevision = "AWAITING_REVISION" // Menunggu PIC/Requester submit revisi
 )
 
 // Purchase request approval stages
@@ -129,12 +187,25 @@ const (
 
 // Purchase request document type constants
 const (
-	PurchaseRequestDocumentSupporting = "SUPPORTING_DOCUMENT"
+	PurchaseRequestDocumentSupporting        = "SUPPORTING_DOCUMENT"
+	PurchaseRequestDocumentVendorInvoice     = "VENDOR_INVOICE"
+	PurchaseRequestDocumentRequesterRevision = "REQUESTER_REVISION_DOCUMENT"
+	PurchaseRequestDocumentRealization       = "REALIZATION_DOCUMENT"
 )
 
 // Purchase request reapproval reasons
 const (
 	PRReapprovalReasonAdditionalDocuments = "ADDITIONAL_DOCUMENTS"
+	PRReapprovalReasonInvoiceRevision     = "INVOICE_REVISION"
+	PRReapprovalReasonRequesterRevision   = "REQUESTER_REVISION"
+)
+
+// Purchase request vendor invoice status constants
+const (
+	PRVendorInvoiceStatusNotRequired     = "NOT_REQUIRED"
+	PRVendorInvoiceStatusAwaitingInvoice = "AWAITING_INVOICE"
+	PRVendorInvoiceStatusPendingApproval = "PENDING_APPROVAL"
+	PRVendorInvoiceStatusApproved        = "APPROVED"
 )
 
 // Request DTOs
@@ -164,9 +235,10 @@ type PurchaseRequestReviewItemPayload struct {
 }
 
 type PurchaseRequestReviewPayload struct {
-	Items              []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
-	Reason             string                             `json:"reason"`
-	EscalateToDirector bool                               `json:"escalate_to_director"`
+	Items                []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
+	Reason               string                             `json:"reason"`
+	EscalateToDirector   bool                               `json:"escalate_to_director"`
+	RequireVendorInvoice bool                               `json:"require_vendor_invoice"`
 }
 
 type PurchaseRequestProjectUpdatePayload struct {
@@ -177,4 +249,36 @@ type PurchaseRequestInvoiceTermsUpdatePayload struct {
 	VendorInvoiceReceivedDate *time.Time `json:"vendor_invoice_received_date"`
 	PaymentTermsDays          *int       `json:"payment_terms_days"`
 	DueDate                   *time.Time `json:"due_date"`
+}
+
+type PurchaseRequestInvoiceRevisionItemPayload struct {
+	ItemID         uint    `json:"item_id" binding:"required"`
+	Quantity       int     `json:"quantity" binding:"required,min=1"`
+	EstimatedPrice float64 `json:"estimated_price" binding:"required,min=0"`
+	Notes          string  `json:"notes"`
+}
+
+type PurchaseRequestInvoiceRevisionPayload struct {
+	Notes string                                      `json:"notes"`
+	Items []PurchaseRequestInvoiceRevisionItemPayload `json:"items" binding:"required,min=1"`
+}
+
+type PurchaseRequestOpenRevisionPayload struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+type PurchaseRequestRequesterRevisionItemPayload struct {
+	ItemID         uint    `json:"item_id" binding:"required"`
+	Quantity       int     `json:"quantity" binding:"required,min=1"`
+	EstimatedPrice float64 `json:"estimated_price" binding:"required,min=0"`
+	Notes          string  `json:"notes"`
+}
+
+type PurchaseRequestRequesterRevisionPayload struct {
+	Notes string                                        `json:"notes"`
+	Items []PurchaseRequestRequesterRevisionItemPayload `json:"items" binding:"required,min=1"`
+}
+
+type PurchaseRequestCancelPayload struct {
+	Reason string `json:"reason" binding:"required"`
 }

@@ -193,6 +193,189 @@ func (c *PurchaseRequestController) UpdateInvoiceTerms(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, pr)
 }
 
+func (c *PurchaseRequestController) OpenRequesterRevision(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestOpenRevisionPayload
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	pr, err := c.service.OpenPurchaseRequestRequesterRevision(uint(id), userID, userRole, payload)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Purchase request revision opened for requester",
+		"data":    pr,
+	})
+}
+
+func (c *PurchaseRequestController) SubmitRequesterRevision(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestRequesterRevisionPayload
+	if strings.HasPrefix(strings.ToLower(ctx.GetHeader("Content-Type")), "multipart/form-data") {
+		payloadJSON := ctx.PostForm("payload")
+		if payloadJSON == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "payload is required"})
+			return
+		}
+		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload JSON", "details": err.Error()})
+			return
+		}
+	} else {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "multipart/form-data with supporting documents is required"})
+		return
+	}
+
+	if err := validatePurchaseRequestRequesterRevisionPayload(payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form", "details": err.Error()})
+		return
+	}
+
+	documentFiles := append([]*multipart.FileHeader{}, form.File["documents"]...)
+	documentFiles = append(documentFiles, form.File["supporting_documents"]...)
+	documentFiles = append(documentFiles, form.File["attachments"]...)
+	documentFiles = append(documentFiles, form.File["document"]...)
+	if len(documentFiles) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Supporting document is required"})
+		return
+	}
+
+	if err := validatePurchaseRequestDocumentFiles(documentFiles); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	documents, savedPaths, err := c.preparePurchaseRequestDocumentRecords(
+		ctx,
+		uint(id),
+		documentFiles,
+		userID,
+		models.PurchaseRequestDocumentRequesterRevision,
+	)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	pr, err := c.service.SubmitPurchaseRequestRequesterRevision(uint(id), userID, userRole, payload, documents)
+	if err != nil {
+		cleanupUploadedFiles(savedPaths)
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Purchase request revision submitted for approval",
+		"data":    pr,
+	})
+}
+
+func (c *PurchaseRequestController) SubmitInvoiceRevision(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestInvoiceRevisionPayload
+	if strings.HasPrefix(strings.ToLower(ctx.GetHeader("Content-Type")), "multipart/form-data") {
+		payloadJSON := ctx.PostForm("payload")
+		if payloadJSON == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "payload is required"})
+			return
+		}
+		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload JSON", "details": err.Error()})
+			return
+		}
+	} else {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "multipart/form-data with invoice documents is required"})
+		return
+	}
+
+	if err := validatePurchaseRequestInvoiceRevisionPayload(payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form", "details": err.Error()})
+		return
+	}
+
+	documentFiles := append([]*multipart.FileHeader{}, form.File["documents"]...)
+	documentFiles = append(documentFiles, form.File["invoice_documents"]...)
+	documentFiles = append(documentFiles, form.File["attachments"]...)
+	documentFiles = append(documentFiles, form.File["document"]...)
+	if len(documentFiles) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Vendor invoice document is required"})
+		return
+	}
+
+	if err := validatePurchaseRequestDocumentFiles(documentFiles); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	documents, savedPaths, err := c.preparePurchaseRequestDocumentRecords(
+		ctx,
+		uint(id),
+		documentFiles,
+		userID,
+		models.PurchaseRequestDocumentVendorInvoice,
+	)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	pr, err := c.service.SubmitPurchaseRequestInvoiceRevision(uint(id), userID, userRole, payload, documents)
+	if err != nil {
+		cleanupUploadedFiles(savedPaths)
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Vendor invoice revision submitted for approval",
+		"data":    pr,
+	})
+}
+
 func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -239,6 +422,77 @@ func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 		"message":            "Documents submitted successfully",
 		"documents":          documents,
 		"reapproval_started": reapprovalStarted,
+	})
+}
+
+func (c *PurchaseRequestController) UploadRealizationDocuments(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form", "details": err.Error()})
+		return
+	}
+
+	documentFiles := append([]*multipart.FileHeader{}, form.File["documents"]...)
+	documentFiles = append(documentFiles, form.File["realization_documents"]...)
+	documentFiles = append(documentFiles, form.File["attachments"]...)
+	documentFiles = append(documentFiles, form.File["document"]...)
+	if len(documentFiles) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "No files uploaded"})
+		return
+	}
+
+	if err := validatePurchaseRequestDocumentFiles(documentFiles); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	const uploadDir = "./uploads/purchase-requests"
+	documents := make([]models.PurchaseRequestDocument, 0, len(documentFiles))
+	savedPaths := make([]string, 0, len(documentFiles))
+	for _, fileHeader := range documentFiles {
+		filename, filePath, mimeType, err := prepareValidatedDocumentUpload(fileHeader, uint(id), uploadDir)
+		if err != nil {
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save uploaded file"})
+			return
+		}
+		savedPaths = append(savedPaths, filePath)
+
+		document, err := c.service.UploadPurchaseRequestRealizationDocument(
+			uint(id),
+			fileHeader.Filename,
+			"/uploads/purchase-requests/"+filename,
+			fileHeader.Size,
+			mimeType,
+			userID,
+			userRole,
+		)
+		if err != nil {
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		documents = append(documents, *document)
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"message":   "Realization documents uploaded successfully",
+		"documents": documents,
 	})
 }
 
@@ -325,11 +579,80 @@ func (c *PurchaseRequestController) savePurchaseRequestDocuments(ctx *gin.Contex
 	return documents, nil
 }
 
+func (c *PurchaseRequestController) preparePurchaseRequestDocumentRecords(ctx *gin.Context, purchaseRequestID uint, files []*multipart.FileHeader, userID uint, documentType string) ([]models.PurchaseRequestDocument, []string, error) {
+	const uploadDir = "./uploads/purchase-requests"
+
+	documents := make([]models.PurchaseRequestDocument, 0, len(files))
+	savedPaths := make([]string, 0, len(files))
+
+	for _, fileHeader := range files {
+		filename, filePath, mimeType, err := prepareValidatedDocumentUpload(fileHeader, purchaseRequestID, uploadDir)
+		if err != nil {
+			cleanupUploadedFiles(savedPaths)
+			return nil, nil, err
+		}
+
+		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
+			cleanupUploadedFiles(savedPaths)
+			return nil, nil, err
+		}
+		savedPaths = append(savedPaths, filePath)
+
+		documents = append(documents, models.PurchaseRequestDocument{
+			PurchaseRequestID: purchaseRequestID,
+			DocumentType:      documentType,
+			FileName:          fileHeader.Filename,
+			FilePath:          "/uploads/purchase-requests/" + filename,
+			FileSize:          fileHeader.Size,
+			MimeType:          mimeType,
+			UploadedBy:        userID,
+		})
+	}
+
+	return documents, savedPaths, nil
+}
+
 func validatePurchaseRequestDocumentFiles(files []*multipart.FileHeader) error {
 	const uploadDir = "./uploads/purchase-requests"
 	for _, fileHeader := range files {
 		if _, _, _, err := prepareValidatedDocumentUpload(fileHeader, 0, uploadDir); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validatePurchaseRequestInvoiceRevisionPayload(payload models.PurchaseRequestInvoiceRevisionPayload) error {
+	if len(payload.Items) == 0 {
+		return fmt.Errorf("items are required")
+	}
+	for index, item := range payload.Items {
+		if item.ItemID == 0 {
+			return fmt.Errorf("item_id is required for item %d", index+1)
+		}
+		if item.Quantity < 1 {
+			return fmt.Errorf("quantity must be at least 1 for item %d", index+1)
+		}
+		if item.EstimatedPrice < 0 {
+			return fmt.Errorf("estimated_price cannot be negative for item %d", index+1)
+		}
+	}
+	return nil
+}
+
+func validatePurchaseRequestRequesterRevisionPayload(payload models.PurchaseRequestRequesterRevisionPayload) error {
+	if len(payload.Items) == 0 {
+		return fmt.Errorf("items are required")
+	}
+	for index, item := range payload.Items {
+		if item.ItemID == 0 {
+			return fmt.Errorf("item_id is required for item %d", index+1)
+		}
+		if item.Quantity < 1 {
+			return fmt.Errorf("quantity must be at least 1 for item %d", index+1)
+		}
+		if item.EstimatedPrice < 0 {
+			return fmt.Errorf("estimated_price cannot be negative for item %d", index+1)
 		}
 	}
 	return nil
@@ -471,4 +794,37 @@ func (c *PurchaseRequestController) Reject(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{"message": message})
+}
+
+func (c *PurchaseRequestController) Cancel(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestCancelPayload
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized: missing user context"})
+		return
+	}
+	role := ctx.GetString("role")
+
+	pr, err := c.service.CancelPurchaseRequest(uint(id), userID.(uint), role, payload.Reason)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Purchase request cancelled successfully",
+		"data":    pr,
+	})
 }
