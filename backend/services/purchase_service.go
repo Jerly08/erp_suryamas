@@ -3324,11 +3324,11 @@ func (s *PurchaseService) AttachPurchasePaymentProof(
 	var reviewedBy *uint
 	var reviewedAt *time.Time
 	reviewNotes := ""
-	if models.IsFinanceManagerRole(userRole) && s.isPurchaseFinalizedForRequester(purchase.Status) {
+	if models.IsFinanceManagerRole(userRole) && s.canReviewPurchasePaymentProof(*purchase) {
 		reviewStatus = models.PurchasePaymentProofApproved
 		reviewedBy = &userID
 		reviewedAt = &now
-		reviewNotes = "Bukti pembayaran bank diunggah oleh Finance Manager setelah final approval"
+		reviewNotes = "Bukti pembayaran bank diunggah oleh Finance Manager setelah purchase approval"
 	}
 
 	var payment models.PurchasePayment
@@ -3392,7 +3392,7 @@ func (s *PurchaseService) GetPurchasePaymentProofForDownload(paymentID uint, use
 	if err != nil {
 		return nil, err
 	}
-	if canDownloadFromPR && s.isPurchaseFinalizedForRequester(payment.Purchase.Status) {
+	if canDownloadFromPR && s.canReviewPurchasePaymentProof(payment.Purchase) {
 		if strings.ToUpper(strings.TrimSpace(payment.PaymentProofReviewStatus)) != models.PurchasePaymentProofApproved {
 			return nil, errors.New("bukti pembayaran bank belum disetujui Finance Manager")
 		}
@@ -3425,8 +3425,8 @@ func (s *PurchaseService) ReviewPurchasePaymentProof(paymentID uint, reviewerID 
 	if strings.TrimSpace(payment.PaymentProofFilePath) == "" {
 		return nil, errors.New("bukti pembayaran bank belum diunggah")
 	}
-	if !s.isPurchaseFinalizedForRequester(payment.Purchase.Status) {
-		return nil, errors.New("review bukti pembayaran susulan hanya untuk purchase yang sudah final")
+	if !s.canReviewPurchasePaymentProof(payment.Purchase) {
+		return nil, errors.New("review bukti pembayaran bank hanya untuk purchase yang sudah disetujui Finance Manager")
 	}
 
 	now := time.Now()
@@ -3503,6 +3503,23 @@ func (s *PurchaseService) userCanAccessPaymentProofFromPurchaseRequest(purchaseI
 func (s *PurchaseService) isPurchaseFinalizedForRequester(status string) bool {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case models.PurchaseStatusApproved, models.PurchaseStatusCompleted, models.PurchaseStatusPaid:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *PurchaseService) canReviewPurchasePaymentProof(purchase models.Purchase) bool {
+	if s.isPurchaseFinalizedForRequester(purchase.Status) {
+		return true
+	}
+
+	if strings.ToUpper(strings.TrimSpace(purchase.ApprovalStatus)) != models.PurchaseApprovalApproved {
+		return false
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(purchase.Status)) {
+	case models.PurchaseStatusPendingAccounting, models.PurchaseStatusPendingFinalApproval:
 		return true
 	default:
 		return false
