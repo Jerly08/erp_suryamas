@@ -32,6 +32,7 @@ const (
 
 const (
 	PayrollDocumentBillingRealization = "BILLING_REALIZATION_DOCUMENT"
+	PayrollDocumentImportSource       = "IMPORT_SOURCE_DOCUMENT"
 )
 
 type PayrollRun struct {

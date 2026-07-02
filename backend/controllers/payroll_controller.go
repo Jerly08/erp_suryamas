@@ -3,6 +3,7 @@ package controllers
 import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -25,6 +26,8 @@ import (
 type PayrollController struct {
 	db *gorm.DB
 }
+
+const payrollExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 func NewPayrollController(db *gorm.DB) *PayrollController {
 	return &PayrollController{db: db}
@@ -172,6 +175,111 @@ var payrollImportTemplateHeaders = []string{
 	"OTHER DEDUCTION",
 	"DEDUCTION (PINJAMAN KARYAWAN)",
 	"NET PAY",
+}
+
+func payrollExcelSafeFilename(payrollNumber string) string {
+	filename := strings.TrimSpace(payrollNumber)
+	if filename == "" {
+		filename = "payroll"
+	}
+	filename = strings.NewReplacer("/", "-", "\\", "-", " ", "_").Replace(filename)
+	filename = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`).ReplaceAllString(filename, "-")
+	filename = strings.Trim(filename, "-_.")
+	if filename == "" {
+		filename = "payroll"
+	}
+	return filename + "_pengajuan.xlsx"
+}
+
+func payrollRunPeriodLabel(run *models.PayrollRun) string {
+	if run == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s to %s", run.PeriodStart.Format("02/01/2006"), run.PeriodEnd.Format("02/01/2006"))
+}
+
+func buildPayrollRunExcel(run *models.PayrollRun) ([]byte, error) {
+	workbook := excelize.NewFile()
+	defer workbook.Close()
+
+	sheetName := "Salary"
+	workbook.SetSheetName("Sheet1", sheetName)
+
+	for index, header := range payrollImportTemplateHeaders {
+		cell, err := excelize.CoordinatesToCellName(index+1, 1)
+		if err != nil {
+			return nil, err
+		}
+		if err := workbook.SetCellValue(sheetName, cell, header); err != nil {
+			return nil, err
+		}
+	}
+
+	headerStyle, _ := workbook.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Color: "FFFFFF"},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"305496"},
+			Pattern: 1,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+			WrapText:   true,
+		},
+	})
+	dateStyle, _ := workbook.NewStyle(&excelize.Style{NumFmt: 14})
+	numberStyle, _ := workbook.NewStyle(&excelize.Style{NumFmt: 4})
+
+	workbook.SetCellStyle(sheetName, "A1", "V1", headerStyle)
+	workbook.SetRowHeight(sheetName, 1, 34)
+	workbook.SetColWidth(sheetName, "A", "V", 18)
+	workbook.SetColWidth(sheetName, "B", "B", 24)
+	workbook.SetColWidth(sheetName, "I", "I", 28)
+	workbook.SetColWidth(sheetName, "J", "J", 24)
+	workbook.SetColWidth(sheetName, "U", "U", 28)
+
+	periodLabel := payrollRunPeriodLabel(run)
+	for index, item := range run.Items {
+		row := index + 2
+		if run.PaymentDate != nil {
+			workbook.SetCellValue(sheetName, fmt.Sprintf("A%d", row), *run.PaymentDate)
+		}
+		workbook.SetCellValue(sheetName, fmt.Sprintf("B%d", row), periodLabel)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("C%d", row), item.WorkingDay)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("D%d", row), item.EmployeeCode)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("E%d", row), item.WorkUnit)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("F%d", row), item.Division)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("G%d", row), item.PaymentVia)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("H%d", row), item.AccountNo)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("I%d", row), item.EmployeeName)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("J%d", row), item.Position)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("K%d", row), item.BaseSalary)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("L%d", row), item.AttendanceAllowance)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("M%d", row), item.CompensationPKWT)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("N%d", row), item.Overtime)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("O%d", row), item.PPh)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("P%d", row), item.BPJSTKJHT)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("Q%d", row), item.BPJSTKJP)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("R%d", row), item.BPJSKesehatan)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("S%d", row), item.Proportional)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("T%d", row), item.OtherDeduction)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("U%d", row), item.EmployeeLoanDeduction)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("V%d", row), item.NetPay)
+	}
+
+	if len(run.Items) > 0 {
+		lastRow := len(run.Items) + 1
+		workbook.SetCellStyle(sheetName, "A2", fmt.Sprintf("A%d", lastRow), dateStyle)
+		workbook.SetCellStyle(sheetName, "C2", fmt.Sprintf("C%d", lastRow), numberStyle)
+		workbook.SetCellStyle(sheetName, "K2", fmt.Sprintf("V%d", lastRow), numberStyle)
+	}
+
+	buffer, err := workbook.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }
 
 func payrollItemGross(item *models.PayrollItemCreateRequest) float64 {
@@ -925,6 +1033,67 @@ func (c *PayrollController) UploadDocuments(ctx *gin.Context) {
 	})
 }
 
+func (c *PayrollController) DownloadDocument(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("document_id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payroll document ID"})
+		return
+	}
+
+	if !canViewPayrollDetail(ctx.GetString("role")) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Access denied: payroll document detail is restricted"})
+		return
+	}
+
+	var document models.PayrollDocument
+	if err := c.db.First(&document, uint(id)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payroll document not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payroll document"})
+		return
+	}
+
+	sendStoredUploadAttachment(ctx, document.FilePath, document.FileName, document.MimeType, "payroll", "payroll-imports")
+}
+
+func (c *PayrollController) DownloadPayrollRunExcel(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payroll ID"})
+		return
+	}
+
+	if !canViewPayrollDetail(ctx.GetString("role")) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Access denied: payroll detail is restricted"})
+		return
+	}
+
+	var run models.PayrollRun
+	if err := c.db.Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("id ASC")
+	}).First(&run, uint(id)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Payroll not found"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payroll data"})
+		return
+	}
+
+	fileBytes, err := buildPayrollRunExcel(&run)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat file Excel payroll"})
+		return
+	}
+
+	filename := payrollExcelSafeFilename(run.PayrollNumber)
+	ctx.Header("Content-Type", payrollExcelContentType)
+	ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	ctx.Data(http.StatusOK, payrollExcelContentType, fileBytes)
+}
+
 func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 	workbook := excelize.NewFile()
 	sheetName := "Salary"
@@ -1157,6 +1326,40 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": response})
 }
 
+func bindPayrollRunCreateRequest(ctx *gin.Context) (models.PayrollRunCreateRequest, *multipart.FileHeader, error) {
+	var req models.PayrollRunCreateRequest
+	if strings.HasPrefix(strings.ToLower(ctx.ContentType()), "multipart/form-data") {
+		payload := strings.TrimSpace(ctx.PostForm("payload"))
+		if payload == "" {
+			payload = strings.TrimSpace(ctx.PostForm("data"))
+		}
+		if payload == "" {
+			return req, nil, fmt.Errorf("payload payroll wajib diisi")
+		}
+		if err := json.Unmarshal([]byte(payload), &req); err != nil {
+			return req, nil, fmt.Errorf("payload payroll tidak valid: %w", err)
+		}
+
+		fileHeader, err := ctx.FormFile("import_file")
+		if err != nil {
+			if !errors.Is(err, http.ErrMissingFile) {
+				return req, nil, fmt.Errorf("file import payroll tidak bisa dibaca: %w", err)
+			}
+			return req, nil, nil
+		}
+		extension := strings.ToLower(filepath.Ext(fileHeader.Filename))
+		if extension != ".xlsx" && extension != ".xlsm" {
+			return req, nil, fmt.Errorf("file import payroll harus .xlsx atau .xlsm")
+		}
+		return req, fileHeader, nil
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return req, nil, err
+	}
+	return req, nil, nil
+}
+
 func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 	userID, ok := currentUserID(ctx)
 	if !ok {
@@ -1164,8 +1367,8 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		return
 	}
 
-	var req models.PayrollRunCreateRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	req, importFileHeader, err := bindPayrollRunCreateRequest(ctx)
+	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1297,13 +1500,55 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		return
 	}
 
-	if err := tx.Preload("CreatedBy").Preload("Items").First(&run, run.ID).Error; err != nil {
+	savedPaths := []string{}
+	if importFileHeader != nil {
+		const importUploadDir = "./uploads/payroll-imports"
+		filename, filePath, mimeType, err := prepareValidatedDocumentUpload(importFileHeader, run.ID, importUploadDir)
+		if err != nil {
+			tx.Rollback()
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := ctx.SaveUploadedFile(importFileHeader, filePath); err != nil {
+			tx.Rollback()
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save payroll import file"})
+			return
+		}
+		savedPaths = append(savedPaths, filePath)
+
+		sourceDocument := models.PayrollDocument{
+			PayrollRunID: run.ID,
+			DocumentType: models.PayrollDocumentImportSource,
+			FileName:     importFileHeader.Filename,
+			FilePath:     "/uploads/payroll-imports/" + filename,
+			FileSize:     importFileHeader.Size,
+			MimeType:     mimeType,
+			UploadedBy:   userID,
+		}
+		if err := tx.Create(&sourceDocument).Error; err != nil {
+			tx.Rollback()
+			cleanupUploadedFiles(savedPaths)
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save payroll import document"})
+			return
+		}
+	}
+
+	if err := tx.Preload("CreatedBy").
+		Preload("Items").
+		Preload("Documents", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at ASC")
+		}).
+		Preload("Documents.Uploader").
+		First(&run, run.ID).Error; err != nil {
 		tx.Rollback()
+		cleanupUploadedFiles(savedPaths)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load created payroll"})
 		return
 	}
 
 	if err := tx.Commit().Error; err != nil {
+		cleanupUploadedFiles(savedPaths)
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save payroll"})
 		return
 	}

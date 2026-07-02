@@ -1,4 +1,23 @@
+import { API_ENDPOINTS } from "@/config/api";
 import api from "./api";
+
+const downloadBlobResponse = (blob: Blob, disposition: string, fallbackName: string) => {
+  const filenameMatch =
+    disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+    disposition.match(/filename="?([^"]+)"?/i);
+  const filename = filenameMatch?.[1]
+    ? decodeURIComponent(filenameMatch[1])
+    : fallbackName;
+
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
 
 export interface User {
   id: number;
@@ -388,6 +407,21 @@ export const purchaseRequestService = {
   deleteDocument: async (documentId: number): Promise<{ message: string }> => {
     const response = await api.delete(`${BASE_URL}/documents/${documentId}`);
     return response.data;
+  },
+
+  downloadDocument: async (
+    documentId: number,
+    fallbackName = "purchase-request-document",
+  ): Promise<void> => {
+    const response = await api.get(
+      API_ENDPOINTS.PURCHASE_REQUEST_DOCUMENT_DOWNLOAD(documentId),
+      { responseType: "blob" },
+    );
+    downloadBlobResponse(
+      response.data,
+      response.headers?.["content-disposition"] || "",
+      fallbackName,
+    );
   },
 
   review: async (

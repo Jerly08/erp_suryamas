@@ -152,19 +152,6 @@ export class ProductionApiClient implements IApiService {
    * Get user ID from token or session (implement based on your auth system)
    */
   private getUserId(): string | undefined {
-    try {
-      // Implement based on your authentication system
-      if (typeof window !== 'undefined') {
-        const token = localStorage.getItem('access_token');
-        if (token) {
-          // Parse JWT token to get user ID (simplified)
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          return payload.sub || payload.userId;
-        }
-      }
-    } catch {
-      // Ignore errors in getUserId
-    }
     return undefined;
   }
 

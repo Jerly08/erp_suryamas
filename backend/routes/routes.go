@@ -329,6 +329,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				auth.POST("/register", authController.Register)
 			}
 			auth.POST("/refresh", authController.RefreshToken)
+			auth.POST("/logout", authController.Logout)
 
 			// Token validation endpoint (requires auth)
 			auth.GET("/validate-token", jwtManager.AuthRequired(), authController.ValidateToken)
@@ -709,6 +710,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			{
 				purchaseRequests.GET("", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetAll)
 				purchaseRequests.GET("/payment-proofs/:payment_id/download", permMiddleware.CanView("purchase_requests"), purchaseController.DownloadPaymentProof)
+				purchaseRequests.GET("/documents/:document_id/download", permMiddleware.CanView("purchase_requests"), purchaseRequestController.DownloadDocument)
 				purchaseRequests.GET("/:id", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetByID)
 				purchaseRequests.POST("", permMiddleware.CanCreate("purchase_requests"), purchaseRequestController.Create)
 				purchaseRequests.GET("/:id/documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.GetDocuments)
@@ -900,6 +902,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.GET("/vendors", permMiddleware.CanView("purchases"), contactController.GetVendorsForPurchase)
 				purchases.POST("/vendors", permMiddleware.CanCreate("purchases"), contactController.CreateVendorForPurchase)
 				purchases.GET("/payment-proofs/:payment_id/download", rbacMgr.RequireAnyPermission("purchases:view", "purchase_requests:view"), purchaseController.DownloadPaymentProof)
+				purchases.GET("/documents/:document_id/download", permMiddleware.CanView("purchases"), purchaseController.DownloadDocument)
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEditPurchaseOrFinanceStaffDraft(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
@@ -1019,6 +1022,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				payroll.GET("", permMiddleware.CanView("payroll"), payrollController.GetPayrollRuns)
 				payroll.GET("/import/template", permMiddleware.CanCreate("payroll"), payrollController.DownloadPayrollImportTemplate)
 				payroll.POST("/import/preview", permMiddleware.CanCreate("payroll"), payrollController.ImportPayrollPreview)
+				payroll.GET("/documents/:document_id/download", permMiddleware.CanView("payroll"), payrollController.DownloadDocument)
+				payroll.GET("/:id/export/excel", permMiddleware.CanView("payroll"), payrollController.DownloadPayrollRunExcel)
 				payroll.GET("/:id", permMiddleware.CanView("payroll"), payrollController.GetPayrollRun)
 				payroll.POST("", permMiddleware.CanCreate("payroll"), payrollController.CreatePayrollRun)
 				payroll.POST("/:id/documents", permMiddleware.CanEdit("payroll"), payrollController.UploadDocuments)
@@ -1345,9 +1350,12 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 		}
 	}
 
-	// Static files (templates and uploads)
+	// Static files. Only public image folders are exposed; sensitive documents
+	// must go through authenticated download endpoints.
 	r.Static("/templates", "./templates")
-	r.Static("/uploads", "./uploads")
+	r.Static("/uploads/company", "./uploads/company")
+	r.Static("/uploads/products", "./uploads/products")
+	r.Static("/uploads/assets", "./uploads/assets")
 
 	// Global favicon handler to avoid 404s in all contexts (Swagger and non-Swagger)
 	r.GET("/favicon.ico", func(c *gin.Context) { c.Status(http.StatusNoContent) })

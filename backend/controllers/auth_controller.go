@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/config"
 	"app-sistem-akuntansi/middleware"
 	"app-sistem-akuntansi/models"
 	"log"
@@ -218,6 +219,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	}
 
 	ac.logAuthAttempt(identifier, true, "", c.ClientIP(), c.Request.UserAgent())
+	middleware.SetAuthCookies(c, config.LoadConfig(), tokens)
 
 	// Fetch settings to get company_type
 	var settings models.Settings
@@ -266,17 +268,26 @@ func (ac *AuthController) logAuthAttempt(identifier string, success bool, reason
 // @Router /auth/refresh [post]
 func (ac *AuthController) RefreshToken(c *gin.Context) {
 	var req models.RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil && c.Request.ContentLength > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	refreshToken := strings.TrimSpace(req.RefreshToken)
+	if refreshToken == "" {
+		refreshToken, _ = middleware.ExtractRefreshTokenFromRequest(c)
+	}
+	if refreshToken == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "refresh token is required"})
 		return
 	}
 
 	jw := middleware.NewJWTManager(ac.DB)
-	tokens, err := jw.RefreshAccessToken(req.RefreshToken, requestDeviceInfo(c), c.ClientIP(), c.Request.UserAgent())
+	tokens, err := jw.RefreshAccessToken(refreshToken, requestDeviceInfo(c), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired refresh token"})
 		return
 	}
+	middleware.SetAuthCookies(c, config.LoadConfig(), tokens)
 
 	// Fetch settings to get company_type
 	var settings models.Settings
@@ -293,6 +304,14 @@ func (ac *AuthController) RefreshToken(c *gin.Context) {
 		"user":          tokens.User,
 		"company_type":  settings.CompanyType,
 		"message":       "Token refreshed successfully",
+	})
+}
+
+func (ac *AuthController) Logout(c *gin.Context) {
+	middleware.ClearAuthCookies(c, config.LoadConfig())
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Logged out successfully",
 	})
 }
 

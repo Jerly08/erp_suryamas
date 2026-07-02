@@ -882,21 +882,29 @@ func (pc *PurchaseController) UploadDocument(c *gin.Context) {
 
 	userID := c.MustGet("user_id").(uint)
 
-	// In a real implementation, you would save the file to storage
-	// For now, we'll simulate the file path
-	filePath := "/uploads/purchases/" + header.Filename
+	const uploadDir = "./uploads/purchases"
+	filename, filePath, mimeType, err := prepareValidatedDocumentUpload(header, uint(id), uploadDir)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := c.SaveUploadedFile(header, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save uploaded file"})
+		return
+	}
 
 	err = pc.purchaseService.UploadDocument(
 		uint(id),
 		documentType,
 		header.Filename,
-		filePath,
+		"/uploads/purchases/"+filename,
 		header.Size,
-		header.Header.Get("Content-Type"),
+		mimeType,
 		userID,
 	)
 
 	if err != nil {
+		_ = os.Remove(filePath)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1000,23 +1008,22 @@ func (pc *PurchaseController) DownloadPaymentProof(c *gin.Context) {
 		return
 	}
 
-	filePath := strings.TrimSpace(payment.PaymentProofFilePath)
-	if strings.HasPrefix(filePath, "/") {
-		filePath = strings.TrimPrefix(filePath, "/")
-	}
-	if _, err := os.Stat(filePath); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "File bukti pembayaran tidak ditemukan di server"})
+	sendStoredUploadAttachment(c, payment.PaymentProofFilePath, payment.PaymentProofFileName, payment.PaymentProofMimeType, "purchase-payment-proofs")
+}
+
+func (pc *PurchaseController) DownloadDocument(c *gin.Context) {
+	documentID, err := strconv.ParseUint(c.Param("document_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid document ID"})
 		return
 	}
 
-	fileName := strings.TrimSpace(payment.PaymentProofFileName)
-	if fileName == "" {
-		fileName = filepath.Base(filePath)
+	document, ok := pc.getAccessiblePurchaseDocument(c, uint(documentID))
+	if !ok {
+		return
 	}
-	if payment.PaymentProofMimeType != "" {
-		c.Header("Content-Type", payment.PaymentProofMimeType)
-	}
-	c.FileAttachment(filePath, fileName)
+
+	sendStoredUploadAttachment(c, document.FilePath, document.FileName, document.MimeType, "purchases")
 }
 
 func (pc *PurchaseController) ReviewPaymentProof(c *gin.Context) {

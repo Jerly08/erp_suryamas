@@ -71,7 +71,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  Link,
   Icon,
   Menu,
   MenuButton,
@@ -111,6 +110,7 @@ import purchaseService, {
 } from "@/services/purchaseService";
 import {
   PurchaseRequest,
+  purchaseRequestService,
   PurchaseRequestItem as PurchaseRequestLineItem,
 } from "@/services/purchaseRequestService";
 import SubmitApprovalButton from "@/components/purchase/SubmitApprovalButton";
@@ -140,7 +140,6 @@ import {
   filterOperationalCashBankAccounts,
 } from "@/utils/accountFilters";
 import { getPurchasePPhStatus } from "@/utils/taxPaymentStatus";
-import { getImageUrl } from "@/utils/imageUrl";
 // SSOT Journal Integration
 import PurchaseJournalEntriesModal from "../../src/components/purchase/PurchaseJournalEntriesModal";
 import purchaseJournalService from "../../src/services/purchaseJournalService";
@@ -155,8 +154,6 @@ const formatFileSize = (size?: number) => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
-
-const getDocumentUrl = (path?: string) => getImageUrl(path || "") || "#";
 
 const getPurchaseRequestRealizationDocuments = (
   purchase?: Purchase | null,
@@ -3653,6 +3650,25 @@ const PurchasesPage: React.FC = () => {
     }
   };
 
+  const handleDownloadPurchaseRequestDocument = async (
+    document: PurchaseRequestDocumentSummary,
+  ) => {
+    try {
+      await purchaseRequestService.downloadDocument(document.id, document.file_name);
+    } catch (err: any) {
+      toast({
+        title: "Gagal membuka dokumen realisasi",
+        description:
+          err.response?.data?.error ||
+          err.message ||
+          "Dokumen belum bisa diunduh.",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  };
+
   const canUploadPaymentProofForPurchase = (purchase?: Purchase | null) => {
     if (!purchase || purchase.payment_method === "CREDIT") return false;
     return (
@@ -6936,21 +6952,16 @@ const PurchasesPage: React.FC = () => {
                                             </HStack>
 
                                             <Button
-                                              as={Link}
-                                              href={getDocumentUrl(
-                                                document.file_path,
-                                              )}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
+                                              onClick={() =>
+                                                handleDownloadPurchaseRequestDocument(
+                                                  document,
+                                                )
+                                              }
                                               leftIcon={<FiDownload />}
                                               size="sm"
                                               variant="outline"
                                               colorScheme="green"
-                                              textDecoration="none"
                                               w={{ base: "100%", sm: "auto" }}
-                                              _hover={{
-                                                textDecoration: "none",
-                                              }}
                                             >
                                               Buka
                                             </Button>

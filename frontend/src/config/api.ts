@@ -20,6 +20,7 @@ export const API_ENDPOINTS = {
   LOGIN: "/api/v1/auth/login",
   REGISTER: "/api/v1/auth/register",
   REFRESH: "/api/v1/auth/refresh",
+  LOGOUT: "/api/v1/auth/logout",
   VALIDATE_TOKEN: "/api/v1/auth/validate-token",
   PROFILE: "/api/v1/profile",
 
@@ -28,6 +29,7 @@ export const API_ENDPOINTS = {
     LOGIN: "/api/v1/auth/login",
     REGISTER: "/api/v1/auth/register",
     REFRESH: "/api/v1/auth/refresh",
+    LOGOUT: "/api/v1/auth/logout",
     VALIDATE_TOKEN: "/api/v1/auth/validate-token",
     PROFILE: "/api/v1/profile",
     // Note: Ensure backend supports this; keep for compatibility if implemented
@@ -447,10 +449,17 @@ export const API_ENDPOINTS = {
     `/api/v1/purchases/${id}/payment-proof`,
   PURCHASES_PAYMENT_PROOF_DOWNLOAD: (paymentId: number) =>
     `/api/v1/purchases/payment-proofs/${paymentId}/download`,
+  PURCHASES_DOCUMENT_DOWNLOAD: (documentId: number) =>
+    `/api/v1/purchases/documents/${documentId}/download`,
   PURCHASES_PAYMENT_PROOF_REVIEW: (paymentId: number) =>
     `/api/v1/purchases/payment-proofs/${paymentId}/review`,
   PURCHASE_REQUEST_PAYMENT_PROOF_DOWNLOAD: (paymentId: number) =>
     `/api/v1/purchase-requests/payment-proofs/${paymentId}/download`,
+  PURCHASE_REQUEST_DOCUMENT_DOWNLOAD: (documentId: number) =>
+    `/api/v1/purchase-requests/documents/${documentId}/download`,
+  PAYROLL_DOCUMENT_DOWNLOAD: (documentId: number) =>
+    `/api/v1/payroll/documents/${documentId}/download`,
+  PAYROLL_EXPORT_EXCEL: (id: number) => `/api/v1/payroll/${id}/export/excel`,
   PURCHASES_PAY_PPH: (id: number) => `/api/v1/purchases/${id}/pay-pph`,
   PURCHASES_EXPORT_PDF: "/api/v1/purchases/export/pdf",
   PURCHASES_EXPORT_CSV: "/api/v1/purchases/export/csv",

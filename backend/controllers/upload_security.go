@@ -48,6 +48,11 @@ var allowedDocumentUploadTypes = map[string]map[string]struct{}{
 		"application/zip":          {},
 		"application/octet-stream": {},
 	},
+	".xlsm": {
+		"application/vnd.ms-excel.sheet.macroEnabled.12": {},
+		"application/zip":          {},
+		"application/octet-stream": {},
+	},
 	".csv": {
 		"text/csv":                  {},
 		"application/csv":           {},

@@ -303,8 +303,9 @@ func sanitizeTokenMetadata(value, fallback string, maxLen int) string {
 // Enhanced JWT middleware with blacklist checking and session validation
 func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Enhanced header debugging
+		// Enhanced header/cookie debugging
 		authHeader := c.GetHeader("Authorization")
+		tokenString, tokenSource := ExtractAccessTokenFromRequest(c)
 
 		// Debug: Log all headers for troubleshooting
 		if gin.Mode() == gin.DebugMode {
@@ -323,12 +324,12 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 			}
 		}
 
-		if authHeader == "" {
+		if tokenString == "" {
 			// Enhanced error response with debugging info
 			errorResponse := gin.H{
-				"error":   "Authorization header required",
+				"error":   "Authorization token required",
 				"code":    "AUTH_HEADER_MISSING",
-				"message": "Please include 'Authorization: Bearer <token>' header in your request",
+				"message": "Please include a Bearer token or authenticated session cookie in your request",
 			}
 
 			// Add debug info in development mode
@@ -339,7 +340,7 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 					"user_agent":      c.GetHeader("User-Agent"),
 					"content_type":    c.GetHeader("Content-Type"),
 					"all_headers":     len(c.Request.Header),
-					"expected_format": "Authorization: Bearer <your-jwt-token>",
+					"expected_format": "Authorization: Bearer <your-jwt-token> or auth cookie",
 				}
 			}
 
@@ -348,8 +349,7 @@ func (jm *JWTManager) AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
+		if tokenSource == "" && authHeader != "" {
 			// Enhanced format error response
 			errorResponse := gin.H{
 				"error":   "Invalid authorization header format",

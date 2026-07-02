@@ -1,8 +1,34 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+	poweredByHeader: false,
 	env: {
 		NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+	},
+	async headers() {
+		return [
+			{
+				source: '/:path*',
+				headers: [
+					{
+						key: 'Content-Security-Policy',
+						value: [
+							"default-src 'self'",
+							"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+							"style-src 'self' 'unsafe-inline'",
+							"img-src 'self' data: blob:",
+							"font-src 'self' data:",
+							"connect-src 'self'",
+							"media-src 'self' blob:",
+							"object-src 'none'",
+							"base-uri 'self'",
+							"frame-ancestors 'self'",
+							"form-action 'self'",
+						].join('; '),
+					},
+				],
+			},
+		];
 	},
 	typescript: {
 		// Next validator menghasilkan referensi .next/types yang salah arah
@@ -47,9 +73,16 @@ const nextConfig: NextConfig = {
 				destination: `${apiBaseUrl}/api/:path*`,
 			},
 			{
-				// Proxy /uploads/ to backend so static files (logos, etc.) are accessible
-				source: '/uploads/:path*',
-				destination: `${apiBaseUrl}/uploads/:path*`,
+				source: '/uploads/company/:path*',
+				destination: `${apiBaseUrl}/uploads/company/:path*`,
+			},
+			{
+				source: '/uploads/products/:path*',
+				destination: `${apiBaseUrl}/uploads/products/:path*`,
+			},
+			{
+				source: '/uploads/assets/:path*',
+				destination: `${apiBaseUrl}/uploads/assets/:path*`,
 			},
 		];
 	},

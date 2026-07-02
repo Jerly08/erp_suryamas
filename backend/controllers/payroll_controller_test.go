@@ -204,6 +204,77 @@ func TestDownloadPayrollImportTemplateMatchesRequestedHeaderOrder(t *testing.T) 
 	require.Equal(t, "Payroll", paymentViaExample)
 }
 
+func TestDownloadPayrollRunExcelExportsSavedPayrollData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPayrollApprovalTestDB(t)
+
+	paymentDate := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	run := models.PayrollRun{
+		PayrollNumber: "PAY/2026/07/0001",
+		PeriodStart:   time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
+		PeriodEnd:     paymentDate,
+		PaymentDate:   &paymentDate,
+		Status:        models.PayrollStatusPendingApproval,
+		CreatedByID:   1,
+		TotalSalary:   10000000,
+		TotalBonus:    500000,
+		TotalPPh:      250000,
+		TotalBPJS:     250000,
+		TotalOverall:  10000000,
+		Items: []models.PayrollItem{
+			{
+				EmployeeName:          "Budi Santoso",
+				EmployeeCode:          "EMP-001",
+				WorkingDay:            22,
+				WorkUnit:              "Head Office",
+				PaymentVia:            "Payroll",
+				AccountNo:             "1122334455",
+				Division:              "Finance",
+				Position:              "Staff",
+				BaseSalary:            10000000,
+				AttendanceAllowance:   300000,
+				CompensationPKWT:      0,
+				Overtime:              200000,
+				PPh:                   250000,
+				BPJSTKJHT:             100000,
+				BPJSTKJP:              50000,
+				BPJSKesehatan:         100000,
+				OtherDeduction:        250000,
+				EmployeeLoanDeduction: 0,
+				NetPay:                10000000,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&run).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(uint64(run.ID), 10)}}
+	ctx.Set("role", models.RoleFinanceManager)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/payroll/"+strconv.FormatUint(uint64(run.ID), 10)+"/export/excel", nil)
+
+	NewPayrollController(db).DownloadPayrollRunExcel(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Header().Get("Content-Disposition"), "PAY-2026-07-0001_pengajuan.xlsx")
+
+	workbook, err := excelize.OpenReader(bytes.NewReader(recorder.Body.Bytes()))
+	require.NoError(t, err)
+	defer workbook.Close()
+
+	employeeName, err := workbook.GetCellValue("Salary", "I2")
+	require.NoError(t, err)
+	require.Equal(t, "Budi Santoso", employeeName)
+
+	baseSalary, err := workbook.GetCellValue("Salary", "K2", excelize.Options{RawCellValue: true})
+	require.NoError(t, err)
+	require.Equal(t, "10000000", baseSalary)
+
+	netPay, err := workbook.GetCellValue("Salary", "V2", excelize.Options{RawCellValue: true})
+	require.NoError(t, err)
+	require.Equal(t, "10000000", netPay)
+}
+
 func setupPayrollApprovalTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

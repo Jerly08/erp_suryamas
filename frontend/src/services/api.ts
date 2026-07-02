@@ -3,6 +3,7 @@ import API_BASE_URL, { API_ENDPOINTS } from '@/config/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   timeout: 30000, // Increased to 30 seconds for complex operations
   headers: {
     'Content-Type': 'application/json',
@@ -12,20 +13,7 @@ const api = axios.create({
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    try {
-      if (typeof window !== 'undefined') {
-        const token = window.localStorage.getItem('token');
-        if (token) {
-          (config.headers as any).Authorization = `Bearer ${token}`;
-          // Debug: log token usage for specific requests
-          if (config.url?.includes('payments') || config.url?.includes('products') || config.url?.includes('notifications')) {
-            console.log('Request interceptor - Using token for', config.url, '(length):', token.length);
-          }
-        }
-      }
-    } catch (e) {
-      // ignore localStorage errors (SSR or privacy mode)
-    }
+    config.withCredentials = true;
     return config;
   },
   (error) => {
@@ -141,21 +129,6 @@ api.interceptors.response.use(
       console.log(`API Interceptor - Attempting token refresh for 401 (attempt ${refreshAttempts}/${MAX_REFRESH_ATTEMPTS})`);
 
       try {
-        const storedRefresh = window.localStorage.getItem('refreshToken');
-        const storedToken = window.localStorage.getItem('token');
-
-        if (!storedRefresh) {
-          // No refresh token, clear auth and return specific error
-          console.warn('API Interceptor - No refresh token available');
-          window.localStorage.removeItem('token');
-          window.localStorage.removeItem('refreshToken');
-          window.localStorage.removeItem('user');
-
-          // Show auth expired modal
-          await showAuthExpiredModal();
-          return Promise.reject(createAuthExpiredError(error));
-        }
-
         if (!isRefreshing) {
           isRefreshing = true;
           refreshPromise = (async () => {
@@ -167,8 +140,9 @@ api.interceptors.response.use(
 
               const fetchPromise = fetch(`${API_BASE_URL}${API_ENDPOINTS.REFRESH}`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refresh_token: storedRefresh }),
+                body: JSON.stringify({}),
               });
 
               const resp = await Promise.race([fetchPromise, timeoutPromise]) as Response;
@@ -187,28 +161,18 @@ api.interceptors.response.use(
 
               console.log('Token refresh response data:', data);
 
-              // Handle different possible response structures
-              const newAccessToken = data.token || data.accessToken || data.access_token;
-              const newRefreshToken = data.refreshToken || data.refresh_token;
+              console.log('Cookie session refresh successful');
 
-              if (!newAccessToken) {
-                console.error('No access token received from refresh:', data);
-                throw new Error('No access token received from refresh');
-              }
-
-              console.log('Token refresh successful, new token length:', newAccessToken.length);
-
-              // Persist new tokens
-              window.localStorage.setItem('token', newAccessToken);
-              if (newRefreshToken) {
-                window.localStorage.setItem('refreshToken', newRefreshToken);
-              }
+              window.localStorage.removeItem('token');
+              window.localStorage.removeItem('refreshToken');
+              window.localStorage.removeItem('authToken');
+              window.localStorage.removeItem('access_token');
               if (data.user) {
                 window.localStorage.setItem('user', JSON.stringify(data.user));
               }
 
-              processQueue(null, newAccessToken);
-              return newAccessToken as string;
+              processQueue(null, '');
+              return true;
             } catch (refreshError) {
               // If refresh fails, clear auth data
               console.error('Token refresh failed:', refreshError);
@@ -228,8 +192,8 @@ api.interceptors.response.use(
           })();
         }
 
-        const newToken = await (refreshPromise as Promise<string>);
-        console.log('API Interceptor - Retrying request with new token length:', newToken.length);
+        await refreshPromise;
+        console.log('API Interceptor - Retrying request after cookie refresh');
         console.log('API Interceptor - Original request URL:', originalRequest.url);
         console.log('API Interceptor - Original request headers before update:', originalRequest.headers);
 
@@ -238,9 +202,11 @@ api.interceptors.response.use(
           ...originalRequest,
           headers: {
             ...originalRequest.headers,
-            Authorization: `Bearer ${newToken}`
-          }
+          },
+          withCredentials: true,
         };
+        delete retryConfig.headers.Authorization;
+        delete retryConfig.headers.authorization;
         delete retryConfig._retry;
 
         console.log('API Interceptor - Retry config headers:', retryConfig.headers);

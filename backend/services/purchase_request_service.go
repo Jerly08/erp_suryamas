@@ -29,6 +29,7 @@ type PurchaseRequestService interface {
 	UploadPurchaseRequestRealizationDocument(purchaseRequestID uint, fileName, filePath string, fileSize int64, mimeType string, userID uint, userRole string) (*models.PurchaseRequestDocument, error)
 	SubmitAdditionalDocumentsForApproval(purchaseRequestID uint, userID uint, userRole string, documentCount int) (bool, error)
 	GetPurchaseRequestDocuments(purchaseRequestID uint, userID uint, userRole string) ([]models.PurchaseRequestDocument, error)
+	GetPurchaseRequestDocumentForDownload(documentID uint, userID uint, userRole string) (*models.PurchaseRequestDocument, error)
 	DeletePurchaseRequestDocument(documentID uint, userID uint, userRole string) error
 	SyncPurchaseRequestItemsWithPurchase(purchase *models.Purchase) error
 	ReleasePurchaseRequestItemsFromPurchase(purchase *models.Purchase) error
@@ -1210,6 +1211,19 @@ func (s *purchaseRequestService) GetPurchaseRequestDocuments(purchaseRequestID u
 	}
 
 	return s.repo.GetDocumentsByPurchaseRequestID(purchaseRequestID)
+}
+
+func (s *purchaseRequestService) GetPurchaseRequestDocumentForDownload(documentID uint, userID uint, userRole string) (*models.PurchaseRequestDocument, error) {
+	document, err := s.repo.GetDocumentByID(documentID)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.GetPurchaseRequestByID(document.PurchaseRequestID, userID, userRole); err != nil {
+		return nil, err
+	}
+
+	return document, nil
 }
 
 func (s *purchaseRequestService) DeletePurchaseRequestDocument(documentID uint, userID uint, userRole string) error {

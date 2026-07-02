@@ -12,7 +12,6 @@ import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/u
 import accountService from '@/services/accountService';
 import type { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
-import { getImageUrl } from '@/utils/imageUrl';
 import {
   Alert,
   AlertDescription,
@@ -62,6 +61,8 @@ import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiP
 
 const ACCEPTED_DOCUMENT_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp';
 const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
+const PAYROLL_DOCUMENT_IMPORT_SOURCE = 'IMPORT_SOURCE_DOCUMENT';
+const PAYROLL_DOCUMENT_BILLING_REALIZATION = 'BILLING_REALIZATION_DOCUMENT';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('id-ID', {
@@ -326,6 +327,7 @@ export default function PayrollPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [payrollDocumentFiles, setPayrollDocumentFiles] = useState<File[]>([]);
   const [payrollDocumentUploading, setPayrollDocumentUploading] = useState(false);
+  const [downloadingPayrollId, setDownloadingPayrollId] = useState<number | null>(null);
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
   const [employeeLoanAccounts, setEmployeeLoanAccounts] = useState<AccountCatalogItem[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -516,6 +518,38 @@ export default function PayrollPage() {
     }
   };
 
+  const downloadPayrollDocument = async (document: { id: number; file_name: string }) => {
+    try {
+      await payrollService.downloadDocument(document.id, document.file_name);
+    } catch (error: unknown) {
+      toast({
+        title: 'Gagal membuka dokumen payroll',
+        description: getApiErrorMessage(error, 'Dokumen payroll belum bisa diunduh.'),
+        status: 'error',
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  };
+
+  const downloadPayrollRunExcel = async (payroll: PayrollRun) => {
+    setDownloadingPayrollId(payroll.id);
+    try {
+      const fallbackName = `${payroll.payroll_number.replace(/[\\/]/g, '-')}_pengajuan.xlsx`;
+      await payrollService.downloadPayrollExcel(payroll.id, fallbackName);
+    } catch (error: unknown) {
+      toast({
+        title: 'Gagal download pengajuan payroll',
+        description: getApiErrorMessage(error, 'File Excel payroll belum bisa diunduh.'),
+        status: 'error',
+        duration: 4000,
+        isClosable: true,
+      });
+    } finally {
+      setDownloadingPayrollId(null);
+    }
+  };
+
   const validatePayrollDocument = (file: File) => {
     const allowedExtensions = ACCEPTED_DOCUMENT_TYPES.split(',');
     const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
@@ -664,7 +698,7 @@ export default function PayrollPage() {
         payment_date: importDraft.payment_date,
         notes: importDraft.notes,
         items: importPreview.items.map(recalculatePayrollItem),
-      });
+      }, importFile);
       toast({
         title: 'Payroll import berhasil disubmit',
         description: 'Data import masuk ke antrian approval Finance Manager.',
@@ -998,7 +1032,9 @@ export default function PayrollPage() {
     }
   };
 
-  const selectedPayrollDocuments = selectedPayroll?.documents || [];
+  const allSelectedPayrollDocuments = selectedPayroll?.documents || [];
+  const selectedPayrollImportDocuments = allSelectedPayrollDocuments.filter((document) => document.document_type === PAYROLL_DOCUMENT_IMPORT_SOURCE);
+  const selectedPayrollDocuments = allSelectedPayrollDocuments.filter((document) => document.document_type === PAYROLL_DOCUMENT_BILLING_REALIZATION || !document.document_type);
   const canUploadPayrollDocuments = Boolean(
     selectedPayroll &&
       selectedPayroll.detail_allowed &&
@@ -1191,6 +1227,15 @@ export default function PayrollPage() {
                               <Td>
                                 <HStack spacing={2}>
                                   <IconButton aria-label="Lihat detail payroll" icon={<FiEye />} size="sm" variant="ghost" colorScheme="blue" onClick={() => openDetail(payroll)} />
+                                  <IconButton
+                                    aria-label="Download pengajuan payroll Excel"
+                                    icon={<FiDownload />}
+                                    size="sm"
+                                    variant="ghost"
+                                    colorScheme="teal"
+                                    onClick={() => downloadPayrollRunExcel(payroll)}
+                                    isLoading={downloadingPayrollId === payroll.id}
+                                  />
                                   {canApprovePayroll && payroll.status === 'APPROVED' && getSalaryRemainingAmount(payroll) > 0 && (
                                     <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="blue" variant="outline" onClick={() => openPaySalary(payroll)}>
                                       Pay Salary
@@ -1505,7 +1550,21 @@ export default function PayrollPage() {
                       {selectedPayroll ? `${formatDate(selectedPayroll.period_start)} - ${formatDate(selectedPayroll.period_end)}` : ''}
                     </Text>
                   </Box>
-                  {selectedPayroll && <Badge colorScheme={statusColor(selectedPayroll.status)}>{statusLabel(selectedPayroll.status)}</Badge>}
+                  {selectedPayroll && (
+                    <HStack spacing={3}>
+                      <Button
+                        leftIcon={<FiDownload />}
+                        size="sm"
+                        variant="outline"
+                        colorScheme="teal"
+                        onClick={() => downloadPayrollRunExcel(selectedPayroll)}
+                        isLoading={downloadingPayrollId === selectedPayroll.id}
+                      >
+                        Download Excel
+                      </Button>
+                      <Badge colorScheme={statusColor(selectedPayroll.status)}>{statusLabel(selectedPayroll.status)}</Badge>
+                    </HStack>
+                  )}
                 </Flex>
               </ModalHeader>
               <ModalCloseButton />
@@ -1606,6 +1665,28 @@ export default function PayrollPage() {
                       </Alert>
                     )}
 
+                    {selectedPayrollImportDocuments.length > 0 && (
+                      <Box borderWidth="1px" borderColor={borderColor} borderRadius="xl" p={4}>
+                        <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} gap={3} direction={{ base: 'column', md: 'row' }}>
+                          <HStack align="start" spacing={3} minW={0}>
+                            <Icon as={FiFileText} color="blue.500" mt={1} />
+                            <Box minW={0}>
+                              <HStack spacing={2} mb={1}>
+                                <Text fontWeight="semibold">File Import Payroll</Text>
+                                <Badge colorScheme="blue">Arsip Upload</Badge>
+                              </HStack>
+                              <Text fontSize="sm" color={mutedText} noOfLines={2}>
+                                {selectedPayrollImportDocuments[0].file_name}
+                              </Text>
+                            </Box>
+                          </HStack>
+                          <Button onClick={() => downloadPayrollDocument(selectedPayrollImportDocuments[0])} leftIcon={<FiDownload />} size="sm" variant="outline" colorScheme="blue">
+                            Download File Upload
+                          </Button>
+                        </Flex>
+                      </Box>
+                    )}
+
                     <Box borderWidth="1px" borderColor={borderColor} borderRadius="xl" p={4}>
                       <Flex justify="space-between" align={{ base: 'stretch', md: 'center' }} gap={3} direction={{ base: 'column', md: 'row' }} mb={3}>
                         <HStack spacing={2}>
@@ -1635,7 +1716,7 @@ export default function PayrollPage() {
                                   </Text>
                                 </Box>
                               </HStack>
-                              <Button as="a" href={getImageUrl(document.file_path) || '#'} target="_blank" rel="noopener noreferrer" leftIcon={<FiDownload />} size="sm" variant="outline" colorScheme="teal">
+                              <Button onClick={() => downloadPayrollDocument(document)} leftIcon={<FiDownload />} size="sm" variant="outline" colorScheme="teal">
                                 Buka
                               </Button>
                             </Flex>

@@ -1,4 +1,5 @@
 import api from '@/services/api';
+import { API_ENDPOINTS } from '@/config/api';
 import type { AxiosResponse } from 'axios';
 
 export type PayrollStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
@@ -199,7 +200,18 @@ const payrollService = {
     return unwrapData<PayrollRun>(response);
   },
 
-  async createPayrollRun(payload: PayrollCreatePayload): Promise<PayrollRun> {
+  async createPayrollRun(payload: PayrollCreatePayload, importFile?: File | null): Promise<PayrollRun> {
+    if (importFile) {
+      const formData = new FormData();
+      formData.append('payload', JSON.stringify(payload));
+      formData.append('import_file', importFile);
+
+      const response = await api.post('/api/v1/payroll', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return unwrapData<PayrollRun>(response);
+    }
+
     const response = await api.post('/api/v1/payroll', payload);
     return unwrapData<PayrollRun>(response);
   },
@@ -235,6 +247,50 @@ const payrollService = {
     });
     const body = response.data as { documents?: PayrollDocument[] };
     return body.documents || [];
+  },
+
+  async downloadDocument(documentId: number, fallbackName = 'payroll-document'): Promise<void> {
+    const response = await api.get(API_ENDPOINTS.PAYROLL_DOCUMENT_DOWNLOAD(documentId), {
+      responseType: 'blob',
+    });
+    const disposition = response.headers?.['content-disposition'] || '';
+    const filenameMatch =
+      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+      disposition.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1]
+      ? decodeURIComponent(filenameMatch[1])
+      : fallbackName;
+
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
+
+  async downloadPayrollExcel(id: number, fallbackName = 'payroll-pengajuan.xlsx'): Promise<void> {
+    const response = await api.get(API_ENDPOINTS.PAYROLL_EXPORT_EXCEL(id), {
+      responseType: 'blob',
+    });
+    const disposition = response.headers?.['content-disposition'] || '';
+    const filenameMatch =
+      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+      disposition.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1]
+      ? decodeURIComponent(filenameMatch[1])
+      : fallbackName;
+
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   },
 
   async approvePayrollRun(

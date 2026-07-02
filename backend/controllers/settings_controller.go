@@ -1,12 +1,9 @@
 package controllers
 
 import (
-	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
-	"time"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
@@ -547,32 +544,13 @@ func (sc *SettingsController) UploadCompanyLogo(c *gin.Context) {
 		return
 	}
 
-	allowedTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/jpg":  true,
-		"image/png":  true,
-		"image/gif":  true,
-		"image/webp": true,
-	}
-	if !allowedTypes[file.Header.Get("Content-Type")] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed"})
-		return
-	}
-
-	// Max 5MB
-	if file.Size > int64(5*1024*1024) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File size too large. Maximum 5MB allowed"})
-		return
-	}
-
 	uploadPath := "./uploads/company/"
-	if err := os.MkdirAll(uploadPath, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+	filename, filePath, err := prepareValidatedImageUpload(file, 0, uploadPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	filename := fmt.Sprintf("%d_%d_%s", time.Now().Unix(), time.Now().UnixNano()%1000, file.Filename)
-	filePath := filepath.Join(uploadPath, filename)
 	if err := c.SaveUploadedFile(file, filePath); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
 		return

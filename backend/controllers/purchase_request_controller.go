@@ -516,6 +516,30 @@ func (c *PurchaseRequestController) GetDocuments(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, documents)
 }
 
+func (c *PurchaseRequestController) DownloadDocument(ctx *gin.Context) {
+	idStr := ctx.Param("document_id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid document ID format"})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+
+	document, err := c.service.GetPurchaseRequestDocumentForDownload(uint(id), userID, userRole)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(strings.ToLower(err.Error()), "access denied") {
+			status = http.StatusForbidden
+		}
+		ctx.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	sendStoredUploadAttachment(ctx, document.FilePath, document.FileName, document.MimeType, "purchase-requests")
+}
+
 func (c *PurchaseRequestController) DeleteDocument(ctx *gin.Context) {
 	idStr := ctx.Param("document_id")
 	id, err := strconv.ParseUint(idStr, 10, 32)

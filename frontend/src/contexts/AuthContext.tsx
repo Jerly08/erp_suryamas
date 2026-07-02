@@ -46,116 +46,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize auth state from localStorage on component mount
+  const clearStoredAuthData = (setLogoutTimestamp = false) => {
+    if (typeof window === 'undefined') return;
+
+    window.localStorage.removeItem('token');
+    window.localStorage.removeItem('refreshToken');
+    window.localStorage.removeItem('authToken');
+    window.localStorage.removeItem('access_token');
+    window.localStorage.removeItem('authData');
+    window.localStorage.removeItem('userData');
+    window.localStorage.removeItem('user');
+    window.sessionStorage.removeItem('token');
+    window.sessionStorage.removeItem('authToken');
+    window.sessionStorage.removeItem('access_token');
+
+    if (setLogoutTimestamp) {
+      window.localStorage.setItem('lastLogoutTime', Date.now().toString());
+    }
+  };
+
+  // Initialize auth state from HttpOnly auth cookies.
   useEffect(() => {
     const initializeAuth = async () => {
-      // Only access localStorage on client-side
       if (typeof window !== 'undefined') {
         try {
-          const storedToken = localStorage.getItem('token');
-          const storedRefreshToken = localStorage.getItem('refreshToken');
-          const storedUser = localStorage.getItem('user');
-          const lastLogoutTime = localStorage.getItem('lastLogoutTime');
+          const lastLogoutTime = window.localStorage.getItem('lastLogoutTime');
 
           // Check if user explicitly logged out recently (within last 5 minutes)
           const isRecentLogout = lastLogoutTime &&
             (Date.now() - parseInt(lastLogoutTime)) < 5 * 60 * 1000; // 5 minutes
 
           if (isRecentLogout) {
-            console.log('Recent logout detected, clearing any remaining auth data');
-            // Clear any remaining auth data from recent logout
-            localStorage.removeItem('token');
-            localStorage.removeItem('refreshToken');
-            localStorage.removeItem('user');
-            localStorage.removeItem('lastLogoutTime');
-          } else if (storedToken && storedUser) {
-            // Validate token before auto-login
-            const userData = normalizeAuthUser(JSON.parse(storedUser));
-
-            // Check if token is expired by parsing JWT
-            let isTokenExpired = false;
-            try {
-              const tokenParts = storedToken.split('.');
-              if (tokenParts.length === 3) {
-                const payload = JSON.parse(atob(tokenParts[1]));
-                const currentTime = Math.floor(Date.now() / 1000);
-                if (payload.exp && payload.exp < currentTime) {
-                  isTokenExpired = true;
-                  console.log('Stored token is expired, clearing auth data');
-                }
-              }
-            } catch {
-              console.log('Error parsing token, treating as expired');
-              isTokenExpired = true;
-            }
-
-            if (isTokenExpired) {
-              localStorage.removeItem('token');
-              localStorage.removeItem('refreshToken');
-              localStorage.removeItem('user');
-            } else if (userData && userData.id && userData.email && storedToken.length > 20) {
-              // Try to validate the token by making a quick API call
-              try {
-                const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.VALIDATE_TOKEN}`, {
-                  method: 'GET',
-                  headers: {
-                    'Authorization': `Bearer ${storedToken}`,
-                    'Content-Type': 'application/json',
-                  },
-                });
-
-                if (response.ok) {
-                  const validateData = await response.json();
-                  const validatedUser = normalizeAuthUser(
-                    {
-                      ...userData,
-                      ...(validateData.user || {}),
-                    },
-                    validateData.company_type || userData.company_type,
-                  );
-
-                  setToken(storedToken);
-                  setRefreshToken(storedRefreshToken);
-                  setUser(validatedUser);
-                  localStorage.setItem('user', JSON.stringify(validatedUser));
-                  console.log('Auth initialized from localStorage - token validated:', { user: validatedUser, hasToken: !!storedToken });
-                } else if (response.status === 401 || response.status === 403) {
-                  console.log('Stored token is invalid (401/403), clearing auth data');
-                  localStorage.removeItem('token');
-                  localStorage.removeItem('refreshToken');
-                  localStorage.removeItem('user');
-                } else {
-                  console.log('Token validation failed with status:', response.status, 'proceeding with stored data');
-                  // If validation fails due to server error, proceed with stored data
-                  setToken(storedToken);
-                  setRefreshToken(storedRefreshToken);
-                  setUser(userData);
-                  localStorage.setItem('user', JSON.stringify(userData));
-                }
-              } catch (error) {
-                console.log('Token validation failed (network/server error), proceeding with stored data:', error);
-                // If validation fails due to network issues, proceed with stored data
-                // The API interceptors will handle auth errors when actual requests are made
-                setToken(storedToken);
-                setRefreshToken(storedRefreshToken);
-                setUser(userData);
-                localStorage.setItem('user', JSON.stringify(userData));
-              }
-            } else {
-              console.log('Invalid stored auth data, clearing');
-              localStorage.removeItem('token');
-              localStorage.removeItem('refreshToken');
-              localStorage.removeItem('user');
-            }
+            console.log('Recent logout detected, skipping cookie session restore');
+            clearStoredAuthData();
           } else {
-            console.log('No stored auth data found');
+            clearStoredAuthData();
+
+            const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.VALIDATE_TOKEN}`, {
+              method: 'GET',
+              credentials: 'include',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            });
+
+            if (response.ok) {
+              const validateData = await response.json();
+              const validatedUser = normalizeAuthUser(
+                validateData.user || validateData.data,
+                validateData.company_type,
+              );
+
+              if (validatedUser) {
+                setUser(validatedUser);
+                setToken(null);
+                setRefreshToken(null);
+              }
+            } else if (response.status === 401 || response.status === 403) {
+              clearStoredAuthData();
+              setUser(null);
+            }
           }
         } catch (error) {
-          console.error('Error parsing stored user:', error);
-          localStorage.removeItem('token');
-          localStorage.removeItem('refreshToken');
-          localStorage.removeItem('user');
-          localStorage.removeItem('lastLogoutTime');
+          console.log('Cookie session validation failed:', error);
+          clearStoredAuthData();
         }
       }
 
@@ -175,6 +129,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const response = await fetch(loginUrl, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -208,7 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Validate response structure
-      if (!data || !data.user || !data.access_token && !data.token) {
+      if (!data || !data.user) {
         console.error('Invalid login response structure:', data);
         throw new Error('Invalid response from server');
       }
@@ -216,15 +171,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Save auth data - ensure role is lowercase
       const userData = normalizeAuthUser(data.user, data.company_type);
 
-      setToken(data.access_token || data.token);
-      setRefreshToken(data.refresh_token || data.refreshToken);
+      setToken(null);
+      setRefreshToken(null);
       setUser(userData);
 
-      // Store in localStorage (client-side only)
       if (typeof window !== 'undefined') {
-        localStorage.setItem('token', data.access_token || data.token);
-        localStorage.setItem('refreshToken', data.refresh_token || data.refreshToken);
-        localStorage.setItem('user', JSON.stringify(userData));
+        clearStoredAuthData();
+        window.localStorage.removeItem('lastLogoutTime');
       }
     } catch (error) {
       // Log authentication failures as warnings instead of errors since they're expected behavior
@@ -246,6 +199,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.REGISTER}`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -272,17 +226,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Invalid response from server');
       }
 
-      // Save auth data
-      setToken(data.token);
-      setRefreshToken(data.refreshToken);
+      // Save auth data in memory only. Tokens are stored by backend as HttpOnly cookies.
+      setToken(null);
+      setRefreshToken(null);
       const userData = normalizeAuthUser(data.user);
       setUser(userData);
 
-      // Store in localStorage (client-side only)
       if (typeof window !== 'undefined') {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('refreshToken', data.refreshToken);
-        localStorage.setItem('user', JSON.stringify(userData));
+        clearStoredAuthData();
+        window.localStorage.removeItem('lastLogoutTime');
       }
     } catch (error) {
       console.error('Registration error:', error);
@@ -299,21 +251,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRefreshToken(null);
     setUser(null);
 
-    // Clear localStorage (client-side only)
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('token');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('user');
-      // Also clear any other auth-related items
-      localStorage.removeItem('authData');
-      localStorage.removeItem('userData');
-
-      // Set logout timestamp to prevent auto-login for a few minutes
-      if (setLogoutTimestamp) {
-        localStorage.setItem('lastLogoutTime', Date.now().toString());
-        console.log('Logout timestamp set to prevent immediate auto-login');
-      }
-    }
+    clearStoredAuthData(setLogoutTimestamp);
   };
 
   // Handle unauthorized access (e.g., invalid token)
@@ -332,6 +270,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Logout function
   const logout = () => {
     console.log('Logout initiated by user');
+    void fetch(`${API_BASE_URL}${API_ENDPOINTS.LOGOUT}`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => undefined);
     clearAuthData(true); // Set logout timestamp
     if (typeof window !== 'undefined') {
       // Use setTimeout to ensure localStorage is updated before redirect
@@ -343,50 +285,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Check if user is authenticated
   const checkAuth = async (): Promise<boolean> => {
-    if (!token) return false;
-
     try {
-      // Try to refresh the token if it's about to expire
-      if (refreshToken) {
-        const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.REFRESH}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        });
+      const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.REFRESH}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
 
-        if (response.ok) {
-          const data = await response.json();
-
-          // Handle different possible response field names
-          const accessToken = data.access_token || data.token;
-          const newRefreshToken = data.refresh_token || data.refreshToken;
-          const userData = normalizeAuthUser(data.user, data.company_type);
-
-          // Update auth data
-          setToken(accessToken);
-          setRefreshToken(newRefreshToken);
-          setUser(userData);
-
-          // Update localStorage (client-side only)
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('token', accessToken);
-            localStorage.setItem('refreshToken', newRefreshToken);
-            localStorage.setItem('user', JSON.stringify(userData));
-          }
-
-          return true;
-        } else {
-          // If refresh fails, clear auth data
-          clearAuthData();
-          return false;
-        }
+      if (response.ok) {
+        const data = await response.json();
+        const userData = normalizeAuthUser(data.user, data.company_type);
+        setToken(null);
+        setRefreshToken(null);
+        setUser(userData);
+        clearStoredAuthData();
+        return true;
       }
 
-      return !!token;
+      clearAuthData();
+      return false;
     } catch (error) {
-      console.error('Token refresh error:', error);
+      console.error('Session refresh error:', error);
       clearAuthData();
       return false;
     }

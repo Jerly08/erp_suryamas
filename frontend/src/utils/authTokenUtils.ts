@@ -4,60 +4,31 @@
  */
 
 /**
- * Retrieves the authentication token from storage using multiple fallback methods
- * 
- * Priority order:
- * 1. localStorage with 'token' key (primary - used by AuthContext)
- * 2. Alternative storage keys as fallback
- * 3. Cookies as last resort
- * 
- * If token is found with alternative key, it's stored with the correct key for future use
+ * Retrieves a legacy authentication token if one still exists.
+ *
+ * New production auth uses HttpOnly cookies, so JavaScript should not be able
+ * to read or persist access/refresh tokens. This function only supports older
+ * in-memory/header call sites while actively cleaning legacy browser storage.
  * 
  * @param throwOnError - Whether to throw an error if no token is found (default: true)
  * @returns The authentication token or null if not found and throwOnError is false
  */
 export function getAuthToken(throwOnError: boolean = true): string | null {
-  let token = null;
-  
   if (typeof window !== 'undefined') {
-    // Primary method: get from localStorage with 'token' key (AuthContext stores here)
-    token = localStorage.getItem('token');
-    
-    // Fallback to alternative keys if needed
-    if (!token) {
-      token = localStorage.getItem('authToken') || 
-             sessionStorage.getItem('token') || 
-             sessionStorage.getItem('authToken');
-             
-      // If token found with alternative key, store it with the correct key for future use
-      if (token) {
-        console.log('Token found with alternative key, storing with correct key');
-        localStorage.setItem('token', token);
-      }
-    }
-    
-    // Last resort: try cookies
-    if (!token) {
-      const cookies = document.cookie.split(';');
-      for (let cookie of cookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === 'token' || name === 'authToken' || name === 'access_token') {
-          token = value;
-          // Store in localStorage for future use
-          if (token) {
-            localStorage.setItem('token', token);
-          }
-          break;
-        }
-      }
-    }
+    localStorage.removeItem('token');
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refreshToken');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('authToken');
+    sessionStorage.removeItem('access_token');
   }
   
-  if (!token && throwOnError) {
-    throw new Error('Authentication token not found. Please login first.');
+  if (throwOnError) {
+    throw new Error('Authentication token is stored in an HttpOnly cookie and is not readable by JavaScript.');
   }
   
-  return token;
+  return null;
 }
 
 /**
@@ -67,11 +38,7 @@ export function getAuthToken(throwOnError: boolean = true): string | null {
  * @returns Headers object with Authorization and optionally Content-Type
  */
 export function getAuthHeaders(includeContentType: boolean = true): Record<string, string> {
-  const token = getAuthToken(true); // Will throw if no token found
-  
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${token}`,
-  };
+  const headers: Record<string, string> = {};
   
   if (includeContentType) {
     headers['Content-Type'] = 'application/json';
@@ -86,12 +53,7 @@ export function getAuthHeaders(includeContentType: boolean = true): Record<strin
  * @returns True if token exists, false otherwise
  */
 export function isAuthenticated(): boolean {
-  try {
-    const token = getAuthToken(false);
-    return !!token;
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 /**
@@ -113,7 +75,7 @@ export function clearAuthTokens(): void {
     localStorage.removeItem('userData');
     
     // Clear cookies by setting them to expire
-    const cookieNames = ['token', 'authToken', 'access_token'];
+    const cookieNames = ['token', 'authToken', 'access_token', 'erp_access_token', 'erp_refresh_token'];
     cookieNames.forEach(name => {
       document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
     });

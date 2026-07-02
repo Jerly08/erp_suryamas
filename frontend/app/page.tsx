@@ -2,18 +2,29 @@
 
 import React from 'react';
 import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from '@/config/branding';
+import { API_ENDPOINTS } from '@/config/api';
 import Image from 'next/image';
 
 // Simple redirect page - let Next.js handle the redirect
 export default function Home() {
   // Check if we're on client side and redirect accordingly
   React.useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    if (token) {
-      window.location.replace('/dashboard');
-    } else {
-      window.location.replace('/login');
-    }
+    const redirectBySession = async () => {
+      try {
+        const response = await fetch(API_ENDPOINTS.VALIDATE_TOKEN, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        window.location.replace(response.ok ? '/dashboard' : '/login');
+      } catch {
+        window.location.replace('/login');
+      }
+    };
+
+    redirectBySession();
   }, []);
 
   return (

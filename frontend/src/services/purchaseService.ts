@@ -585,6 +585,31 @@ class PurchaseService {
     window.URL.revokeObjectURL(url);
   }
 
+  async downloadDocument(
+    documentId: number,
+    fallbackName = "purchase-document",
+  ): Promise<void> {
+    const response = await api.get(API_ENDPOINTS.PURCHASES_DOCUMENT_DOWNLOAD(documentId), {
+      responseType: "blob",
+    });
+    const disposition = response.headers?.["content-disposition"] || "";
+    const filenameMatch =
+      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+      disposition.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1]
+      ? decodeURIComponent(filenameMatch[1])
+      : fallbackName;
+
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }
+
   // Helper method to check if purchase can receive payment
   canReceivePayment(purchase: Purchase): boolean {
     const status = (purchase.status || "").toUpperCase();

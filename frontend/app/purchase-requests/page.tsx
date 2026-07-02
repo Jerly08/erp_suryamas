@@ -45,7 +45,6 @@ import {
   Textarea,
   Select,
   Grid,
-  Link,
 } from "@chakra-ui/react";
 import {
   FiPlus,
@@ -71,6 +70,7 @@ import {
   purchaseRequestService,
   PurchaseRequest,
   PurchaseRequestCreatePayload,
+  PurchaseRequestDocument,
   PurchaseRequestItem,
 } from "@/services/purchaseRequestService";
 import { projectService, Project } from "@/services/projectService";
@@ -87,7 +87,6 @@ import {
   isFinanceTeamRole,
   normalizeRole,
 } from "@/utils/roles";
-import { getImageUrl } from "@/utils/imageUrl";
 
 const ACCEPTED_DOCUMENT_TYPES =
   ".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp";
@@ -1060,7 +1059,26 @@ export default function PurchaseRequestsPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const getDocumentUrl = (path?: string) => getImageUrl(path || "") || "#";
+  const handleDownloadDocument = async (document: PurchaseRequestDocument) => {
+    try {
+      await purchaseRequestService.downloadDocument(document.id, document.file_name);
+    } catch (err: unknown) {
+      const error = err as {
+        response?: { data?: { error?: string } };
+        message?: string;
+      };
+      toast({
+        title: "Gagal membuka dokumen",
+        description:
+          error.response?.data?.error ||
+          error.message ||
+          "Dokumen belum bisa diunduh.",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+    }
+  };
 
   const handleDownloadPaymentReceipt = async (
     receipt: FinalizedPaymentReceipt,
@@ -4575,16 +4593,11 @@ export default function PurchaseRequestsPage() {
                               </Box>
                             </Flex>
                             <Button
-                              as={Link}
-                              href={getDocumentUrl(document.file_path)}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              onClick={() => handleDownloadDocument(document)}
                               leftIcon={<FiDownload />}
                               size="sm"
                               variant="outline"
                               colorScheme="green"
-                              textDecoration="none"
-                              _hover={{ textDecoration: "none" }}
                             >
                               Buka
                             </Button>
@@ -4779,16 +4792,11 @@ export default function PurchaseRequestsPage() {
                           </Box>
                         </Flex>
                         <Button
-                          as={Link}
-                          href={getDocumentUrl(document.file_path)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                          onClick={() => handleDownloadDocument(document)}
                           leftIcon={<FiDownload />}
                           size="sm"
                           variant="outline"
                           colorScheme="blue"
-                          textDecoration="none"
-                          _hover={{ textDecoration: "none" }}
                         >
                           Buka
                         </Button>
