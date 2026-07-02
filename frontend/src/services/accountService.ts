@@ -32,14 +32,6 @@ class AccountService {
       return token;
     }
 
-    if (typeof window !== 'undefined') {
-      try {
-        return window.localStorage.getItem('token') || undefined;
-      } catch {
-        return undefined;
-      }
-    }
-
     return undefined;
   }
 

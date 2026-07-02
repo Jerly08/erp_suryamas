@@ -164,8 +164,8 @@ class BalanceSyncService {
     try {
       // Use the new individual account balance endpoint
       const response = await fetch(`/api/v1/accounts/${accountId}/balance`, {
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });
@@ -191,8 +191,8 @@ class BalanceSyncService {
     try {
       const response = await fetch(`/api/v1/accounts`, {
         method: 'GET',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
       });

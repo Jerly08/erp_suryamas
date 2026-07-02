@@ -253,6 +253,7 @@ export class ProductionApiClient implements IApiService {
         const requestConfig: RequestInit = {
           method,
           signal: controller.signal,
+          credentials: 'include',
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',

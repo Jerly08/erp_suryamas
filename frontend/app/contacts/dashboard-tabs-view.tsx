@@ -95,9 +95,9 @@ export default function DashboardTabsContactsPage() {
   const loadContacts = async () => {
     try {
       setLoading(true);
-      const authToken = token || localStorage.getItem('token');
+      const authToken = token;
       if (!authToken) {
-        throw new Error('Authentication token not found');
+        return;
       }
 
       const contactsData = await contactService.getContacts(authToken);
@@ -132,7 +132,7 @@ export default function DashboardTabsContactsPage() {
 
   useEffect(() => {
     loadContacts();
-  }, [searchQuery]);
+  }, [searchQuery, token]);
 
   // Calculate comprehensive statistics
   const stats = {

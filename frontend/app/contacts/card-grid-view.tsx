@@ -105,9 +105,9 @@ export default function CardGridContactsPage({}: ContactsPageProps) {
   const loadContacts = async () => {
     try {
       setLoading(true);
-      const authToken = token || localStorage.getItem('token');
+      const authToken = token;
       if (!authToken) {
-        throw new Error('Authentication token not found');
+        return;
       }
 
       let contactsData: Contact[];
@@ -160,7 +160,7 @@ export default function CardGridContactsPage({}: ContactsPageProps) {
 
   useEffect(() => {
     loadContacts();
-  }, [filterType, searchQuery, sortBy]);
+  }, [filterType, searchQuery, sortBy, token]);
 
   // Calculate statistics
   const stats = {

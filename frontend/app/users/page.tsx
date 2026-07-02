@@ -133,9 +133,7 @@ const UsersPage: React.FC = () => {
 
   const loadUsers = async () => {
     const res = await fetch('/api/v1/users', {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('token')}`,
-      },
+      credentials: 'include',
     });
 
     if (!res.ok) {
@@ -244,9 +242,7 @@ const UsersPage: React.FC = () => {
     try {
       const response = await fetch(`/api/v1/users/${userId}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -340,9 +336,9 @@ const UsersPage: React.FC = () => {
 
       const response = await fetch(url, {
         method: isEditMode ? 'PUT' : 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
         body: JSON.stringify(createData),
       });

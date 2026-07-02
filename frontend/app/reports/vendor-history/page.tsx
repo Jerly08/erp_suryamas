@@ -215,7 +215,7 @@ const VendorHistoryPage: React.FC = () => {
         }
         try {
             const resp = await fetch(`/api/v1/reports/vendor-history?vendor_id=${vendorId}&start_date=${startDate}&end_date=${endDate}&format=${format}`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                credentials: 'include',
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const blob = await resp.blob();

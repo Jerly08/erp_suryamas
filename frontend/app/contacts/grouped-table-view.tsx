@@ -104,13 +104,12 @@ export default function GroupedTableContactsPage() {
   const loadContacts = async () => {
     try {
       setLoading(true);
-      const authToken = token || localStorage.getItem('token');
+      const authToken = token;
       
       console.log('Loading contacts... Token available:', !!authToken);
       
       if (!authToken) {
-        console.error('No authentication token found');
-        throw new Error('Authentication required to access contacts');
+        return;
       }
       
       // Get contacts using the authenticated endpoint
@@ -151,7 +150,7 @@ export default function GroupedTableContactsPage() {
 
   useEffect(() => {
     loadContacts();
-  }, [searchQuery]);
+  }, [searchQuery, token]);
 
   // Group contacts by type
   const groupedContacts = {
@@ -217,7 +216,7 @@ export default function GroupedTableContactsPage() {
 
   // Handle contact actions
   const handleCreateContact = async (contactData: Partial<Contact>) => {
-    const authToken = token || localStorage.getItem('token');
+    const authToken = token;
     
     if (!authToken) {
       toast({
@@ -255,7 +254,7 @@ export default function GroupedTableContactsPage() {
   };
 
   const handleUpdateContact = async (contactData: Partial<Contact>) => {
-    const authToken = token || localStorage.getItem('token');
+    const authToken = token;
     
     if (!authToken) {
       toast({
@@ -297,7 +296,7 @@ export default function GroupedTableContactsPage() {
   const handleDeleteContact = async (contact: Contact) => {
     if (!confirm(`Are you sure you want to delete ${contact.name}?`)) return;
 
-    const authToken = token || localStorage.getItem('token');
+    const authToken = token;
     
     if (!authToken) {
       toast({

@@ -424,10 +424,8 @@ export default function PayrollPage() {
   const loadApprovalAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
-      const token = window.localStorage.getItem('token') || '';
-
-      const expenseData = await accountService.getAccountCatalog(token, 'EXPENSE');
-      const assetData = await accountService.getAccountCatalog(token, 'ASSET');
+      const expenseData = await accountService.getAccountCatalog(undefined, 'EXPENSE');
+      const assetData = await accountService.getAccountCatalog(undefined, 'ASSET');
 
       const filteredExpenses = filterActiveLeafAccounts(expenseData);
       const filteredEmployeeLoanAccounts = filterActiveLeafAccounts(assetData).filter((acc) => {

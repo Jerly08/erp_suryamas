@@ -98,9 +98,9 @@ export default function EnhancedTableContactsPage() {
   const loadContacts = async () => {
     try {
       setLoading(true);
-      const authToken = token || localStorage.getItem('token');
+      const authToken = token;
       if (!authToken) {
-        throw new Error('Authentication token not found');
+        return;
       }
 
       let contactsData: Contact[];
@@ -139,7 +139,7 @@ export default function EnhancedTableContactsPage() {
 
   useEffect(() => {
     loadContacts();
-  }, [filterType, searchQuery]);
+  }, [filterType, searchQuery, token]);
 
   // Calculate statistics
   const stats = {

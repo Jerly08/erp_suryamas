@@ -369,11 +369,8 @@ export default function ManualEntryForm({
         // Get account hierarchy or list
         // We can use getAccountCatalog for faster loading if available, but getAccounts gives full info
         // Using getAccounts to ensure we have code and name
-        const token = localStorage.getItem("token") || "";
-        if (!token) return;
-
         const [loadedAccounts, linkedCashBankAccounts] = await Promise.all([
-          accountService.getAccounts(token),
+          accountService.getAccounts(""),
           cashbankService
             .getCashBankAccounts({ includeHolding: true })
             .catch((error) => {

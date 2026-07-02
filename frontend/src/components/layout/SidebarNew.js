@@ -275,20 +275,18 @@ export default function Sidebar({
   // Get translated menu groups with company-type-specific labels
   const MenuGroups = getMenuGroups(t, companyType);
 
-  // Filter menu groups based on user permissions and role
+  // Filter menu groups based on managed permissions.
+  // Role lists are only used for non-module entries like Dashboard.
   const userRoleNormalized = user ? normalizeRole(user.role) : "";
   const filteredGroups = MenuGroups.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
       if (!user) return false;
 
-      // For modules with permission checking, use canMenu for menu visibility
-      // but still check canView for data access requirements
       if (item.module && item.permission) {
         return canView(item.module) && canMenu(item.module);
       }
 
-      // For system pages (users, settings) and dashboard, use role-based checking
       return item.roles.some(
         (role) => normalizeRole(role) === userRoleNormalized,
       );

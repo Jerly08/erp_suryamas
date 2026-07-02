@@ -171,9 +171,7 @@ export default function GeneralLedgerView() {
   useEffect(() => {
     const loadAccounts = async () => {
       try {
-        const token = localStorage.getItem("token") || "";
-        if (!token) return;
-        const loadedAccounts = await accountService.getAccounts(token);
+        const loadedAccounts = await accountService.getAccounts("");
         loadedAccounts.sort((a, b) => a.code.localeCompare(b.code));
         setAccounts(loadedAccounts);
       } catch (error) {

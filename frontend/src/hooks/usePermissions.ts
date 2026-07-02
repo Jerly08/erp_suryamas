@@ -44,13 +44,13 @@ const DEFAULT_PERMISSION: ModulePermission = {
 };
 
 export const usePermissions = (): UsePermissionsReturn => {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [permissions, setPermissions] = useState<UserPermissions | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchPermissions = async () => {
-    if (!user || !token) {
+    if (!user) {
       setLoading(false);
       return;
     }
@@ -91,7 +91,7 @@ export const usePermissions = (): UsePermissionsReturn => {
 
     window.addEventListener('permissions-updated', handlePermissionsUpdated);
     return () => window.removeEventListener('permissions-updated', handlePermissionsUpdated);
-  }, [user, token]);
+  }, [user]);
 
   const getModulePermission = (module: string): ModulePermission => {
     if (!permissions || !permissions[module]) {

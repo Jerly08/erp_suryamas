@@ -3,6 +3,8 @@
  * This ensures all parts of the app use the same token retrieval strategy
  */
 
+export const COOKIE_SESSION_TOKEN = '__cookie_session__';
+
 /**
  * Retrieves a legacy authentication token if one still exists.
  *

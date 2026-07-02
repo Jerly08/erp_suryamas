@@ -3,6 +3,7 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { API_ENDPOINTS, API_BASE_URL } from '@/config/api';
 import { normalizeAuthUser } from '@/utils/userDisplay';
+import { COOKIE_SESSION_TOKEN } from '@/utils/authTokenUtils';
 
 // Define user type - backend sends lowercase roles
 export type UserRole = 'admin' | 'finance' | 'finance_manager' | 'finance_staff' | 'accounting' | 'hr' | 'inventory_manager' | 'director' | 'employee' | 'auditor' | 'operational_user';
@@ -99,7 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               if (validatedUser) {
                 setUser(validatedUser);
-                setToken(null);
+                setToken(COOKIE_SESSION_TOKEN);
                 setRefreshToken(null);
               }
             } else if (response.status === 401 || response.status === 403) {
@@ -171,7 +172,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Save auth data - ensure role is lowercase
       const userData = normalizeAuthUser(data.user, data.company_type);
 
-      setToken(null);
+      setToken(COOKIE_SESSION_TOKEN);
       setRefreshToken(null);
       setUser(userData);
 
@@ -227,7 +228,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Save auth data in memory only. Tokens are stored by backend as HttpOnly cookies.
-      setToken(null);
+      setToken(COOKIE_SESSION_TOKEN);
       setRefreshToken(null);
       const userData = normalizeAuthUser(data.user);
       setUser(userData);
@@ -259,11 +260,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     console.warn('Unauthorized access detected');
     // Don't auto-logout immediately, let components handle 401s gracefully
     // Only logout if the user is actually not authenticated
-    if (!token || !user) {
-      console.error('No valid auth tokens found, logging out...');
+    if (!user) {
+      console.error('No authenticated user found, logging out...');
       logout();
     } else {
-      console.warn('Auth tokens present but 401 received - might be a permission issue');
+      console.warn('Authenticated user received 401 - might be a permission issue or expired cookie session');
     }
   };
 
@@ -298,7 +299,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response.ok) {
         const data = await response.json();
         const userData = normalizeAuthUser(data.user, data.company_type);
-        setToken(null);
+        setToken(COOKIE_SESSION_TOKEN);
         setRefreshToken(null);
         setUser(userData);
         clearStoredAuthData();
