@@ -9,6 +9,7 @@
     "dev:turbo": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next dev --turbopack",
     "prebuild": "npm run lint && npm run typecheck",
     "build": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",
+    "build:docker": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",
     "build:strict": "npm run lint && npm run typecheck && cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next build",
     "start": "cross-env NODE_OPTIONS=--require=./suppress-deprecation.js next start",
     "lint": "eslint app src",

@@ -6,6 +6,7 @@ Dokumen ini menggantikan alur deploy lama. Rekomendasi terbaru memakai `docker-c
 - hanya port `80/443` yang terbuka ke internet
 - backend dan database tidak terekspos publik
 - ada healthcheck, restart policy, log rotation, dan volume persistence
+- build image aplikasi dilakukan di GitHub Actions, sehingga VPS production hanya `pull` image dan restart container
 
 ## Arsitektur Production
 
@@ -36,6 +37,7 @@ Untuk user aktif lebih banyak atau report berat:
 - Domain sudah mengarah ke IP VPS
 - Port `80` dan `443` dibuka di firewall/security group
 - Docker Engine dan Docker Compose plugin terpasang
+- Image production sudah berhasil dibuat oleh GitHub Actions pada branch `production`
 
 ## 1. Setup server
 
@@ -85,6 +87,10 @@ JWT_SECRET=ganti-dengan-secret-acak-panjang
 JWT_ACCESS_SECRET=ganti-dengan-secret-acak-panjang
 JWT_REFRESH_SECRET=ganti-dengan-secret-acak-panjang
 SESSION_SECRET=ganti-dengan-secret-acak-panjang
+
+BACKEND_IMAGE=ghcr.io/jerly08/erp_akuntansi-backend
+FRONTEND_IMAGE=ghcr.io/jerly08/erp_akuntansi-frontend
+IMAGE_TAG=production
 ```
 
 Catatan penting:
@@ -92,8 +98,29 @@ Catatan penting:
 - `DOMAIN` harus sudah resolve ke IP VPS sebelum deploy pertama, supaya HTTPS otomatis berhasil.
 - Jangan buka port PostgreSQL ke publik.
 - Jangan pakai password dan secret pendek.
+- Jika image GHCR masih private, login Docker di VPS dengan token GitHub yang punya akses package:
 
-## 4. Deploy production
+```bash
+echo "GITHUB_TOKEN_ATAU_PAT" | docker login ghcr.io -u Jerly08 --password-stdin
+```
+
+## 4. Build image production
+
+Setiap push ke branch `production` akan menjalankan GitHub Actions:
+
+1. validasi frontend dengan `npm run lint` dan `npm run typecheck`
+2. build image backend
+3. build image frontend
+4. push image ke GHCR dengan tag `production` dan commit SHA
+
+Image default yang dipakai VPS:
+
+```text
+ghcr.io/jerly08/erp_akuntansi-backend:production
+ghcr.io/jerly08/erp_akuntansi-frontend:production
+```
+
+## 5. Deploy production
 
 Cara paling cepat:
 
@@ -105,10 +132,13 @@ chmod +x scripts/vps/deploy.sh
 Atau manual:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml pull
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-build
 ```
 
-## 5. Verifikasi
+Deploy production tidak melakukan build di VPS. Server hanya mengambil image terbaru lalu menjalankan ulang container yang berubah.
+
+## 6. Verifikasi
 
 Cek status container:
 
@@ -134,7 +164,9 @@ Jika semua normal, aplikasi dapat diakses di:
 https://DOMAIN_ANDA
 ```
 
-## 6. Cara update aplikasi
+## 7. Cara update aplikasi
+
+Pastikan GitHub Actions untuk branch `production` sudah selesai dan image `production` sudah ter-push ke GHCR, lalu jalankan di VPS:
 
 ```bash
 cd /opt/erp_akuntansi
@@ -142,7 +174,9 @@ git pull
 ./scripts/vps/deploy.sh
 ```
 
-## 7. Backup harian lokal
+Untuk rollback ke image commit tertentu, ubah sementara `IMAGE_TAG` di `.env.production` menjadi SHA commit yang sudah pernah dibuild, lalu jalankan `./scripts/vps/deploy.sh`.
+
+## 8. Backup harian lokal
 
 Script backup database saja:
 

@@ -82,9 +82,7 @@ services:
         max-file: "5"
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-ghcr.io/jerly08/erp_akuntansi-backend}:${IMAGE_TAG:-production}
     container_name: erp_backend
     restart: unless-stopped
     init: true
@@ -139,11 +137,7 @@ services:
         max-file: "5"
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: http://backend:8080
+    image: ${FRONTEND_IMAGE:-ghcr.io/jerly08/erp_akuntansi-frontend}:${IMAGE_TAG:-production}
     container_name: erp_frontend
     restart: unless-stopped
     init: true

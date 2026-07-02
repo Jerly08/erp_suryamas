@@ -12,7 +12,7 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN npm run build
+RUN npm run build:docker
 
 # Production image, copy all the files and run next
 FROM node:22.12.0-alpine AS runner

@@ -11,6 +11,8 @@ fi
 
 cd "$ROOT_DIR"
 
-docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml pull
-docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml up -d --build --remove-orphans
-docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml ps
+compose_cmd=(docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml)
+
+"${compose_cmd[@]}" pull
+"${compose_cmd[@]}" up -d --no-build --remove-orphans
+"${compose_cmd[@]}" ps
