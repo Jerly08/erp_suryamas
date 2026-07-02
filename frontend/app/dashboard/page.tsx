@@ -42,7 +42,7 @@ const AccountingDashboard = () => (
 );
 
 export default function DashboardPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const [redirecting, setRedirecting] = useState(false);
 
@@ -58,14 +58,14 @@ export default function DashboardPage() {
     analytics,
     loading: analyticsLoading,
     error,
-  } = useDashboardAnalytics(user, token, roleNeedsAnalytics);
+  } = useDashboardAnalytics(user, roleNeedsAnalytics);
 
   // Redirect to login if not authenticated
   useEffect(() => {
-    if (!user || !token) {
+    if (!user) {
       router.push("/login");
     }
-  }, [user, token, router]);
+  }, [user, router]);
 
   // Handle unauthorized role redirect
   useEffect(() => {

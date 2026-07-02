@@ -43,7 +43,6 @@ const CACHE_DURATION = 30000; // 30 seconds cache
 
 export const useDashboardAnalytics = (
   user: any,
-  token: string | null,
   enabled = true,
 ) => {
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
@@ -52,7 +51,7 @@ export const useDashboardAnalytics = (
   const fetchingRef = useRef(false);
 
   useEffect(() => {
-    if (!enabled || !user || !token) {
+    if (!enabled || !user) {
       setLoading(false);
       return;
     }
@@ -99,7 +98,6 @@ export const useDashboardAnalytics = (
         fetchingRef.current = true;
         console.log("🔍 Dashboard Debug Info:");
         console.log("User:", user);
-        console.log("Token length:", token?.length);
         console.log("User role:", user.role);
         console.log(
           "User role normalized:",
@@ -157,7 +155,7 @@ export const useDashboardAnalytics = (
     };
 
     fetchAnalytics();
-  }, [enabled, user, token]);
+  }, [enabled, user]);
 
   return { analytics, loading, error };
 };
