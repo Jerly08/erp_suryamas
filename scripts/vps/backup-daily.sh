@@ -30,6 +30,7 @@ mkdir -p "$DB_BACKUP_DIR" "$UPLOADS_BACKUP_DIR" "$MANIFEST_DIR" "$FAILURE_DIR"
 DB_BACKUP_FILE="$DB_BACKUP_DIR/${DB_NAME}_${TIMESTAMP}.dump"
 UPLOADS_BACKUP_FILE="$UPLOADS_BACKUP_DIR/uploads_${TIMESTAMP}.tar.gz"
 MANIFEST_FILE="$MANIFEST_DIR/backup_${TIMESTAMP}.txt"
+SUCCESS_REPORT_FILE="$MANIFEST_DIR/backup_email_${TIMESTAMP}.txt"
 FAILURE_REPORT_FILE="$FAILURE_DIR/backup_failed_${TIMESTAMP}.txt"
 DB_TMP_FILE="${DB_BACKUP_FILE}.tmp"
 UPLOADS_TMP_FILE="${UPLOADS_BACKUP_FILE}.tmp"
@@ -70,25 +71,95 @@ send_backup_email() {
   return 0
 }
 
+format_file_size() {
+  local file_path="$1"
+
+  if [[ ! -f "$file_path" ]]; then
+    echo "-"
+    return 0
+  fi
+
+  ls -lh "$file_path" | awk '{print $5}'
+}
+
+format_backup_time() {
+  date '+%Y-%m-%d %H:%M:%S %Z'
+}
+
+format_offsite_status() {
+  case "${OFFSITE_STATUS:-disabled}" in
+    uploaded)
+      echo "berhasil diupload"
+      ;;
+    disabled)
+      echo "tidak dikonfigurasi"
+      ;;
+    *)
+      echo "${OFFSITE_STATUS}"
+      ;;
+  esac
+}
+
+write_success_email_report() {
+  local database_size
+  local uploads_size
+  local offsite_status_label
+
+  database_size="$(format_file_size "$DB_BACKUP_FILE")"
+  uploads_size="$(format_file_size "$UPLOADS_BACKUP_FILE")"
+  offsite_status_label="$(format_offsite_status)"
+
+  {
+    echo "Backup ERP Avery berhasil"
+    echo
+    echo "Halo,"
+    echo
+    echo "Backup harian ERP Avery sudah selesai dibuat dengan aman."
+    echo
+    echo "Ringkasan:"
+    echo "- ID backup: $TIMESTAMP"
+    echo "- Waktu selesai: $(format_backup_time)"
+    echo "- Database: berhasil (${database_size})"
+    echo "- File upload: berhasil (${uploads_size})"
+    echo "- Retensi lokal: ${BACKUP_RETENTION_DAYS} hari"
+    echo "- Offsite backup: ${offsite_status_label}"
+    echo
+    echo "Cakupan backup:"
+    echo "- Full database PostgreSQL"
+    echo "- Semua file upload aplikasi di /app/uploads"
+    echo
+    echo "Detail teknis, checksum, dan lokasi file backup tersimpan di manifest server."
+    echo
+    echo "Pesan ini tidak perlu dibalas."
+  } > "$SUCCESS_REPORT_FILE"
+}
+
 handle_exit() {
   local exit_status=$?
   cleanup_tmp_files
 
   if [[ "$exit_status" -ne 0 ]]; then
     {
-      echo "ERP Akuntansi Daily Local Backup"
-      echo "Result: FAILED"
-      echo "Timestamp: $TIMESTAMP"
-      echo "Failed at: $(date --iso-8601=seconds)"
-      echo "Step: $CURRENT_STEP"
-      echo "Env file: $ENV_FILE"
-      echo "Backup root: $BACKUP_ROOT"
+      echo "Backup ERP Avery gagal"
       echo
-      echo "Please check the cron log, Docker containers, disk space, and rclone/email configuration."
+      echo "Halo,"
+      echo
+      echo "Backup harian ERP Avery belum berhasil diselesaikan."
+      echo
+      echo "Ringkasan:"
+      echo "- ID backup: $TIMESTAMP"
+      echo "- Waktu gagal: $(format_backup_time)"
+      echo "- Tahap gagal: $CURRENT_STEP"
+      echo "- Env file: $ENV_FILE"
+      echo "- Backup root: $BACKUP_ROOT"
+      echo
+      echo "Mohon cek log cron, status container Docker, kapasitas disk, dan konfigurasi rclone/email."
+      echo
+      echo "Pesan ini tidak perlu dibalas."
     } > "$FAILURE_REPORT_FILE" || true
 
     if [[ "${BACKUP_NOTIFY_ON_FAILURE:-true}" == "true" ]]; then
-      send_backup_email "FAILED - $(hostname)" "$FAILURE_REPORT_FILE" || true
+      send_backup_email "GAGAL - $(hostname)" "$FAILURE_REPORT_FILE" || true
     fi
   fi
 
@@ -180,7 +251,8 @@ echo "[$(date --iso-8601=seconds)] Daily local backup completed"
 
 CURRENT_STEP="sending success notification"
 if [[ "${BACKUP_NOTIFY_ON_SUCCESS:-true}" == "true" ]]; then
-  send_backup_email "SUCCESS - $(hostname)" "$MANIFEST_FILE" || echo "Email notification failed after successful backup" >&2
+  write_success_email_report
+  send_backup_email "BERHASIL - $(hostname)" "$SUCCESS_REPORT_FILE" || echo "Email notification failed after successful backup" >&2
 fi
 
 CURRENT_STEP="completed"
