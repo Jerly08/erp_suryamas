@@ -60,7 +60,8 @@ import {
 import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiPaperclip, FiRefreshCw, FiUpload, FiUsers, FiX, FiXCircle } from 'react-icons/fi';
 
 const ACCEPTED_DOCUMENT_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp';
-const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE_MB = 50;
+const MAX_DOCUMENT_SIZE = MAX_DOCUMENT_SIZE_MB * 1024 * 1024;
 const PAYROLL_DOCUMENT_IMPORT_SOURCE = 'IMPORT_SOURCE_DOCUMENT';
 const PAYROLL_DOCUMENT_BILLING_REALIZATION = 'BILLING_REALIZATION_DOCUMENT';
 
@@ -265,7 +266,10 @@ const getBPJSRemainingAmount = (payroll?: PayrollRun | null) => {
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   const maybeError = error as {
+    code?: string;
+    message?: string;
     response?: {
+      status?: number;
       data?: { code?: string; error?: string; message?: string; details?: string };
     };
   };
@@ -275,6 +279,44 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
     return closedDate
       ? `Periode payroll untuk tanggal ${formatDate(closedDate)} sudah ditutup. Gunakan periode atau tanggal pembayaran yang masih terbuka.`
       : 'Periode payroll sudah ditutup. Gunakan periode atau tanggal pembayaran yang masih terbuka.';
+  }
+
+  const rawMessage = apiError?.error || apiError?.message || maybeError.message || '';
+  const normalizedMessage = rawMessage.toLowerCase();
+  if (
+    maybeError.code === 'ECONNABORTED' ||
+    normalizedMessage.includes('timeout') ||
+    normalizedMessage.includes('exceeded')
+  ) {
+    return 'Upload dokumen membutuhkan waktu lebih lama dari biasanya. Cek koneksi internet, pastikan dokumen belum tersimpan, lalu coba lagi.';
+  }
+  if (
+    maybeError.response?.status === 413 ||
+    normalizedMessage.includes('too large') ||
+    normalizedMessage.includes('maksimal') ||
+    normalizedMessage.includes('maximum') ||
+    normalizedMessage.includes('request entity too large')
+  ) {
+    return `Ukuran dokumen terlalu besar. Maksimal ${MAX_DOCUMENT_SIZE_MB}MB per file.`;
+  }
+  if (
+    normalizedMessage.includes('invalid file type') ||
+    normalizedMessage.includes('format dokumen')
+  ) {
+    return 'Format dokumen belum didukung. Gunakan PDF, Word, Excel, CSV, TXT, JPG, PNG, atau WebP.';
+  }
+  if (
+    normalizedMessage.includes('file content does not match') ||
+    normalizedMessage.includes('isi dokumen')
+  ) {
+    return 'Isi dokumen tidak sesuai dengan format file. Pastikan file tidak rusak dan ekstensi file benar.';
+  }
+  if (
+    normalizedMessage.includes('permission denied') ||
+    normalizedMessage.includes('failed to save') ||
+    normalizedMessage.includes('folder upload')
+  ) {
+    return 'Dokumen belum bisa disimpan di server. Hubungi admin untuk mengecek folder upload.';
   }
 
   const message = apiError?.error || apiError?.message || fallback;
@@ -557,7 +599,7 @@ export default function PayrollPage() {
     }
 
     if (file.size > MAX_DOCUMENT_SIZE) {
-      return 'Ukuran dokumen maksimal 20MB per file.';
+      return `Ukuran dokumen terlalu besar. Maksimal ${MAX_DOCUMENT_SIZE_MB}MB per file.`;
     }
 
     return null;

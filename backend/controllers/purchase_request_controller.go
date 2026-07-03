@@ -468,7 +468,7 @@ func (c *PurchaseRequestController) UploadRealizationDocuments(ctx *gin.Context)
 		}
 		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
 			cleanupUploadedFiles(savedPaths)
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save uploaded file"})
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Dokumen belum bisa disimpan di server. Hubungi admin untuk mengecek folder upload."})
 			return
 		}
 		savedPaths = append(savedPaths, filePath)
@@ -578,7 +578,7 @@ func (c *PurchaseRequestController) savePurchaseRequestDocuments(ctx *gin.Contex
 
 		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
 			cleanupUploadedFiles(savedPaths)
-			return nil, err
+			return nil, fmt.Errorf("Dokumen belum bisa disimpan di server. Hubungi admin untuk mengecek folder upload.")
 		}
 		savedPaths = append(savedPaths, filePath)
 
@@ -618,7 +618,7 @@ func (c *PurchaseRequestController) preparePurchaseRequestDocumentRecords(ctx *g
 
 		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
 			cleanupUploadedFiles(savedPaths)
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("Dokumen belum bisa disimpan di server. Hubungi admin untuk mengecek folder upload.")
 		}
 		savedPaths = append(savedPaths, filePath)
 

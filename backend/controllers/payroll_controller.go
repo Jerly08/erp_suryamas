@@ -992,7 +992,7 @@ func (c *PayrollController) UploadDocuments(ctx *gin.Context) {
 		}
 		if err := ctx.SaveUploadedFile(fileHeader, filePath); err != nil {
 			cleanupUploadedFiles(savedPaths)
-			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save uploaded file"})
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Dokumen belum bisa disimpan di server. Hubungi admin untuk mengecek folder upload."})
 			return
 		}
 		savedPaths = append(savedPaths, filePath)

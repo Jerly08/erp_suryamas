@@ -1,6 +1,8 @@
 import { API_ENDPOINTS } from "@/config/api";
 import api from "./api";
 
+const PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS = 120000;
+
 const downloadBlobResponse = (blob: Blob, disposition: string, fallbackName: string) => {
   const filenameMatch =
     disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
@@ -350,6 +352,7 @@ export const purchaseRequestService = {
 
       const response = await api.post(BASE_URL, formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
       });
       return response.data;
     }
@@ -373,6 +376,7 @@ export const purchaseRequestService = {
 
     const response = await api.post(`${BASE_URL}/${id}/documents`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
     });
     return response.data;
   },
@@ -394,6 +398,7 @@ export const purchaseRequestService = {
       formData,
       {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
       },
     );
     return response.data;
@@ -472,6 +477,7 @@ export const purchaseRequestService = {
 
     const response = await api.post(`${BASE_URL}/${id}/requester-revision`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
     });
     return response.data.data;
   },
@@ -489,6 +495,7 @@ export const purchaseRequestService = {
 
     const response = await api.post(`${BASE_URL}/${id}/invoice-revision`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
     });
     return response.data.data;
   },

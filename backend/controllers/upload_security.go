@@ -15,7 +15,8 @@ import (
 )
 
 const maxImageUploadSize = 5 * 1024 * 1024
-const maxDocumentUploadSize = 20 * 1024 * 1024
+const maxDocumentUploadSizeMB = 50
+const maxDocumentUploadSize = maxDocumentUploadSizeMB * 1024 * 1024
 
 var allowedImageUploadTypes = map[string]string{
 	"image/jpeg": ".jpg",
@@ -123,47 +124,47 @@ func prepareValidatedImageUpload(fileHeader *multipart.FileHeader, entityID uint
 
 func prepareValidatedDocumentUpload(fileHeader *multipart.FileHeader, entityID uint, uploadDir string) (string, string, string, error) {
 	if fileHeader == nil {
-		return "", "", "", fmt.Errorf("file is required")
+		return "", "", "", fmt.Errorf("Dokumen wajib dipilih.")
 	}
 
 	if fileHeader.Size <= 0 {
-		return "", "", "", fmt.Errorf("file is empty")
+		return "", "", "", fmt.Errorf("Dokumen kosong. Pilih file lain.")
 	}
 
 	if fileHeader.Size > maxDocumentUploadSize {
-		return "", "", "", fmt.Errorf("file size too large. Maximum 20MB allowed")
+		return "", "", "", fmt.Errorf("Ukuran dokumen terlalu besar. Maksimal %dMB per file.", maxDocumentUploadSizeMB)
 	}
 
 	originalExt := strings.ToLower(filepath.Ext(fileHeader.Filename))
 	allowedMIMETypes, ok := allowedDocumentUploadTypes[originalExt]
 	if !ok {
-		return "", "", "", fmt.Errorf("invalid file type. Only PDF, Word, Excel, CSV, TXT, JPG, PNG, and WebP documents are allowed")
+		return "", "", "", fmt.Errorf("Format dokumen belum didukung. Gunakan PDF, Word, Excel, CSV, TXT, JPG, PNG, atau WebP.")
 	}
 
 	file, err := fileHeader.Open()
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to open uploaded file")
+		return "", "", "", fmt.Errorf("Dokumen belum bisa dibaca. Pilih file lain atau coba unggah ulang.")
 	}
 	defer file.Close()
 
 	header := make([]byte, 512)
 	n, err := file.Read(header)
 	if err != nil && err != io.EOF {
-		return "", "", "", fmt.Errorf("failed to inspect uploaded file")
+		return "", "", "", fmt.Errorf("Dokumen belum bisa diperiksa. Pilih file lain atau coba unggah ulang.")
 	}
 
 	detectedContentType := http.DetectContentType(header[:n])
 	if _, ok := allowedMIMETypes[detectedContentType]; !ok {
-		return "", "", "", fmt.Errorf("file content does not match the allowed document type")
+		return "", "", "", fmt.Errorf("Isi dokumen tidak sesuai dengan format file. Pastikan file tidak rusak dan ekstensi file benar.")
 	}
 
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		return "", "", "", fmt.Errorf("failed to create upload directory")
+		return "", "", "", fmt.Errorf("Folder upload belum siap. Coba beberapa saat lagi atau hubungi admin.")
 	}
 
 	filename, err := buildSafeUploadFilename(entityID, fileHeader.Filename, originalExt)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to prepare upload filename")
+		return "", "", "", fmt.Errorf("Nama dokumen belum bisa diproses. Ubah nama file lalu coba lagi.")
 	}
 
 	return filename, filepath.Join(uploadDir, filename), detectedContentType, nil

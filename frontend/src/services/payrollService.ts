@@ -2,6 +2,8 @@ import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
 import type { AxiosResponse } from 'axios';
 
+const PAYROLL_UPLOAD_TIMEOUT_MS = 120000;
+
 export type PayrollStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
 export type PayrollPPhPaymentStatus = 'UNPAID' | 'PARTIAL_PAID' | 'PAID';
 export type PayrollSalaryPaymentStatus = 'UNPAID' | 'PARTIAL_PAID' | 'PAID';
@@ -244,6 +246,7 @@ const payrollService = {
 
     const response = await api.post(`/api/v1/payroll/${id}/documents`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: PAYROLL_UPLOAD_TIMEOUT_MS,
     });
     const body = response.data as { documents?: PayrollDocument[] };
     return body.documents || [];

@@ -90,7 +90,10 @@ import {
 
 const ACCEPTED_DOCUMENT_TYPES =
   ".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp";
-const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE_MB = 50;
+const MAX_DOCUMENT_SIZE = MAX_DOCUMENT_SIZE_MB * 1024 * 1024;
+const DOCUMENT_UPLOAD_TIMEOUT_MESSAGE =
+  "Upload dokumen membutuhkan waktu lebih lama dari biasanya. Cek koneksi internet, pastikan pengajuan belum tersimpan, lalu coba lagi.";
 const PURCHASE_REQUEST_PAGE_SIZE_OPTIONS = [10, 25, 50];
 const PURCHASE_REQUEST_PROGRESS_FILTERS = [
   { value: "", label: "Semua Progress" },
@@ -587,10 +590,71 @@ export default function PurchaseRequestsPage() {
     }
 
     if (file.size > MAX_DOCUMENT_SIZE) {
-      return "Ukuran dokumen maksimal 20MB per file.";
+      return `Ukuran dokumen terlalu besar. Maksimal ${MAX_DOCUMENT_SIZE_MB}MB per file.`;
     }
 
     return null;
+  };
+
+  const getDocumentUploadErrorMessage = (err: unknown) => {
+    const uploadError = err as {
+      code?: string;
+      message?: string;
+      response?: {
+        status?: number;
+        data?: { error?: string; message?: string; details?: string };
+      };
+    };
+    const rawMessage =
+      uploadError.response?.data?.error ||
+      uploadError.response?.data?.message ||
+      uploadError.response?.data?.details ||
+      uploadError.message ||
+      "";
+    const normalizedMessage = String(rawMessage).toLowerCase();
+    const status = uploadError.response?.status;
+
+    if (
+      uploadError.code === "ECONNABORTED" ||
+      normalizedMessage.includes("timeout") ||
+      normalizedMessage.includes("exceeded")
+    ) {
+      return DOCUMENT_UPLOAD_TIMEOUT_MESSAGE;
+    }
+
+    if (
+      status === 413 ||
+      normalizedMessage.includes("too large") ||
+      normalizedMessage.includes("maksimal") ||
+      normalizedMessage.includes("maximum") ||
+      normalizedMessage.includes("request entity too large")
+    ) {
+      return `Ukuran dokumen terlalu besar. Maksimal ${MAX_DOCUMENT_SIZE_MB}MB per file.`;
+    }
+
+    if (
+      normalizedMessage.includes("invalid file type") ||
+      normalizedMessage.includes("format dokumen")
+    ) {
+      return "Format dokumen belum didukung. Gunakan PDF, Word, Excel, CSV, TXT, JPG, PNG, atau WebP.";
+    }
+
+    if (
+      normalizedMessage.includes("file content does not match") ||
+      normalizedMessage.includes("isi dokumen")
+    ) {
+      return "Isi dokumen tidak sesuai dengan format file. Pastikan file tidak rusak dan ekstensi file benar.";
+    }
+
+    if (
+      normalizedMessage.includes("permission denied") ||
+      normalizedMessage.includes("failed to save") ||
+      normalizedMessage.includes("folder upload")
+    ) {
+      return "Dokumen belum bisa disimpan di server. Hubungi admin untuk mengecek folder upload.";
+    }
+
+    return rawMessage || "Dokumen belum bisa diproses. Coba beberapa saat lagi.";
   };
 
   const handleDocumentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -830,7 +894,7 @@ export default function PurchaseRequestsPage() {
     } catch (err: any) {
       toast({
         title: "Gagal mengunggah dokumen",
-        description: err.response?.data?.error || err.message,
+        description: getDocumentUploadErrorMessage(err),
         status: "error",
         duration: 4000,
       });
@@ -864,9 +928,7 @@ export default function PurchaseRequestsPage() {
     } catch (err: any) {
       toast({
         title: "Gagal upload dokumen realisasi",
-        description:
-          err.response?.data?.error ||
-          "Dokumen realisasi belum bisa diunggah.",
+        description: getDocumentUploadErrorMessage(err),
         status: "error",
         duration: 5000,
       });
@@ -931,7 +993,7 @@ export default function PurchaseRequestsPage() {
     } catch (err: any) {
       toast({
         title: "Gagal mengirim invoice aktual",
-        description: err.response?.data?.error || err.message,
+        description: getDocumentUploadErrorMessage(err),
         status: "error",
         duration: 5000,
       });
@@ -1043,7 +1105,7 @@ export default function PurchaseRequestsPage() {
     } catch (err: any) {
       toast({
         title: "Gagal mengirim revisi PR",
-        description: err.response?.data?.error || err.message,
+        description: getDocumentUploadErrorMessage(err),
         status: "error",
         duration: 5000,
       });
@@ -1214,7 +1276,7 @@ export default function PurchaseRequestsPage() {
     } catch (err: any) {
       toast({
         title: "Gagal membuat pengajuan",
-        description: err.response?.data?.error || err.message,
+        description: getDocumentUploadErrorMessage(err),
         status: "error",
         duration: 4000,
       });
@@ -3192,7 +3254,7 @@ export default function PurchaseRequestsPage() {
                     </Text>
                     <Text fontSize="sm" color={mutedTextColor}>
                       Bisa unggah beberapa file dalam satu PR: PDF, Word, Excel,
-                      CSV, TXT, JPG, PNG, atau WebP. Maksimal 20MB per file.
+                      CSV, TXT, JPG, PNG, atau WebP. Maksimal 50MB per file.
                     </Text>
                   </Box>
                   <Button
@@ -4121,7 +4183,7 @@ export default function PurchaseRequestsPage() {
                         </Button>
                         <Text fontSize="xs" color={mutedTextColor} mt={1}>
                           Wajib lampirkan dokumen pendukung. Format PDF, Word,
-                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 20MB
+                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 50MB
                           per file.
                         </Text>
                       </Box>
@@ -4449,7 +4511,7 @@ export default function PurchaseRequestsPage() {
                         </Button>
                         <Text fontSize="xs" color={mutedTextColor} mt={1}>
                           Wajib lampirkan invoice vendor. Format PDF, Word,
-                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 20MB
+                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 50MB
                           per file.
                         </Text>
                       </Box>
