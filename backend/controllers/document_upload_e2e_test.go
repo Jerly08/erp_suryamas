@@ -61,6 +61,24 @@ func addPDFToMultipart(t *testing.T, writer *multipart.Writer, fieldName string)
 	require.NoError(t, err)
 }
 
+func addLargeTextFileToMultipart(t *testing.T, writer *multipart.Writer, fieldName string, size int64) {
+	t.Helper()
+
+	part, err := writer.CreateFormFile(fieldName, "large-supporting-document.txt")
+	require.NoError(t, err)
+
+	chunk := bytes.Repeat([]byte("a"), 32*1024)
+	for remaining := size; remaining > 0; {
+		writeSize := int64(len(chunk))
+		if remaining < writeSize {
+			writeSize = remaining
+		}
+		_, err := part.Write(chunk[:writeSize])
+		require.NoError(t, err)
+		remaining -= writeSize
+	}
+}
+
 func cleanupUploadedTestFiles(t *testing.T, filePaths ...string) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -70,6 +88,31 @@ func cleanupUploadedTestFiles(t *testing.T, filePaths ...string) {
 			}
 		}
 	})
+}
+
+func TestPurchaseRequestCreateParsesPayloadWithLargeMultipartDocument(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() {
+		_ = os.Remove("uploads/purchase-requests")
+	})
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	require.NoError(t, writer.WriteField("payload", `{}`))
+	addLargeTextFileToMultipart(t, writer, "documents", 21*1024*1024)
+	require.NoError(t, writer.Close())
+
+	controller := NewPurchaseRequestController(nil)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/purchase-requests", body)
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	controller.Create(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "items are required")
+	require.NotContains(t, recorder.Body.String(), "payload is required")
 }
 
 func TestPurchaseRequestRealizationDocumentUploadE2E(t *testing.T) {
