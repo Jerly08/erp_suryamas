@@ -24,8 +24,12 @@ const downloadBlobResponse = (blob: Blob, disposition: string, fallbackName: str
 export interface User {
   id: number;
   username: string;
+  email?: string;
+  role?: string;
   first_name: string;
   last_name: string;
+  department?: string;
+  position?: string;
 }
 
 export interface Product {

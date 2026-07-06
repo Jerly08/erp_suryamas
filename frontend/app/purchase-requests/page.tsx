@@ -81,6 +81,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import api from "@/services/api";
 import purchaseService from "@/services/purchaseService";
 import {
+  humanizeRole,
   isAccountingRole,
   isFinanceManagerRole,
   isFinanceStaffRole,
@@ -2178,12 +2179,28 @@ export default function PurchaseRequestsPage() {
 
   const filteredRequests = requests.filter((r) => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
-	    const matchesSearch =
-	      !normalizedSearch ||
-	      r.pr_number.toLowerCase().includes(normalizedSearch) ||
-	      getPurchaseRequestTitle(r).toLowerCase().includes(normalizedSearch) ||
-	      (r.vendor?.name || "").toLowerCase().includes(normalizedSearch) ||
-	      (r.project?.name || "").toLowerCase().includes(normalizedSearch);
+    const requesterSearchText = [
+      r.requester?.first_name,
+      r.requester?.last_name,
+      r.requester?.username,
+      r.requester?.email,
+      r.requester?.department,
+      r.requester?.position,
+      r.requester?.role,
+      humanizeRole(r.requester?.role),
+      r.department,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const matchesSearch =
+      !normalizedSearch ||
+      r.pr_number.toLowerCase().includes(normalizedSearch) ||
+      getPurchaseRequestTitle(r).toLowerCase().includes(normalizedSearch) ||
+      (r.vendor?.name || "").toLowerCase().includes(normalizedSearch) ||
+      (r.project?.name || "").toLowerCase().includes(normalizedSearch) ||
+      (r.project?.code || "").toLowerCase().includes(normalizedSearch) ||
+      requesterSearchText.includes(normalizedSearch);
 
     const requestDate = getDateKey(r.created_at);
     const matchesStartDate =
@@ -2192,10 +2209,10 @@ export default function PurchaseRequestsPage() {
       !endDateFilter || Boolean(requestDate && requestDate <= endDateFilter);
 
     return (
-	      matchesSearch &&
-	      matchesProgressFilter(r) &&
-	      !isDateRangeInvalid &&
-	      matchesStartDate &&
+      matchesSearch &&
+      matchesProgressFilter(r) &&
+      !isDateRangeInvalid &&
+      matchesStartDate &&
       matchesEndDate
     );
   });
@@ -2577,7 +2594,7 @@ export default function PurchaseRequestsPage() {
                     <Icon as={FiSearch} color={mutedTextColor} />
                   </InputLeftElement>
                   <Input
-                    placeholder="Cari by Nomor PR, Vendor, atau Proyek..."
+                    placeholder="Cari Nomor PR, Submitter, Departemen, Vendor, atau Proyek..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     bg={inputBg}

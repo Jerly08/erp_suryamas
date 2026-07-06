@@ -227,7 +227,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                           {purchase.purchase_request_id && (
                             <>
                               <Badge colorScheme="blue" variant="subtle" fontSize="2xs">
-                                PR: {getPurchaseRequestNumber(purchase)}
+                                {getPurchaseRequestNumber(purchase)}
                               </Badge>
                               {getPurchaseRequestTitle(purchase) && (
                                 <Text
