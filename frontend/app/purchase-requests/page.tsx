@@ -1604,7 +1604,9 @@ export default function PurchaseRequestsPage() {
   const canOpenRequesterRevision = (pr?: PurchaseRequest | null) => {
     if (!pr || !canApprove("purchase_requests")) return false;
     if (roleNorm !== "admin" && !isFinanceTeamRole(roleNorm)) return false;
-    if (pr.status !== "APPROVED") return false;
+    if (pr.status !== "APPROVED" && pr.status !== "PENDING_APPROVAL") {
+      return false;
+    }
     return !getPurchaseRealizationSummary(pr).hasPurchase;
   };
 
@@ -2489,7 +2491,6 @@ export default function PurchaseRequestsPage() {
   );
   const canSubmitSelectedRequesterRevision = Boolean(
     selectedRequest &&
-      canEdit("purchase_requests") &&
       selectedRequest.status === "AWAITING_REVISION" &&
       selectedRequest.reapproval_reason === "REQUESTER_REVISION" &&
       !selectedRequestRealizationSummary.hasPurchase &&

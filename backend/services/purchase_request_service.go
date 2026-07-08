@@ -348,8 +348,8 @@ func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, u
 	if err != nil {
 		return nil, err
 	}
-	if pr.Status != models.PRStatusApproved {
-		return nil, fmt.Errorf("purchase request %s can only be opened for requester revision after finance manager approval", pr.PRNumber)
+	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusPendingApproval {
+		return nil, fmt.Errorf("purchase request %s can only be opened for requester revision while pending approval or after finance manager approval", pr.PRNumber)
 	}
 
 	linkedPurchases, err := s.getLinkedPurchasesForPurchaseRequest(pr.ID)
@@ -368,8 +368,8 @@ func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, u
 			First(&current, pr.ID).Error; err != nil {
 			return err
 		}
-		if current.Status != models.PRStatusApproved {
-			return fmt.Errorf("purchase request %s can only be opened for requester revision after approval", current.PRNumber)
+		if current.Status != models.PRStatusApproved && current.Status != models.PRStatusPendingApproval {
+			return fmt.Errorf("purchase request %s can only be opened for requester revision while pending approval or after approval", current.PRNumber)
 		}
 
 		snapshot, err := buildPurchaseRequestRevisionSnapshot(&current, userID, reason, now)
