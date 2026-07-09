@@ -57,7 +57,12 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOption, setSelectedOption] = useState<SearchableSelectOption | null>(null);
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
+  const [dropdownPosition, setDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+    maxHeight: 300,
+  });
   const { isOpen, onOpen, onClose } = useDisclosure();
   const inputBg = useColorModeValue('white', 'var(--bg-secondary)');
   const inputTextColor = useColorModeValue('gray.800', 'var(--text-primary)');
@@ -186,10 +191,28 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
     const updatePosition = () => {
       if (containerRef.current && isOpen) {
         const rect = containerRef.current.getBoundingClientRect();
+        const viewportMargin = 8;
+        const preferredMaxHeight = 300;
+        const minDropdownHeight = 180;
+        const spaceBelow = window.innerHeight - rect.bottom - viewportMargin;
+        const spaceAbove = rect.top - viewportMargin;
+        const shouldOpenAbove =
+          spaceBelow < minDropdownHeight && spaceAbove > spaceBelow;
+        const maxHeight = Math.max(
+          120,
+          Math.min(
+            preferredMaxHeight,
+            shouldOpenAbove ? spaceAbove : spaceBelow,
+          ),
+        );
+
         setDropdownPosition({
-          top: rect.bottom + window.scrollY,
-          left: rect.left + window.scrollX,
+          top: shouldOpenAbove
+            ? Math.max(viewportMargin, rect.top - maxHeight - 4)
+            : Math.min(rect.bottom + 4, window.innerHeight - viewportMargin),
+          left: rect.left,
           width: rect.width,
+          maxHeight,
         });
       }
     };
@@ -272,10 +295,9 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
             borderColor={borderColor}
             borderRadius="md"
             boxShadow="xl"
-            maxHeight="300px"
+            maxHeight={`${dropdownPosition.maxHeight}px`}
             overflowY="auto"
             overflowX="hidden"
-            mt={1}
             // Smooth programmatic scroll and better overscroll behaviour
             sx={{ 
               scrollBehavior: 'smooth', 
