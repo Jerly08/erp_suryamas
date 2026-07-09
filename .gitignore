@@ -138,3 +138,5 @@ noted.txt
 
 /backup
 /backups/
+/local_restore_backups/
+/prod_restore_imports/

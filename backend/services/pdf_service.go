@@ -55,6 +55,49 @@ func firstMeaningfulValue(values ...float64) float64 {
 	return 0
 }
 
+func fitPDFCellText(pdf *gofpdf.Fpdf, text string, width float64) string {
+	text = strings.TrimSpace(text)
+	if text == "" || pdf.GetStringWidth(text) <= width {
+		return text
+	}
+
+	suffix := "..."
+	runes := []rune(text)
+	for len(runes) > 0 && pdf.GetStringWidth(strings.TrimSpace(string(runes))+suffix) > width {
+		runes = runes[:len(runes)-1]
+	}
+
+	return strings.TrimSpace(string(runes)) + suffix
+}
+
+func splitPDFCellLines(pdf *gofpdf.Fpdf, text string, width float64, maxLines int) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return []string{""}
+	}
+
+	rawLines := pdf.SplitLines([]byte(text), width)
+	if len(rawLines) == 0 {
+		return []string{fitPDFCellText(pdf, text, width)}
+	}
+
+	lineCount := len(rawLines)
+	if maxLines > 0 && lineCount > maxLines {
+		lineCount = maxLines
+	}
+
+	lines := make([]string, 0, lineCount)
+	for i := 0; i < lineCount; i++ {
+		lines = append(lines, strings.TrimSpace(string(rawLines[i])))
+	}
+
+	if maxLines > 0 && len(rawLines) > maxLines {
+		lines[maxLines-1] = fitPDFCellText(pdf, lines[maxLines-1]+"...", width)
+	}
+
+	return lines
+}
+
 // buildSalePDFSummary prefers persisted tax amounts over recomputing from default rates.
 // This keeps commercial documents aligned with the actual transaction that was saved.
 func (p *PDFService) buildSalePDFSummary(sale *models.Sale, subtotal float64) salePDFSummary {
@@ -229,12 +272,12 @@ type PDFTranslations struct {
 func getPDFTranslations(lang string) PDFTranslations {
 	if lang == "id" || lang == "ID" {
 		return PDFTranslations{
-			Invoice:                  "FAKTUR",
+			Invoice:                  "INVOICE",
 			Quotation:                "PENAWARAN",
 			Receipt:                  "KWITANSI",
 			BillTo:                   "Tagih Ke",
 			ShipTo:                   "Kirim Ke",
-			InvoiceNumber:            "Nomor Faktur",
+			InvoiceNumber:            "Nomor Invoice",
 			QuotationNumber:          "Nomor Penawaran",
 			ReceiptNumber:            "Nomor Kwitansi",
 			Date:                     "Tanggal",
@@ -1087,11 +1130,13 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 
 	// Calculate column widths for clean layout
 	numWidth := contentW * 0.05
-	descWidth := contentW * 0.28
-	locWidth := contentW * 0.22
-	qtyWidth := contentW * 0.10
+	descWidth := contentW * 0.26
+	locWidth := contentW * 0.26
+	qtyWidth := contentW * 0.08
 	priceWidth := contentW * 0.17
 	totalWidth := contentW * 0.18
+	locationTextWidth := locWidth - 3
+	locationLineHeight := 4.2
 
 	pdf.CellFormat(numWidth, 6, tr.No, "1", 0, "C", true, 0, "")
 	pdf.CellFormat(descWidth, 6, tr.Description, "1", 0, "L", true, 0, "")
@@ -1107,8 +1152,32 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 
 	subtotal := 0.0
 	for i, item := range sale.SaleItems {
-		// Check if we need a new page
-		if pdf.GetY() > 250 {
+		// Item data
+		itemNumber := strconv.Itoa(i + 1)
+		description := tr.Product
+		if item.ProductName != "" {
+			description = item.ProductName
+			if len(description) > 45 {
+				description = description[:42] + "..."
+			}
+		} else if item.Product.ID != 0 {
+			description = item.Product.Name
+			// Truncate long descriptions
+			if len(description) > 45 {
+				description = description[:42] + "..."
+			}
+		}
+
+		quantity := strconv.Itoa(int(item.Quantity))
+		unitPrice := p.formatRupiah(item.UnitPrice)
+		locationLines := splitPDFCellLines(pdf, item.Location, locationTextWidth, 2)
+		rowHeight := 5.0
+		if len(locationLines) > 1 {
+			rowHeight = 9.5
+		}
+
+		// Check if we need a new page after the row height is known.
+		if pdf.GetY()+rowHeight > 250 {
 			pdf.AddPage()
 			// Re-add headers on new page
 			pdf.SetFont("Arial", "B", 9)
@@ -1135,25 +1204,6 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 			pdf.SetFillColor(250, 250, 250) // Very light gray
 		}
 
-		// Item data
-		itemNumber := strconv.Itoa(i + 1)
-		description := tr.Product
-		if item.ProductName != "" {
-			description = item.ProductName
-			if len(description) > 45 {
-				description = description[:42] + "..."
-			}
-		} else if item.Product.ID != 0 {
-			description = item.Product.Name
-			// Truncate long descriptions
-			if len(description) > 45 {
-				description = description[:42] + "..."
-			}
-		}
-
-		quantity := strconv.Itoa(int(item.Quantity))
-		unitPrice := p.formatRupiah(item.UnitPrice)
-
 		// Use LineTotal instead of TotalPrice for better accuracy
 		lineTotal := item.LineTotal
 		if lineTotal == 0 {
@@ -1161,13 +1211,23 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 		}
 		totalPrice := p.formatRupiah(lineTotal)
 
-		pdf.CellFormat(numWidth, 5, itemNumber, "1", 0, "C", true, 0, "")
-		pdf.CellFormat(descWidth, 5, description, "1", 0, "L", true, 0, "")
-		pdf.CellFormat(locWidth, 5, item.Location, "1", 0, "L", true, 0, "")
-		pdf.CellFormat(qtyWidth, 5, quantity, "1", 0, "C", true, 0, "")
-		pdf.CellFormat(priceWidth, 5, unitPrice, "1", 0, "R", true, 0, "")
-		pdf.CellFormat(totalWidth, 5, totalPrice, "1", 0, "R", true, 0, "")
-		pdf.Ln(5)
+		rowX := pdf.GetX()
+		rowY := pdf.GetY()
+		pdf.CellFormat(numWidth, rowHeight, itemNumber, "1", 0, "C", true, 0, "")
+		pdf.CellFormat(descWidth, rowHeight, description, "1", 0, "L", true, 0, "")
+
+		locationX := pdf.GetX()
+		locationY := pdf.GetY()
+		pdf.Rect(locationX, locationY, locWidth, rowHeight, "FD")
+		for lineIdx, line := range locationLines {
+			pdf.Text(locationX+1.5, locationY+3.6+(float64(lineIdx)*locationLineHeight), line)
+		}
+		pdf.SetXY(locationX+locWidth, locationY)
+
+		pdf.CellFormat(qtyWidth, rowHeight, quantity, "1", 0, "C", true, 0, "")
+		pdf.CellFormat(priceWidth, rowHeight, unitPrice, "1", 0, "R", true, 0, "")
+		pdf.CellFormat(totalWidth, rowHeight, totalPrice, "1", 0, "R", true, 0, "")
+		pdf.SetXY(rowX, rowY+rowHeight)
 
 		subtotal += lineTotal
 	}

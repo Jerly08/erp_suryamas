@@ -239,9 +239,18 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="lg" isCentered>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      size="lg"
+      isCentered
+      scrollBehavior="inside"
+    >
       <ModalOverlay />
-      <ModalContent>
+      <ModalContent
+        maxH={{ base: "calc(100dvh - 1rem)", md: "calc(100vh - 3rem)" }}
+        overflow="hidden"
+      >
         <ModalHeader>
           {isLateAddMode
             ? "Tambah PPh23 Susulan"
@@ -251,8 +260,16 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
         </ModalHeader>
         <ModalCloseButton />
 
-        <form onSubmit={handleSubmit}>
-          <ModalBody>
+        <Box
+          as="form"
+          onSubmit={handleSubmit}
+          display="flex"
+          flexDirection="column"
+          flex="1"
+          minH={0}
+          overflow="hidden"
+        >
+          <ModalBody flex="1" minH={0} overflowY="auto">
             {sale && (
               <VStack spacing={4} align="stretch">
                 <Text fontSize="sm" color="gray.600">
@@ -426,7 +443,11 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
             )}
           </ModalBody>
 
-          <ModalFooter>
+          <ModalFooter
+            flexShrink={0}
+            borderTopWidth="1px"
+            borderColor={panelBorderColor}
+          >
             <Button variant="ghost" mr={3} onClick={handleClose}>
               Batal
             </Button>
@@ -438,7 +459,7 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
                   : "Posting PPh23"}
             </Button>
           </ModalFooter>
-        </form>
+        </Box>
       </ModalContent>
     </Modal>
   );

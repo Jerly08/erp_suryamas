@@ -21,6 +21,7 @@ import {
   Box,
   Grid,
   GridItem,
+  useColorModeValue,
 } from "@chakra-ui/react";
 import { SSOTJournalEntry } from "@/services/ssotJournalService";
 import { formatAccountingDate } from "@/utils/accountingDate";
@@ -37,6 +38,22 @@ export default function JournalDetailModal({
   onClose,
   entry,
 }: JournalDetailModalProps) {
+  const modalBg = useColorModeValue("white", "gray.800");
+  const panelBg = useColorModeValue("gray.50", "whiteAlpha.50");
+  const tableHeaderBg = useColorModeValue("gray.50", "whiteAlpha.100");
+  const borderColor = useColorModeValue("gray.200", "whiteAlpha.200");
+  const textColor = useColorModeValue("gray.800", "gray.100");
+  const secondaryTextColor = useColorModeValue("gray.700", "gray.200");
+  const mutedTextColor = useColorModeValue("gray.500", "gray.400");
+  const orangePanelBg = useColorModeValue("orange.50", "orange.900");
+  const orangePanelBorder = useColorModeValue("orange.100", "orange.700");
+  const greenPanelBg = useColorModeValue("green.50", "green.900");
+  const greenPanelBorder = useColorModeValue("green.100", "green.700");
+  const bluePanelBg = useColorModeValue("blue.50", "blue.900");
+  const bluePanelBorder = useColorModeValue("blue.100", "blue.700");
+  const balancedColor = useColorModeValue("green.500", "green.300");
+  const unbalancedColor = useColorModeValue("red.500", "red.300");
+
   if (!entry) return null;
 
   const formatRoleLabel = (role?: string) => {
@@ -101,6 +118,12 @@ export default function JournalDetailModal({
       : String(entry.approval_stage || "").toUpperCase() === "DIRECTOR"
         ? "Menunggu Director"
         : "Menunggu Finance Manager";
+  const adjustmentPanelBg = entry.adjustment_completed
+    ? greenPanelBg
+    : orangePanelBg;
+  const adjustmentPanelBorder = entry.adjustment_completed
+    ? greenPanelBorder
+    : orangePanelBorder;
 
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat("id-ID", {
@@ -125,7 +148,7 @@ export default function JournalDetailModal({
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="4xl" scrollBehavior="inside">
       <ModalOverlay />
-      <ModalContent>
+      <ModalContent bg={modalBg} color={textColor}>
         <ModalHeader>
           <HStack>
             <Text>Journal Entry</Text>
@@ -147,16 +170,22 @@ export default function JournalDetailModal({
         <ModalBody>
           <VStack spacing={6} align="stretch">
             {/* Header Info */}
-            <Box bg="gray.50" p={4} borderRadius="md" borderWidth="1px">
+            <Box
+              bg={panelBg}
+              p={4}
+              borderRadius="md"
+              borderWidth="1px"
+              borderColor={borderColor}
+            >
               <Grid templateColumns="repeat(2, 1fr)" gap={4}>
                 <GridItem>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     Entry Number
                   </Text>
                   <Text fontWeight="bold">{entry.entry_number}</Text>
                 </GridItem>
                 <GridItem>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     Date
                   </Text>
                   <Text fontWeight="bold">
@@ -169,44 +198,42 @@ export default function JournalDetailModal({
                   </Text>
                 </GridItem>
                 <GridItem>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     Reference
                   </Text>
                   <Text>{entry.reference || "-"}</Text>
                 </GridItem>
                 <GridItem>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     Source
                   </Text>
                   <Text>{sourceLabel}</Text>
                 </GridItem>
                 <GridItem colSpan={2}>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     Description
                   </Text>
                   <Text>{entry.description}</Text>
                 </GridItem>
                 {entry.adjustment_required && (
                   <GridItem colSpan={2}>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       Adjustment Requirement
                     </Text>
                     <Box
                       mt={1}
                       p={3}
-                      bg={entry.adjustment_completed ? "green.50" : "orange.50"}
+                      bg={adjustmentPanelBg}
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor={
-                        entry.adjustment_completed ? "green.100" : "orange.100"
-                      }
+                      borderColor={adjustmentPanelBorder}
                     >
                       <HStack align="start" justify="space-between">
                         <Box>
                           <Text fontWeight="medium">
                             {entry.adjustment_requirement_label}
                           </Text>
-                          <Text fontSize="sm" color="gray.700" mt={1}>
+                          <Text fontSize="sm" color={secondaryTextColor} mt={1}>
                             {entry.adjustment_requirement_tagline ||
                               "Jurnal ini masuk mapping khusus adjustment client."}
                           </Text>
@@ -222,12 +249,12 @@ export default function JournalDetailModal({
                         </Badge>
                       </HStack>
                       {entry.adjustment_requirement_coa && (
-                        <Text fontSize="sm" color="gray.700" mt={2}>
+                        <Text fontSize="sm" color={secondaryTextColor} mt={2}>
                           COA: {entry.adjustment_requirement_coa}
                         </Text>
                       )}
                       {entry.adjustment_requirement_reason && (
-                        <Text fontSize="sm" color="gray.600" mt={1}>
+                        <Text fontSize="sm" color={mutedTextColor} mt={1}>
                           Alasan: {entry.adjustment_requirement_reason}
                         </Text>
                       )}
@@ -236,16 +263,16 @@ export default function JournalDetailModal({
                 )}
                 {entry.adjustment_of && (
                   <GridItem colSpan={2}>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       Adjustment Of
                     </Text>
                     <Box
                       mt={1}
                       p={3}
-                      bg="orange.50"
+                      bg={orangePanelBg}
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor="orange.100"
+                      borderColor={orangePanelBorder}
                     >
                       <Text fontWeight="medium">{adjustedEntryLabel}</Text>
                     </Box>
@@ -255,23 +282,23 @@ export default function JournalDetailModal({
                   (entry.adjustment_category_label ||
                     entry.adjustment_category_code) && (
                     <GridItem colSpan={2}>
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color={mutedTextColor}>
                         Adjustment Category
                       </Text>
                       <Box
                         mt={1}
                         p={3}
-                        bg="orange.50"
+                        bg={orangePanelBg}
                         borderRadius="md"
                         borderWidth="1px"
-                        borderColor="orange.100"
+                        borderColor={orangePanelBorder}
                       >
                         <Text fontWeight="medium">
                           {entry.adjustment_category_label ||
                             entry.adjustment_category_code}
                         </Text>
                         {entry.adjustment_category_code && (
-                          <Text fontSize="xs" color="gray.600" mt={1}>
+                          <Text fontSize="xs" color={mutedTextColor} mt={1}>
                             {entry.adjustment_category_code}
                           </Text>
                         )}
@@ -280,16 +307,16 @@ export default function JournalDetailModal({
                   )}
                 {entry.source_type === "ADJUSTMENT" && (
                   <GridItem colSpan={2}>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       Approval Flow
                     </Text>
                     <Box
                       mt={1}
                       p={3}
-                      bg="orange.50"
+                      bg={orangePanelBg}
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor="orange.100"
+                      borderColor={orangePanelBorder}
                     >
                       <Text>
                         Finance staff atau finance manager dapat membuat draft
@@ -311,17 +338,17 @@ export default function JournalDetailModal({
                 )}
                 {relatedAdjustments.length > 0 && (
                   <GridItem colSpan={2}>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       Related Adjustments
                     </Text>
                     <VStack
                       mt={1}
                       spacing={2}
                       align="stretch"
-                      bg="orange.50"
+                      bg={orangePanelBg}
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor="orange.100"
+                      borderColor={orangePanelBorder}
                       p={3}
                     >
                       {relatedAdjustments.map((adjustment) => (
@@ -334,7 +361,7 @@ export default function JournalDetailModal({
                             <Text fontWeight="medium">
                               {adjustment.entry_number}
                             </Text>
-                            <Text fontSize="sm" color="gray.600">
+                            <Text fontSize="sm" color={mutedTextColor}>
                               {adjustment.description}
                             </Text>
                           </Box>
@@ -356,16 +383,16 @@ export default function JournalDetailModal({
                 )}
                 {entry.notes && (
                   <GridItem colSpan={2}>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       Posting Notes
                     </Text>
                     <Box
                       mt={1}
                       p={3}
-                      bg="blue.50"
+                      bg={bluePanelBg}
                       borderRadius="md"
                       borderWidth="1px"
-                      borderColor="blue.100"
+                      borderColor={bluePanelBorder}
                     >
                       <Text fontStyle="italic" whiteSpace="pre-wrap">
                         {entry.notes}
@@ -374,14 +401,14 @@ export default function JournalDetailModal({
                   </GridItem>
                 )}
                 <GridItem>
-                  <Text fontSize="xs" color="gray.500">
+                  <Text fontSize="xs" color={mutedTextColor}>
                     Created By
                   </Text>
                   <Text>{createdByLabel}</Text>
                 </GridItem>
                 {entry.posted_by && (
                   <GridItem>
-                    <Text fontSize="xs" color="gray.500">
+                    <Text fontSize="xs" color={mutedTextColor}>
                       {entry.source_type === "ADJUSTMENT"
                         ? "Approved / Posted By"
                         : "Posted By"}
@@ -395,33 +422,46 @@ export default function JournalDetailModal({
             </Box>
 
             {/* Lines Table */}
-            <Box borderWidth="1px" borderRadius="lg" overflow="hidden">
-              <Table size="sm" variant="simple">
-                <Thead bg="gray.50">
+            <Box
+              borderWidth="1px"
+              borderRadius="lg"
+              borderColor={borderColor}
+              overflow="hidden"
+            >
+              <Table size="sm" variant="simple" color={textColor}>
+                <Thead bg={tableHeaderBg}>
                   <Tr>
-                    <Th>#</Th>
-                    <Th>Account</Th>
-                    <Th>Description</Th>
-                    <Th isNumeric>Debit</Th>
-                    <Th isNumeric>Credit</Th>
+                    <Th color={mutedTextColor} borderColor={borderColor}>#</Th>
+                    <Th color={mutedTextColor} borderColor={borderColor}>
+                      Account
+                    </Th>
+                    <Th color={mutedTextColor} borderColor={borderColor}>
+                      Description
+                    </Th>
+                    <Th isNumeric color={mutedTextColor} borderColor={borderColor}>
+                      Debit
+                    </Th>
+                    <Th isNumeric color={mutedTextColor} borderColor={borderColor}>
+                      Credit
+                    </Th>
                   </Tr>
                 </Thead>
                 <Tbody>
                   {entry.lines?.map((line) => (
                     <Tr key={line.id}>
-                      <Td>{line.line_number}</Td>
-                      <Td fontWeight="medium">
+                      <Td borderColor={borderColor}>{line.line_number}</Td>
+                      <Td fontWeight="medium" borderColor={borderColor}>
                         {line.account
                           ? `${line.account.code} - ${line.account.name}`
                           : `Account #${line.account_id}`}
                       </Td>
-                      <Td>{line.description}</Td>
-                      <Td isNumeric>
+                      <Td borderColor={borderColor}>{line.description}</Td>
+                      <Td isNumeric borderColor={borderColor}>
                         {line.debit_amount > 0
                           ? formatCurrency(line.debit_amount)
                           : "-"}
                       </Td>
-                      <Td isNumeric>
+                      <Td isNumeric borderColor={borderColor}>
                         {line.credit_amount > 0
                           ? formatCurrency(line.credit_amount)
                           : "-"}
@@ -429,19 +469,24 @@ export default function JournalDetailModal({
                     </Tr>
                   ))}
                   {/* Totals Row */}
-                  <Tr bg="gray.50" fontWeight="bold">
-                    <Td colSpan={3} textAlign="right">
+                  <Tr bg={tableHeaderBg} fontWeight="bold">
+                    <Td colSpan={3} textAlign="right" borderColor={borderColor}>
                       Total
                     </Td>
-                    <Td isNumeric>{formatCurrency(entry.total_debit)}</Td>
-                    <Td isNumeric>{formatCurrency(entry.total_credit)}</Td>
+                    <Td isNumeric borderColor={borderColor}>
+                      {formatCurrency(entry.total_debit)}
+                    </Td>
+                    <Td isNumeric borderColor={borderColor}>
+                      {formatCurrency(entry.total_credit)}
+                    </Td>
                   </Tr>
                   <Tr>
                     <Td
                       colSpan={3}
                       textAlign="right"
                       fontSize="xs"
-                      color="gray.500"
+                      color={mutedTextColor}
+                      borderColor={borderColor}
                     >
                       Balance Check (Diff)
                     </Td>
@@ -449,7 +494,8 @@ export default function JournalDetailModal({
                       colSpan={2}
                       textAlign="center"
                       fontSize="xs"
-                      color={entry.is_balanced ? "green.500" : "red.500"}
+                      color={entry.is_balanced ? balancedColor : unbalancedColor}
+                      borderColor={borderColor}
                     >
                       {formatCurrency(
                         Math.abs(entry.total_debit - entry.total_credit),

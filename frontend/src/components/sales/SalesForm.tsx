@@ -3348,15 +3348,16 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 {t("sales.form.paymentMethodOptions.cash")}/
                                 {t("sales.form.paymentMethodOptions.bank")}:
                               </strong>{" "}
-                              Debit Cash/Bank Account, Credit Revenue Account
+                              Saat invoice dibuat, sistem otomatis Debit
+                              Cash/Bank Account dan Credit Revenue Account
                             </Text>
                             <Text>
                               •{" "}
                               <strong>
                                 {t("sales.form.paymentMethodOptions.credit")}:
                               </strong>{" "}
-                              Debit selected Receivable COA, Credit Revenue
-                              Account
+                              Saat invoice dibuat, sistem Debit selected
+                              Receivable COA dan Credit Revenue Account
                             </Text>
                           </AlertDescription>
                         </Alert>

@@ -41,6 +41,7 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
+  Tooltip,
 } from "@chakra-ui/react";
 import {
   FiArrowLeft,
@@ -216,6 +217,21 @@ const SaleDetailPage: React.FC = () => {
           ? "Tidak ada PPh23"
           : "Siap dipost";
   const pphStatus = sale ? getSalePPhStatus(sale) : null;
+  const hasOutstandingAmount = !!sale && (sale.outstanding_amount || 0) > 0;
+  const canReceivePayment =
+    hasOutstandingAmount &&
+    (sale?.status === "INVOICED" || sale?.status === "OVERDUE");
+  const paymentMethodType = String(sale?.payment_method_type || "").toUpperCase();
+  const isImmediatePaymentMethod =
+    paymentMethodType === "CASH" || paymentMethodType === "BANK";
+  const immediatePaymentMethodLabel =
+    paymentMethodType === "CASH"
+      ? t("sales.detail.paymentMethodCash")
+      : t("sales.detail.paymentMethodBank");
+  const isConfirmedImmediatePayment =
+    !!sale && sale.status === "CONFIRMED" && isImmediatePaymentMethod;
+  const showDeferredPaymentHint =
+    hasOutstandingAmount && !canReceivePayment && !isConfirmedImmediatePayment;
   const saleItems = sale?.sale_items || [];
   const pendingBackorderQty = saleItems.reduce(
     (sum, item) => sum + (item.backorder_quantity || 0),
@@ -353,13 +369,27 @@ const SaleDetailPage: React.FC = () => {
                     onClick={handleCreateInvoice}
                     isDisabled={actionLoading}
                   >
-                    {t("sales.detail.createInvoice")}
+                    {isConfirmedImmediatePayment
+                      ? t("sales.detail.createInvoiceAndReceivePayment")
+                      : t("sales.detail.createInvoice")}
                   </MenuItem>
                 )}
-                {sale.outstanding_amount > 0 && (
+                {canReceivePayment && (
                   <MenuItem icon={<FiDollarSign />} onClick={onPaymentOpen}>
                     {t("sales.detail.recordPayment")}
                   </MenuItem>
+                )}
+                {showDeferredPaymentHint && (
+                  <Tooltip
+                    label={t("sales.detail.paymentRequiresInvoice")}
+                    placement="left"
+                    hasArrow
+                    shouldWrapChildren
+                  >
+                    <MenuItem icon={<FiDollarSign />} isDisabled>
+                      {t("sales.detail.recordPayment")}
+                    </MenuItem>
+                  </Tooltip>
                 )}
                 {(canAddPPh23 || canPostPPh23) && (
                   <MenuItem icon={<FiCheck />} onClick={onPPh23Open}>
@@ -389,6 +419,22 @@ const SaleDetailPage: React.FC = () => {
             </Menu>
           </HStack>
         </Flex>
+
+        {isConfirmedImmediatePayment && (
+          <Alert status="info" borderRadius="md" alignItems="flex-start">
+            <AlertIcon mt={1} />
+            <Box>
+              <Text fontWeight="semibold">
+                {t("sales.detail.immediatePaymentPendingTitle")}
+              </Text>
+              <Text fontSize="sm">
+                {t("sales.detail.immediatePaymentPendingDesc", {
+                  method: immediatePaymentMethodLabel,
+                })}
+              </Text>
+            </Box>
+          </Alert>
+        )}
 
         {/* Basic Information */}
         <Card>

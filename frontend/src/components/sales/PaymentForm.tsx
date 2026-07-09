@@ -19,6 +19,8 @@ import {
   VStack,
   HStack,
   Text,
+  Alert,
+  AlertIcon,
   Box,
   Divider,
   useToast,
@@ -120,6 +122,14 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   const watchExchangeRate = watch("exchange_rate");
   const [displayAmount, setDisplayAmount] = useState("0");
   const sale = detailedSale || initialSale;
+  const hasOutstandingAmount = !!sale && (sale.outstanding_amount || 0) > 0;
+  const canReceivePayment =
+    hasOutstandingAmount &&
+    (sale?.status === "INVOICED" || sale?.status === "OVERDUE");
+  const paymentBlockedMessage =
+    sale && !hasOutstandingAmount
+      ? t("sales.detail.paymentNoOutstanding")
+      : t("sales.detail.paymentRequiresInvoice");
 
   const selectedAccount = accounts.find(
     (account) => account.id === watchAccountID,
@@ -578,6 +588,16 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
     try {
       setLoading(true);
 
+      if (!canReceivePayment) {
+        toast({
+          title: t("messages.toast.validationError"),
+          description: paymentBlockedMessage,
+          status: "warning",
+          duration: 5000,
+        });
+        return;
+      }
+
       // Validate required fields
       if (!data.account_id || data.account_id === 0) {
         toast({
@@ -654,10 +674,25 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
       onSave();
       onClose();
     } catch (error: any) {
+      const responseData = error?.response?.data || {};
+      const rawMessage =
+        responseData.message ||
+        responseData.details ||
+        responseData.error ||
+        error?.message ||
+        "";
+      const normalizedMessage = String(rawMessage).toLowerCase();
+      const paymentStatusMessage =
+        responseData.code === "SALE_NOT_INVOICED" ||
+        responseData.code === "INVALID_SALE_STATUS" ||
+        normalizedMessage.includes("must be invoiced") ||
+        normalizedMessage.includes("can only be made for invoiced")
+          ? t("sales.detail.paymentRequiresInvoice")
+          : rawMessage || t("messages.toast.serverErrorDesc");
+
       toast({
         title: t("messages.toast.error"),
-        description:
-          error.response?.data?.message || t("messages.toast.serverErrorDesc"),
+        description: paymentStatusMessage,
         status: "error",
         duration: 5000,
       });
@@ -767,6 +802,13 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                   )}
                 </VStack>
               </Box>
+            )}
+
+            {sale && !canReceivePayment && (
+              <Alert status="warning" borderRadius="md" mb={4}>
+                <AlertIcon />
+                <Text fontSize="sm">{paymentBlockedMessage}</Text>
+              </Alert>
             )}
 
             {sale?.payment_schedules && sale.payment_schedules.length > 0 && (
@@ -1514,7 +1556,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
               colorScheme="blue"
               isLoading={loading}
               loadingText={t("purchases.payment.processing")}
-              isDisabled={loading}
+              isDisabled={loading || !canReceivePayment}
             >
               {loading
                 ? t("purchases.payment.processing")

@@ -12,32 +12,32 @@ import (
 
 // RateLimitRecord represents a rate limit entry
 type RateLimitEntry struct {
-	Count      int
-	WindowStart time.Time
+	Count        int
+	WindowStart  time.Time
 	BlockedUntil *time.Time
 }
 
 // RateLimiter manages rate limiting
 type RateLimiter struct {
-	mu      sync.RWMutex
-	entries map[string]*RateLimitEntry
-	limit   int
-	window  time.Duration
+	mu            sync.RWMutex
+	entries       map[string]*RateLimitEntry
+	limit         int
+	window        time.Duration
 	blockDuration time.Duration
 }
 
 // NewRateLimiter creates a new rate limiter
 func NewRateLimiter(limit int, window time.Duration, blockDuration time.Duration) *RateLimiter {
 	rl := &RateLimiter{
-		entries: make(map[string]*RateLimitEntry),
-		limit:   limit,
-		window:  window,
+		entries:       make(map[string]*RateLimitEntry),
+		limit:         limit,
+		window:        window,
 		blockDuration: blockDuration,
 	}
-	
+
 	// Start cleanup goroutine
 	go rl.cleanup()
-	
+
 	return rl
 }
 
@@ -51,7 +51,7 @@ func (rl *RateLimiter) IsAllowed(key string) bool {
 
 	if !exists {
 		rl.entries[key] = &RateLimitEntry{
-			Count:      1,
+			Count:       1,
 			WindowStart: now,
 		}
 		return true
@@ -113,11 +113,11 @@ func (rl *RateLimiter) cleanup() {
 	for range ticker.C {
 		rl.mu.Lock()
 		now := time.Now()
-		
+
 		for key, entry := range rl.entries {
 			// Remove entries that are old and not blocked
-			if now.Sub(entry.WindowStart) > rl.window*2 && 
-			   (entry.BlockedUntil == nil || now.After(*entry.BlockedUntil)) {
+			if now.Sub(entry.WindowStart) > rl.window*2 &&
+				(entry.BlockedUntil == nil || now.After(*entry.BlockedUntil)) {
 				delete(rl.entries, key)
 			}
 		}
@@ -135,35 +135,42 @@ var (
 
 // RateLimitEvent for monitoring
 type RateLimitEvent struct {
-	Timestamp    time.Time
-	ClientIP     string
-	Endpoint     string
-	Allowed      bool
-	Reason       string
+	Timestamp         time.Time
+	ClientIP          string
+	Endpoint          string
+	Allowed           bool
+	Reason            string
 	RemainingRequests int
 }
 
 // InitializeRateLimiters initializes rate limiters with config
 func InitializeRateLimiters(cfg *config.Config) {
+	if !cfg.EnableRateLimit {
+		paymentRateLimiter = nil
+		authRateLimiter = nil
+		generalRateLimiter = nil
+		return
+	}
+
 	// Initialize based on config
 	paymentRateLimiter = NewRateLimiter(
-		cfg.RateLimitAPIRequests, 
-		time.Minute, 
+		cfg.RateLimitAPIRequests,
+		time.Minute,
 		cfg.LockoutDuration,
 	)
-	
+
 	authRateLimiter = NewRateLimiter(
-		cfg.RateLimitAuthRequests, 
-		time.Minute, 
+		cfg.RateLimitAuthRequests,
+		time.Minute,
 		cfg.LockoutDuration,
 	)
-	
+
 	generalRateLimiter = NewRateLimiter(
-		cfg.RateLimitRequests, 
-		time.Minute, 
+		cfg.RateLimitRequests,
+		time.Minute,
 		2*time.Minute,
 	)
-	
+
 	// Start monitoring if enabled
 	if cfg.EnableMonitoring {
 		go startRateLimitMonitoring()
@@ -198,29 +205,29 @@ func PaymentRateLimit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		key := getClientKey(c)
 		allowed := paymentRateLimiter.IsAllowed(key)
 		remaining := paymentRateLimiter.GetRemainingRequests(key)
-		
+
 		// Send monitoring event
 		select {
 		case monitoringChan <- RateLimitEvent{
-			Timestamp:    time.Now(),
-			ClientIP:     key,
-			Endpoint:     c.Request.URL.Path,
-			Allowed:      allowed,
-			Reason:       "payment_endpoint",
+			Timestamp:         time.Now(),
+			ClientIP:          key,
+			Endpoint:          c.Request.URL.Path,
+			Allowed:           allowed,
+			Reason:            "payment_endpoint",
 			RemainingRequests: remaining,
 		}:
 		default:
 			// Channel full, skip monitoring
 		}
-		
+
 		if !allowed {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Payment rate limit exceeded. Please try again later.",
-				"code":  "PAYMENT_RATE_LIMIT_EXCEEDED",
+				"error":       "Payment rate limit exceeded. Please try again later.",
+				"code":        "PAYMENT_RATE_LIMIT_EXCEEDED",
 				"retry_after": paymentRateLimiter.blockDuration.String(),
 			})
 			c.Abort()
@@ -244,29 +251,29 @@ func AuthRateLimit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		key := getClientKey(c)
 		allowed := authRateLimiter.IsAllowed(key)
 		remaining := authRateLimiter.GetRemainingRequests(key)
-		
+
 		// Send monitoring event
 		select {
 		case monitoringChan <- RateLimitEvent{
-			Timestamp:    time.Now(),
-			ClientIP:     key,
-			Endpoint:     c.Request.URL.Path,
-			Allowed:      allowed,
-			Reason:       "auth_endpoint",
+			Timestamp:         time.Now(),
+			ClientIP:          key,
+			Endpoint:          c.Request.URL.Path,
+			Allowed:           allowed,
+			Reason:            "auth_endpoint",
 			RemainingRequests: remaining,
 		}:
 		default:
 			// Channel full, skip monitoring
 		}
-		
+
 		if !allowed {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Authentication rate limit exceeded. Please try again later.",
-				"code":  "AUTH_RATE_LIMIT_EXCEEDED",
+				"error":       "Authentication rate limit exceeded. Please try again later.",
+				"code":        "AUTH_RATE_LIMIT_EXCEEDED",
 				"retry_after": authRateLimiter.blockDuration.String(),
 			})
 			c.Abort()
@@ -286,12 +293,17 @@ func AuthRateLimit() gin.HandlerFunc {
 // GeneralRateLimit middleware for general endpoints
 func GeneralRateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if generalRateLimiter == nil {
+			c.Next()
+			return
+		}
+
 		key := getClientKey(c)
-		
+
 		if !generalRateLimiter.IsAllowed(key) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Rate limit exceeded. Please try again later.",
-				"code":  "RATE_LIMIT_EXCEEDED",
+				"error":       "Rate limit exceeded. Please try again later.",
+				"code":        "RATE_LIMIT_EXCEEDED",
 				"retry_after": "2 minutes",
 			})
 			c.Abort()
@@ -329,8 +341,16 @@ func RateLimit() gin.HandlerFunc {
 // GetRateLimitStatus returns current rate limit status for debugging
 func GetRateLimitStatus(c *gin.Context) gin.H {
 	key := getClientKey(c)
-	
+
+	if paymentRateLimiter == nil || authRateLimiter == nil || generalRateLimiter == nil {
+		return gin.H{
+			"enabled":    false,
+			"client_key": key,
+		}
+	}
+
 	return gin.H{
+		"enabled":           true,
 		"payment_remaining": paymentRateLimiter.GetRemainingRequests(key),
 		"auth_remaining":    authRateLimiter.GetRemainingRequests(key),
 		"general_remaining": generalRateLimiter.GetRemainingRequests(key),

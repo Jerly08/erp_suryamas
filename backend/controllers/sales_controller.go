@@ -26,6 +26,8 @@ type SalesController struct {
 	accountRepo           repositories.AccountRepository
 }
 
+const salePaymentRequiresInvoiceMessage = "Penjualan harus dibuat invoice terlebih dahulu sebelum bisa menerima pembayaran."
+
 func mapSaleWriteError(err error) (int, string, map[string]string, map[string]interface{}, bool) {
 	if err == nil {
 		return 0, "", nil, nil, false
@@ -659,34 +661,43 @@ func (sc *SalesController) CreateSalePayment(c *gin.Context) {
 		// Determine appropriate HTTP status based on error type
 		status := http.StatusInternalServerError
 		code := "PAYMENT_CREATION_ERROR"
+		message := ""
 
 		errorMsg := err.Error()
+		lowerErrorMsg := strings.ToLower(errorMsg)
 		switch {
-		case strings.Contains(errorMsg, "not found"):
+		case strings.Contains(lowerErrorMsg, "not found"):
 			status = http.StatusNotFound
 			code = "SALE_NOT_FOUND"
-		case strings.Contains(errorMsg, "exceeds outstanding"):
+		case strings.Contains(lowerErrorMsg, "exceeds outstanding"):
 			status = http.StatusBadRequest
 			code = "AMOUNT_EXCEEDS_OUTSTANDING"
-		case strings.Contains(errorMsg, "cannot receive payments"):
+		case strings.Contains(lowerErrorMsg, "cannot receive payments") ||
+			strings.Contains(lowerErrorMsg, "payment can only be made for invoiced"):
 			status = http.StatusBadRequest
-			code = "INVALID_SALE_STATUS"
-		case strings.Contains(errorMsg, "no outstanding amount"):
+			code = "SALE_NOT_INVOICED"
+			message = salePaymentRequiresInvoiceMessage
+		case strings.Contains(lowerErrorMsg, "no outstanding amount"):
 			status = http.StatusBadRequest
 			code = "NO_OUTSTANDING_AMOUNT"
-		case strings.Contains(errorMsg, "validation"):
+		case strings.Contains(lowerErrorMsg, "validation"):
 			status = http.StatusBadRequest
 			code = "VALIDATION_ERROR"
 		}
 
-		c.JSON(status, gin.H{
+		response := gin.H{
 			"status":  "error",
 			"error":   "Failed to create payment",
 			"details": errorMsg,
 			"code":    code,
 			"sale_id": id,
 			"user_id": userID,
-		})
+		}
+		if message != "" {
+			response["message"] = message
+		}
+
+		c.JSON(status, response)
 		return
 	}
 
@@ -883,7 +894,11 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 	// Validate sale status
 	if sale.Status != models.SaleStatusInvoiced && sale.Status != models.SaleStatusOverdue {
 		c.JSON(http.StatusBadRequest, gin.H{
+			"success":     false,
+			"status":      "error",
+			"code":        "SALE_NOT_INVOICED",
 			"error":       "Sale must be invoiced to receive payments",
+			"message":     salePaymentRequiresInvoiceMessage,
 			"sale_status": sale.Status,
 		})
 		return
