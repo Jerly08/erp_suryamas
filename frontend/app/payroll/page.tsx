@@ -120,27 +120,64 @@ const getPayrollItemBonus = (item: PayrollItem) => {
 };
 
 const getPayrollItemBPJS = (item: PayrollItem) => {
-  const componentTotal = Number(item.bpjs_tk_jht || 0) + Number(item.bpjs_tk_jp || 0) + Number(item.bpjs_kesehatan || 0);
+  const componentTotal = getPayrollItemBPJSEmployer(item) + getPayrollItemBPJSEmployee(item);
   if (componentTotal > 0) return componentTotal;
   return Number(item.bpjs || 0);
 };
 
+const getPayrollItemBPJSEmployer = (item: PayrollItem) => (
+  Number(item.bpjs_tk_jht_employer || 0) +
+  Number(item.bpjs_tk_jp_employer || 0) +
+  Number(item.bpjs_tk_jkk_employer || 0) +
+  Number(item.bpjs_tk_jkm_employer || 0) +
+  Number(item.bpjs_kesehatan_employer || 0)
+);
+
+const getPayrollItemBPJSEmployee = (item: PayrollItem) => {
+  const splitTotal =
+    Number(item.bpjs_tk_jht_employee || 0) +
+    Number(item.bpjs_tk_jp_employee || 0) +
+    Number(item.bpjs_tk_jkk_employee || 0) +
+    Number(item.bpjs_tk_jkm_employee || 0) +
+    Number(item.bpjs_kesehatan_employee || 0);
+  if (splitTotal > 0) return splitTotal;
+  return Number(item.bpjs_tk_jht || 0) + Number(item.bpjs_tk_jp || 0) + Number(item.bpjs_kesehatan || 0);
+};
+
 const getPayrollItemEmployeeLoanDeduction = (item: PayrollItem) => Number(item.employee_loan_deduction || 0);
 
-const getPayrollItemNetPay = (item: PayrollItem) => Math.max(0, Number(item.base_salary || 0) + getPayrollItemBonus(item) - getPayrollItemBPJS(item) - Number(item.other_deduction || 0) - getPayrollItemEmployeeLoanDeduction(item));
+const getPayrollItemNetPay = (item: PayrollItem) => Math.max(0, Number(item.base_salary || 0) + getPayrollItemBonus(item) - getPayrollItemBPJSEmployee(item) - Number(item.other_deduction || 0) - getPayrollItemEmployeeLoanDeduction(item));
 
 const recalculatePayrollItem = (item: PayrollItem): PayrollItem => {
   const bpjs = getPayrollItemBPJS(item);
   return {
     ...item,
     bpjs,
+    bpjs_tk_jht: Number(item.bpjs_tk_jht_employee || item.bpjs_tk_jht || 0),
+    bpjs_tk_jp: Number(item.bpjs_tk_jp_employee || item.bpjs_tk_jp || 0),
+    bpjs_kesehatan: Number(item.bpjs_kesehatan_employee || item.bpjs_kesehatan || 0),
+    bpjs_tk_jht_employee: Number(item.bpjs_tk_jht_employee || item.bpjs_tk_jht || 0),
+    bpjs_tk_jp_employee: Number(item.bpjs_tk_jp_employee || item.bpjs_tk_jp || 0),
+    bpjs_kesehatan_employee: Number(item.bpjs_kesehatan_employee || item.bpjs_kesehatan || 0),
     net_pay: getPayrollItemNetPay({ ...item, bpjs }),
   };
 };
 
-const payrollBPJSComponentFields: Array<keyof PayrollItem> = ['bpjs_tk_jht', 'bpjs_tk_jp', 'bpjs_kesehatan'];
-
-const sumPayrollBPJSComponents = (item: PayrollItem) => Number(item.bpjs_tk_jht || 0) + Number(item.bpjs_tk_jp || 0) + Number(item.bpjs_kesehatan || 0);
+const payrollBPJSComponentFields: Array<keyof PayrollItem> = [
+  'bpjs_tk_jht',
+  'bpjs_tk_jp',
+  'bpjs_kesehatan',
+  'bpjs_tk_jht_employer',
+  'bpjs_tk_jht_employee',
+  'bpjs_tk_jp_employer',
+  'bpjs_tk_jp_employee',
+  'bpjs_tk_jkk_employer',
+  'bpjs_tk_jkk_employee',
+  'bpjs_tk_jkm_employer',
+  'bpjs_tk_jkm_employee',
+  'bpjs_kesehatan_employer',
+  'bpjs_kesehatan_employee',
+];
 
 const recalculatePayrollImportPreview = (preview: PayrollImportPreview, items: PayrollItem[]): PayrollImportPreview => ({
   ...preview,
@@ -152,6 +189,8 @@ const recalculatePayrollImportPreview = (preview: PayrollImportPreview, items: P
     total_bonus: items.reduce((sum, item) => sum + getPayrollItemBonus(item), 0),
     total_pph: items.reduce((sum, item) => sum + Number(item.pph || 0), 0),
     total_bpjs: items.reduce((sum, item) => sum + getPayrollItemBPJS(item), 0),
+    total_bpjs_employer: items.reduce((sum, item) => sum + getPayrollItemBPJSEmployer(item), 0),
+    total_bpjs_employee: items.reduce((sum, item) => sum + getPayrollItemBPJSEmployee(item), 0),
     total_employee_loan_deduction: items.reduce((sum, item) => sum + getPayrollItemEmployeeLoanDeduction(item), 0),
     total_overall: items.reduce((sum, item) => sum + getPayrollItemNetPay(item), 0),
   },
@@ -339,9 +378,16 @@ const payrollImportHeaders = [
   'COMPENSATION PKWT',
   'OVERTIME',
   'PPH21 TERUTANG',
-  'BPJS TK JHT 2%',
-  'BPJS TK JP 1%',
-  'BPJS KESEHATAN 1%',
+  'IURAN JHT (PEMBERI KERJA)',
+  'IURAN JHT (TENAGA KERJA)',
+  'IURAN JP (PEMBERI KERJA)',
+  'IURAN JP (TENAGA KERJA)',
+  'IURAN JKK (PEMBERI KERJA)',
+  'IURAN JKK (TENAGA KERJA)',
+  'IURAN JKM (PEMBERI KERJA)',
+  'IURAN JKM (TENAGA KERJA)',
+  'BPJS KESEHATAN (PEMBERI KERJA)',
+  'BPJS KESEHATAN (TENAGA KERJA)',
   'PROPORTIONAL',
   'OTHER DEDUCTION',
   'DEDUCTION (PINJAMAN KARYAWAN)',
@@ -503,10 +549,12 @@ export default function PayrollPage() {
       bonus: acc.bonus + Number(payroll.total_bonus || 0),
       pph: acc.pph + Number(payroll.total_pph || 0),
       bpjs: acc.bpjs + Number(payroll.total_bpjs || 0),
+      bpjsEmployer: acc.bpjsEmployer + Number(payroll.total_bpjs_employer || 0),
+      bpjsEmployee: acc.bpjsEmployee + Number(payroll.total_bpjs_employee || 0),
       employeeLoan: acc.employeeLoan + Number(payroll.total_employee_loan_deduction || 0),
       overall: acc.overall + Number(payroll.total_overall || 0),
     }),
-    { salary: 0, bonus: 0, pph: 0, bpjs: 0, employeeLoan: 0, overall: 0 },
+    { salary: 0, bonus: 0, pph: 0, bpjs: 0, bpjsEmployer: 0, bpjsEmployee: 0, employeeLoan: 0, overall: 0 },
   );
 
   const updateImportPreviewItem = (index: number, field: keyof PayrollItem, value: string | number) => {
@@ -516,7 +564,7 @@ export default function PayrollPage() {
         if (itemIndex !== index) return item;
         const updated = { ...item, [field]: value } as PayrollItem;
         if (payrollBPJSComponentFields.includes(field)) {
-          updated.bpjs = sumPayrollBPJSComponents(updated);
+          updated.bpjs = getPayrollItemBPJS(updated);
         }
         return recalculatePayrollItem(updated);
       });
@@ -1150,9 +1198,9 @@ export default function PayrollPage() {
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
                   <Stat>
-                    <StatLabel>Total BPJS</StatLabel>
-                    <StatNumber color="purple.500">{formatCurrency(totals.bpjs)}</StatNumber>
-                    <StatHelpText>Potongan BPJS</StatHelpText>
+	                    <StatLabel>Total BPJS</StatLabel>
+	                    <StatNumber color="purple.500">{formatCurrency(totals.bpjs)}</StatNumber>
+	                    <StatHelpText>Pemberi kerja {formatCurrency(totals.bpjsEmployer)} | Tenaga kerja {formatCurrency(totals.bpjsEmployee)}</StatHelpText>
                   </Stat>
                 </CardBody>
               </Card>
@@ -1168,9 +1216,9 @@ export default function PayrollPage() {
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
                   <Stat>
-                    <StatLabel>Total Net Salary</StatLabel>
-                    <StatNumber color="blue.600">{formatCurrency(totals.overall)}</StatNumber>
-                    <StatHelpText>Salary + bonus - BPJS/potongan lain/pinjaman</StatHelpText>
+	                    <StatLabel>Total Net Salary</StatLabel>
+	                    <StatNumber color="blue.600">{formatCurrency(totals.overall)}</StatNumber>
+	                    <StatHelpText>Salary + bonus - BPJS tenaga kerja/potongan lain/pinjaman</StatHelpText>
                   </Stat>
                 </CardBody>
               </Card>
@@ -1463,8 +1511,11 @@ export default function PayrollPage() {
                         <Card variant="outline">
                           <CardBody>
                             <Stat>
-                              <StatLabel>Total BPJS</StatLabel>
-                              <StatNumber color="purple.500">{formatCurrency(importPreview.summary.total_bpjs)}</StatNumber>
+	                              <StatLabel>Total BPJS</StatLabel>
+	                              <StatNumber color="purple.500">{formatCurrency(importPreview.summary.total_bpjs)}</StatNumber>
+	                              <StatHelpText>
+	                                Pemberi kerja {formatCurrency(Number(importPreview.summary.total_bpjs_employer || 0))} | Tenaga kerja {formatCurrency(Number(importPreview.summary.total_bpjs_employee || 0))}
+	                              </StatHelpText>
                             </Stat>
                           </CardBody>
                         </Card>
@@ -1514,9 +1565,16 @@ export default function PayrollPage() {
                                 <Th isNumeric>Comp. PKWT</Th>
                                 <Th isNumeric>Overtime</Th>
                                 <Th isNumeric>PPh21 Terutang</Th>
-                                <Th isNumeric>BPJS JHT</Th>
-                                <Th isNumeric>BPJS JP</Th>
-                                <Th isNumeric>BPJS Kes.</Th>
+                                <Th isNumeric>JHT Pemberi</Th>
+                                <Th isNumeric>JHT Tenaga</Th>
+                                <Th isNumeric>JP Pemberi</Th>
+                                <Th isNumeric>JP Tenaga</Th>
+                                <Th isNumeric>JKK Pemberi</Th>
+                                <Th isNumeric>JKK Tenaga</Th>
+                                <Th isNumeric>JKM Pemberi</Th>
+                                <Th isNumeric>JKM Tenaga</Th>
+                                <Th isNumeric>Kes. Pemberi</Th>
+                                <Th isNumeric>Kes. Tenaga</Th>
                                 <Th isNumeric>Proportional</Th>
                                 <Th isNumeric>Other Deduction</Th>
                                 <Th isNumeric>Deduction (Pinjaman Karyawan)</Th>
@@ -1542,13 +1600,34 @@ export default function PayrollPage() {
                                     <CurrencyInput size="sm" value={item.pph || 0} onChange={(value) => updateImportPreviewItem(index, 'pph', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric minW="130px">
-                                    <CurrencyInput size="sm" value={item.bpjs_tk_jht || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jht', value)} showLabel={false} min={0} />
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jht_employer || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jht_employer', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric minW="130px">
-                                    <CurrencyInput size="sm" value={item.bpjs_tk_jp || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jp', value)} showLabel={false} min={0} />
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jht_employee || item.bpjs_tk_jht || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jht_employee', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric minW="130px">
-                                    <CurrencyInput size="sm" value={item.bpjs_kesehatan || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_kesehatan', value)} showLabel={false} min={0} />
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jp_employer || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jp_employer', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jp_employee || item.bpjs_tk_jp || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jp_employee', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jkk_employer || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jkk_employer', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jkk_employee || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jkk_employee', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jkm_employer || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jkm_employer', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_tk_jkm_employee || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_tk_jkm_employee', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_kesehatan_employer || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_kesehatan_employer', value)} showLabel={false} min={0} />
+                                  </Td>
+                                  <Td isNumeric minW="130px">
+                                    <CurrencyInput size="sm" value={item.bpjs_kesehatan_employee || item.bpjs_kesehatan || 0} onChange={(value) => updateImportPreviewItem(index, 'bpjs_kesehatan_employee', value)} showLabel={false} min={0} />
                                   </Td>
                                   <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                   <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>
@@ -1656,11 +1735,13 @@ export default function PayrollPage() {
                       <Card variant="outline">
                         <CardBody>
                           <Stat>
-                            <StatLabel>Total BPJS</StatLabel>
-                            <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
-                            <StatHelpText>
-                              <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(selectedPayroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(selectedPayroll))}</Badge>
-                              {' '}Paid {formatCurrency(Number(selectedPayroll.bpjs_paid_amount || 0))} | Sisa {formatCurrency(getBPJSRemainingAmount(selectedPayroll))}
+	                            <StatLabel>Total BPJS</StatLabel>
+	                            <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
+	                            <StatHelpText>
+	                              Pemberi kerja {formatCurrency(Number(selectedPayroll.total_bpjs_employer || 0))} | Tenaga kerja {formatCurrency(Number(selectedPayroll.total_bpjs_employee || 0))}
+	                              <br />
+	                              <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(selectedPayroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(selectedPayroll))}</Badge>
+	                              {' '}Paid {formatCurrency(Number(selectedPayroll.bpjs_paid_amount || 0))} | Sisa {formatCurrency(getBPJSRemainingAmount(selectedPayroll))}
                             </StatHelpText>
                           </Stat>
                         </CardBody>
@@ -1816,9 +1897,16 @@ export default function PayrollPage() {
                               <Th isNumeric>Comp. PKWT</Th>
                               <Th isNumeric>Overtime</Th>
                               <Th isNumeric>PPh21 Terutang</Th>
-                              <Th isNumeric>BPJS JHT</Th>
-                              <Th isNumeric>BPJS JP</Th>
-                              <Th isNumeric>BPJS Kes.</Th>
+                              <Th isNumeric>JHT Pemberi</Th>
+                              <Th isNumeric>JHT Tenaga</Th>
+                              <Th isNumeric>JP Pemberi</Th>
+                              <Th isNumeric>JP Tenaga</Th>
+                              <Th isNumeric>JKK Pemberi</Th>
+                              <Th isNumeric>JKK Tenaga</Th>
+                              <Th isNumeric>JKM Pemberi</Th>
+                              <Th isNumeric>JKM Tenaga</Th>
+                              <Th isNumeric>Kes. Pemberi</Th>
+                              <Th isNumeric>Kes. Tenaga</Th>
                               <Th isNumeric>Proportional</Th>
                               <Th isNumeric>Other Deduction</Th>
                               <Th isNumeric>Deduction (Pinjaman Karyawan)</Th>
@@ -1848,9 +1936,16 @@ export default function PayrollPage() {
                                 <Td isNumeric color="orange.600">
                                   {formatCurrency(item.pph || 0)}
                                 </Td>
-                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jht || 0)}</Td>
-                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jp || 0)}</Td>
-                                <Td isNumeric>{formatCurrency(item.bpjs_kesehatan || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jht_employer || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jht_employee || item.bpjs_tk_jht || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jp_employer || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jp_employee || item.bpjs_tk_jp || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jkk_employer || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jkk_employee || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jkm_employer || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_tk_jkm_employee || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_kesehatan_employer || 0)}</Td>
+                                <Td isNumeric>{formatCurrency(item.bpjs_kesehatan_employee || item.bpjs_kesehatan || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.proportional || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.other_deduction || 0)}</Td>
                                 <Td isNumeric>{formatCurrency(item.employee_loan_deduction || 0)}</Td>
@@ -2058,17 +2153,20 @@ export default function PayrollPage() {
                   <VStack align="stretch" spacing={5}>
                     <Alert status="info" borderRadius="xl">
                       <AlertIcon />
-                      <AlertDescription>
-                        Jurnal: Debit 2103-002 - Utang BPJS & Potongan Payroll dan Kredit Kas/Bank. Nominal default hanya Total BPJS, tidak termasuk Other Deduction.
-                      </AlertDescription>
+	                      <AlertDescription>
+	                        Jurnal: Debit 2103-002 - Utang BPJS & Potongan Payroll dan Kredit Kas/Bank. Nominal default adalah Total BPJS pemberi kerja + tenaga kerja, tidak termasuk Other Deduction.
+	                      </AlertDescription>
                     </Alert>
 
                     <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                       <Card variant="outline">
                         <CardBody>
                           <Stat>
-                            <StatLabel>Total BPJS</StatLabel>
-                            <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
+	                            <StatLabel>Total BPJS</StatLabel>
+	                            <StatNumber color="purple.500">{formatCurrency(selectedPayroll.total_bpjs)}</StatNumber>
+	                            <StatHelpText>
+	                              Pemberi kerja {formatCurrency(Number(selectedPayroll.total_bpjs_employer || 0))} | Tenaga kerja {formatCurrency(Number(selectedPayroll.total_bpjs_employee || 0))}
+	                            </StatHelpText>
                           </Stat>
                         </CardBody>
                       </Card>

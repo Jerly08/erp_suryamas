@@ -64,6 +64,16 @@ export interface PayrollItem {
   bpjs_tk_jht?: number;
   bpjs_tk_jp?: number;
   bpjs_kesehatan?: number;
+  bpjs_tk_jht_employer?: number;
+  bpjs_tk_jht_employee?: number;
+  bpjs_tk_jp_employer?: number;
+  bpjs_tk_jp_employee?: number;
+  bpjs_tk_jkk_employer?: number;
+  bpjs_tk_jkk_employee?: number;
+  bpjs_tk_jkm_employer?: number;
+  bpjs_tk_jkm_employee?: number;
+  bpjs_kesehatan_employer?: number;
+  bpjs_kesehatan_employee?: number;
   proportional?: number;
   other_deduction?: number;
   employee_loan_deduction?: number;
@@ -83,6 +93,8 @@ export interface PayrollRun {
   total_bonus: number;
   total_pph: number;
   total_bpjs: number;
+  total_bpjs_employer?: number;
+  total_bpjs_employee?: number;
   total_employee_loan_deduction?: number;
   total_overall: number;
   employee_loan_account_id?: number | null;
@@ -166,6 +178,8 @@ export interface PayrollImportPreview {
     total_bonus: number;
     total_pph: number;
     total_bpjs: number;
+    total_bpjs_employer?: number;
+    total_bpjs_employee?: number;
     total_employee_loan_deduction?: number;
     total_overall: number;
   };

@@ -72,8 +72,9 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 
 	row := []interface{}{
 		"2026-06-25", "26/05/2026 to 25/06/2026", 22, "KIS-001", "Head Office", "IT", "Payroll", "1122334455",
-		"Budi Santoso", "Backend Developer", 10000000, 300000, 0, 500000, 250000, 200000, 100287,
-		100000, 0, 50000, 125000, 0,
+		"Budi Santoso", "Backend Developer", 10000000, 300000, 0, 500000, 250000,
+		370000, 200000, 200000, 100287, 10000, 0, 30000, 0, 400000, 100000,
+		0, 50000, 125000, 0,
 	}
 	for columnIndex, value := range row {
 		cell, err := excelize.CoordinatesToCellName(columnIndex+1, 2)
@@ -89,7 +90,7 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create thousands number style: %v", err)
 	}
-	if err := workbook.SetCellStyle("Salary", "K2", "V2", numberStyle); err != nil {
+	if err := workbook.SetCellStyle("Salary", "K2", "AC2", numberStyle); err != nil {
 		t.Fatalf("failed to apply thousands number style: %v", err)
 	}
 
@@ -139,6 +140,12 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if response.Data.Summary.TotalEmployeeLoanDeduction != 125000 {
 		t.Fatalf("summary employee loan deduction = %.2f, expected 125000", response.Data.Summary.TotalEmployeeLoanDeduction)
 	}
+	if response.Data.Summary.TotalBPJSEmployer != 1010000 {
+		t.Fatalf("summary BPJS employer = %.2f, expected 1010000", response.Data.Summary.TotalBPJSEmployer)
+	}
+	if response.Data.Summary.TotalBPJSEmployee != 400287 {
+		t.Fatalf("summary BPJS employee = %.2f, expected 400287", response.Data.Summary.TotalBPJSEmployee)
+	}
 	if response.Data.SuggestedPeriodStart != "2026-05-26" || response.Data.SuggestedPeriodEnd != "2026-06-25" {
 		t.Fatalf("suggested period = %q to %q, expected 2026-05-26 to 2026-06-25", response.Data.SuggestedPeriodStart, response.Data.SuggestedPeriodEnd)
 	}
@@ -152,9 +159,15 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 		{name: "bonus", actual: item.Bonus, expected: 800000},
 		{name: "overtime", actual: item.Overtime, expected: 500000},
 		{name: "pph", actual: item.PPh, expected: 250000},
-		{name: "bpjs jht", actual: item.BPJSTKJHT, expected: 200000},
-		{name: "bpjs jp", actual: item.BPJSTKJP, expected: 100287},
-		{name: "bpjs kesehatan", actual: item.BPJSKesehatan, expected: 100000},
+		{name: "bpjs jht employer", actual: item.BPJSTKJHTEmployer, expected: 370000},
+		{name: "bpjs jht employee", actual: item.BPJSTKJHTEmployee, expected: 200000},
+		{name: "bpjs jp employer", actual: item.BPJSTKJPEmployer, expected: 200000},
+		{name: "bpjs jp employee", actual: item.BPJSTKJPEmployee, expected: 100287},
+		{name: "bpjs jkk employer", actual: item.BPJSTKJKKEmployer, expected: 10000},
+		{name: "bpjs jkm employer", actual: item.BPJSTKJKMEmployer, expected: 30000},
+		{name: "bpjs kesehatan employer", actual: item.BPJSKesehatanEmployer, expected: 400000},
+		{name: "bpjs kesehatan employee", actual: item.BPJSKesehatanEmployee, expected: 100000},
+		{name: "bpjs total", actual: item.BPJS, expected: 1410287},
 		{name: "other deduction", actual: item.OtherDeduction, expected: 50000},
 		{name: "employee loan deduction", actual: item.EmployeeLoanDeduction, expected: 125000},
 		{name: "net pay", actual: item.NetPay, expected: 10224713},
@@ -190,14 +203,14 @@ func TestDownloadPayrollImportTemplateMatchesRequestedHeaderOrder(t *testing.T) 
 	require.NoError(t, err)
 	standardHeaderStyle, err := workbook.GetCellStyle("Salary", "C1")
 	require.NoError(t, err)
-	highlightedAttendanceStyle, err := workbook.GetCellStyle("Salary", "L1")
+	highlightedJHTEmployerStyle, err := workbook.GetCellStyle("Salary", "P1")
 	require.NoError(t, err)
-	highlightedEmployeeLoanStyle, err := workbook.GetCellStyle("Salary", "U1")
+	highlightedEmployeeLoanStyle, err := workbook.GetCellStyle("Salary", "AB1")
 	require.NoError(t, err)
 	require.NotEqual(t, standardHeaderStyle, highlightedPaymentDateStyle)
-	require.NotEqual(t, standardHeaderStyle, highlightedAttendanceStyle)
+	require.NotEqual(t, standardHeaderStyle, highlightedJHTEmployerStyle)
 	require.NotEqual(t, standardHeaderStyle, highlightedEmployeeLoanStyle)
-	require.Equal(t, "DEDUCTION (PINJAMAN KARYAWAN)", rows[0][20])
+	require.Equal(t, "DEDUCTION (PINJAMAN KARYAWAN)", rows[0][27])
 
 	paymentViaExample, err := workbook.GetCellValue("Salary", "G2")
 	require.NoError(t, err)
@@ -210,17 +223,19 @@ func TestDownloadPayrollRunExcelExportsSavedPayrollData(t *testing.T) {
 
 	paymentDate := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 	run := models.PayrollRun{
-		PayrollNumber: "PAY/2026/07/0001",
-		PeriodStart:   time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
-		PeriodEnd:     paymentDate,
-		PaymentDate:   &paymentDate,
-		Status:        models.PayrollStatusPendingApproval,
-		CreatedByID:   1,
-		TotalSalary:   10000000,
-		TotalBonus:    500000,
-		TotalPPh:      250000,
-		TotalBPJS:     250000,
-		TotalOverall:  10000000,
+		PayrollNumber:     "PAY/2026/07/0001",
+		PeriodStart:       time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC),
+		PeriodEnd:         paymentDate,
+		PaymentDate:       &paymentDate,
+		Status:            models.PayrollStatusPendingApproval,
+		CreatedByID:       1,
+		TotalSalary:       10000000,
+		TotalBonus:        500000,
+		TotalPPh:          250000,
+		TotalBPJS:         850000,
+		TotalBPJSEmployer: 600000,
+		TotalBPJSEmployee: 250000,
+		TotalOverall:      10000000,
 		Items: []models.PayrollItem{
 			{
 				EmployeeName:          "Budi Santoso",
@@ -236,9 +251,15 @@ func TestDownloadPayrollRunExcelExportsSavedPayrollData(t *testing.T) {
 				CompensationPKWT:      0,
 				Overtime:              200000,
 				PPh:                   250000,
-				BPJSTKJHT:             100000,
-				BPJSTKJP:              50000,
-				BPJSKesehatan:         100000,
+				BPJS:                  850000,
+				BPJSTKJHTEmployer:     300000,
+				BPJSTKJHTEmployee:     100000,
+				BPJSTKJPEmployer:      100000,
+				BPJSTKJPEmployee:      50000,
+				BPJSTKJKKEmployer:     25000,
+				BPJSTKJKMEmployer:     25000,
+				BPJSKesehatanEmployer: 150000,
+				BPJSKesehatanEmployee: 100000,
 				OtherDeduction:        250000,
 				EmployeeLoanDeduction: 0,
 				NetPay:                10000000,
@@ -270,7 +291,15 @@ func TestDownloadPayrollRunExcelExportsSavedPayrollData(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10000000", baseSalary)
 
-	netPay, err := workbook.GetCellValue("Salary", "V2", excelize.Options{RawCellValue: true})
+	jhtEmployer, err := workbook.GetCellValue("Salary", "P2", excelize.Options{RawCellValue: true})
+	require.NoError(t, err)
+	require.Equal(t, "300000", jhtEmployer)
+
+	jhtEmployee, err := workbook.GetCellValue("Salary", "Q2", excelize.Options{RawCellValue: true})
+	require.NoError(t, err)
+	require.Equal(t, "100000", jhtEmployee)
+
+	netPay, err := workbook.GetCellValue("Salary", "AC2", excelize.Options{RawCellValue: true})
 	require.NoError(t, err)
 	require.Equal(t, "10000000", netPay)
 }
@@ -369,9 +398,25 @@ func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.
 		IsActive: true,
 		IsHeader: false,
 	}
+	bpjsExpense := models.Account{
+		Code:     "6107",
+		Name:     "BEBAN BPJS PEMBERI KERJA",
+		Type:     models.AccountTypeExpense,
+		Category: models.CategoryOperatingExpense,
+		IsActive: true,
+		IsHeader: false,
+	}
 	salaryPayable := models.Account{
 		Code:     "2103-001",
 		Name:     "UTANG GAJI",
+		Type:     models.AccountTypeLiability,
+		Category: models.CategoryCurrentLiability,
+		IsActive: true,
+		IsHeader: false,
+	}
+	deductionPayable := models.Account{
+		Code:     "2103-002",
+		Name:     "UTANG BPJS & POTONGAN PAYROLL",
 		Type:     models.AccountTypeLiability,
 		Category: models.CategoryCurrentLiability,
 		IsActive: true,
@@ -386,8 +431,14 @@ func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.
 	if err := db.Create(&pphExpense).Error; err != nil {
 		t.Fatalf("failed to create PPh expense account: %v", err)
 	}
+	if err := db.Create(&bpjsExpense).Error; err != nil {
+		t.Fatalf("failed to create BPJS expense account: %v", err)
+	}
 	if err := db.Create(&salaryPayable).Error; err != nil {
 		t.Fatalf("failed to create salary payable account: %v", err)
+	}
+	if err := db.Create(&deductionPayable).Error; err != nil {
+		t.Fatalf("failed to create deduction payable account: %v", err)
 	}
 
 	periodStart := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -399,16 +450,24 @@ func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.
 		Status:             models.PayrollStatusPendingApproval,
 		TotalSalary:        10000000,
 		TotalPPh:           300000,
-		TotalOverall:       10000000,
+		TotalBPJS:          500000,
+		TotalBPJSEmployer:  350000,
+		TotalBPJSEmployee:  150000,
+		TotalOverall:       9850000,
 		PPhPaymentStatus:   models.PayrollPPhPaymentStatusUnpaid,
 		PPhRecognitionDate: &periodEnd,
 		CreatedByID:        hrUser.ID,
 		Items: []models.PayrollItem{
 			{
-				EmployeeName: "Staff Test",
-				BaseSalary:   10000000,
-				PPh:          300000,
-				NetPay:       10000000,
+				EmployeeName:          "Staff Test",
+				BaseSalary:            10000000,
+				PPh:                   300000,
+				BPJS:                  500000,
+				BPJSTKJHTEmployer:     250000,
+				BPJSTKJHTEmployee:     100000,
+				BPJSKesehatanEmployer: 100000,
+				BPJSKesehatanEmployee: 50000,
+				NetPay:                9850000,
 			},
 		},
 	}
@@ -452,8 +511,8 @@ func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.
 	if journal.Status != models.SSOTStatusPosted {
 		t.Fatalf("expected posted journal, got %s", journal.Status)
 	}
-	if len(journal.Lines) != 4 {
-		t.Fatalf("expected 4 journal lines, got %d", len(journal.Lines))
+	if len(journal.Lines) != 6 {
+		t.Fatalf("expected 6 journal lines, got %d", len(journal.Lines))
 	}
 
 	var totalDebit, totalCredit float64
@@ -461,8 +520,8 @@ func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.
 		totalDebit += line.DebitAmount.InexactFloat64()
 		totalCredit += line.CreditAmount.InexactFloat64()
 	}
-	if totalDebit != 10300000 || totalCredit != 10300000 {
-		t.Fatalf("expected balanced payroll journal 10,300,000, got debit %.2f credit %.2f", totalDebit, totalCredit)
+	if totalDebit != 10650000 || totalCredit != 10650000 {
+		t.Fatalf("expected balanced payroll journal 10,650,000, got debit %.2f credit %.2f", totalDebit, totalCredit)
 	}
 
 	linesByAccount := make(map[uint64]models.SSOTJournalLine)
@@ -489,9 +548,11 @@ func TestApprovePayrollRunFinanceManagerCreatesPayrollAccrualJournal(t *testing.
 		}
 	}
 	assertLine(salaryExpense, 10000000, 0)
+	assertLine(bpjsExpense, 350000, 0)
 	assertLine(pphExpense, 300000, 0)
 	assertLine(pphPayable, 0, 300000)
-	assertLine(salaryPayable, 0, 10000000)
+	assertLine(salaryPayable, 0, 9850000)
+	assertLine(deductionPayable, 0, 500000)
 }
 
 func TestPayrollItemTotalsDoNotReduceNetPayByPPh21(t *testing.T) {
@@ -512,6 +573,31 @@ func TestPayrollItemTotalsDoNotReduceNetPayByPPh21(t *testing.T) {
 	if item.NetPay != 9550000 {
 		t.Fatalf("expected net pay 9550000 without reducing PPh21, got %.2f", item.NetPay)
 	}
+}
+
+func TestPayrollItemTotalsSeparatesEmployerBPJSFromEmployeeNetPayDeduction(t *testing.T) {
+	item := models.PayrollItemCreateRequest{
+		BaseSalary:            10000000,
+		AttendanceAllowance:   300000,
+		Overtime:              500000,
+		BPJSTKJHTEmployer:     370000,
+		BPJSTKJHTEmployee:     200000,
+		BPJSTKJPEmployer:      200000,
+		BPJSTKJPEmployee:      100000,
+		BPJSTKJKKEmployer:     10000,
+		BPJSTKJKMEmployer:     30000,
+		BPJSKesehatanEmployer: 400000,
+		BPJSKesehatanEmployee: 100000,
+		OtherDeduction:        50000,
+		EmployeeLoanDeduction: 125000,
+	}
+
+	payrollImportItemTotals(&item)
+
+	require.Equal(t, float64(1410000), item.BPJS)
+	require.Equal(t, float64(1010000), payrollCreateBPJSEmployerTotal(&item))
+	require.Equal(t, float64(400000), payrollCreateBPJSEmployeeTotal(&item))
+	require.Equal(t, float64(10225000), item.NetPay)
 }
 
 func TestValidatePayrollEmployeeLoanAccountOnlyAllowsEmployeeLoanAsset(t *testing.T) {

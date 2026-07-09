@@ -112,10 +112,38 @@ var payrollImportHeaderAliases = map[string]string{
 	"attendance":                "attendance_allowance",
 	"compensationpkwt":          "compensation_pkwt",
 	"overtime":                  "overtime",
+	"iuranjhtpemberikerja":      "bpjs_tk_jht_employer",
+	"jhtpemberikerja":           "bpjs_tk_jht_employer",
+	"bpjstkjhtpemberikerja":     "bpjs_tk_jht_employer",
+	"iuranjhttenagakerja":       "bpjs_tk_jht_employee",
+	"jhttenagakerja":            "bpjs_tk_jht_employee",
+	"bpjstkjhttenagakerja":      "bpjs_tk_jht_employee",
 	"bpjstkjht2":                "bpjs_tk_jht",
 	"bpjstkjht":                 "bpjs_tk_jht",
+	"iuranjppemberikerja":       "bpjs_tk_jp_employer",
+	"jppemberikerja":            "bpjs_tk_jp_employer",
+	"bpjstkjppemberikerja":      "bpjs_tk_jp_employer",
+	"iuranjptenagakerja":        "bpjs_tk_jp_employee",
+	"jptenagakerja":             "bpjs_tk_jp_employee",
+	"bpjstkjptenagakerja":       "bpjs_tk_jp_employee",
 	"bpjstkjp1":                 "bpjs_tk_jp",
 	"bpjstkjp":                  "bpjs_tk_jp",
+	"iuranjkkpemberikerja":      "bpjs_tk_jkk_employer",
+	"jkkpemberikerja":           "bpjs_tk_jkk_employer",
+	"bpjstkjkkpemberikerja":     "bpjs_tk_jkk_employer",
+	"iuranjkktenagakerja":       "bpjs_tk_jkk_employee",
+	"jkktenagakerja":            "bpjs_tk_jkk_employee",
+	"bpjstkjkktenagakerja":      "bpjs_tk_jkk_employee",
+	"iuranjkmpemberikerja":      "bpjs_tk_jkm_employer",
+	"jkmpemberikerja":           "bpjs_tk_jkm_employer",
+	"bpjstkjkmpemberikerja":     "bpjs_tk_jkm_employer",
+	"iuranjkmtenagakerja":       "bpjs_tk_jkm_employee",
+	"jkmtenagakerja":            "bpjs_tk_jkm_employee",
+	"bpjstkjkmtenagakerja":      "bpjs_tk_jkm_employee",
+	"bpjskesehatanpemberikerja": "bpjs_kesehatan_employer",
+	"kesehatanpemberikerja":     "bpjs_kesehatan_employer",
+	"bpjskesehatantenagakerja":  "bpjs_kesehatan_employee",
+	"kesehatantenagakerja":      "bpjs_kesehatan_employee",
 	"bpjskesehatan1":            "bpjs_kesehatan",
 	"bpjskesehatan":             "bpjs_kesehatan",
 	"proportional":              "proportional",
@@ -144,12 +172,28 @@ var requiredPayrollImportColumns = []string{
 	"base_salary",
 	"compensation_pkwt",
 	"overtime",
-	"bpjs_tk_jht",
-	"bpjs_tk_jp",
-	"bpjs_kesehatan",
 	"proportional",
 	"other_deduction",
 	"net_pay",
+}
+
+var legacyPayrollBPJSImportColumns = []string{
+	"bpjs_tk_jht",
+	"bpjs_tk_jp",
+	"bpjs_kesehatan",
+}
+
+var splitPayrollBPJSImportColumns = []string{
+	"bpjs_tk_jht_employer",
+	"bpjs_tk_jht_employee",
+	"bpjs_tk_jp_employer",
+	"bpjs_tk_jp_employee",
+	"bpjs_tk_jkk_employer",
+	"bpjs_tk_jkk_employee",
+	"bpjs_tk_jkm_employer",
+	"bpjs_tk_jkm_employee",
+	"bpjs_kesehatan_employer",
+	"bpjs_kesehatan_employee",
 }
 
 var payrollImportTemplateHeaders = []string{
@@ -168,9 +212,16 @@ var payrollImportTemplateHeaders = []string{
 	"COMPENSATION PKWT",
 	"OVERTIME",
 	"PPH21 TERUTANG",
-	"BPJS TK JHT 2%",
-	"BPJS TK JP 1%",
-	"BPJS KESEHATAN 1%",
+	"IURAN JHT\n(PEMBERI KERJA)",
+	"IURAN JHT\n(TENAGA KERJA)",
+	"IURAN JP\n(PEMBERI KERJA)",
+	"IURAN JP\n(TENAGA KERJA)",
+	"IURAN JKK\n(PEMBERI KERJA)",
+	"IURAN JKK\n(TENAGA KERJA)",
+	"IURAN JKM\n(PEMBERI KERJA)",
+	"IURAN JKM\n(TENAGA KERJA)",
+	"BPJS KESEHATAN\n(PEMBERI KERJA)",
+	"BPJS KESEHATAN\n(TENAGA KERJA)",
 	"PROPORTIONAL",
 	"OTHER DEDUCTION",
 	"DEDUCTION (PINJAMAN KARYAWAN)",
@@ -231,13 +282,14 @@ func buildPayrollRunExcel(run *models.PayrollRun) ([]byte, error) {
 	dateStyle, _ := workbook.NewStyle(&excelize.Style{NumFmt: 14})
 	numberStyle, _ := workbook.NewStyle(&excelize.Style{NumFmt: 4})
 
-	workbook.SetCellStyle(sheetName, "A1", "V1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "AC1", headerStyle)
 	workbook.SetRowHeight(sheetName, 1, 34)
-	workbook.SetColWidth(sheetName, "A", "V", 18)
+	workbook.SetColWidth(sheetName, "A", "AC", 18)
 	workbook.SetColWidth(sheetName, "B", "B", 24)
 	workbook.SetColWidth(sheetName, "I", "I", 28)
 	workbook.SetColWidth(sheetName, "J", "J", 24)
-	workbook.SetColWidth(sheetName, "U", "U", 28)
+	workbook.SetColWidth(sheetName, "P", "Y", 22)
+	workbook.SetColWidth(sheetName, "AB", "AB", 28)
 
 	periodLabel := payrollRunPeriodLabel(run)
 	for index, item := range run.Items {
@@ -259,20 +311,27 @@ func buildPayrollRunExcel(run *models.PayrollRun) ([]byte, error) {
 		workbook.SetCellValue(sheetName, fmt.Sprintf("M%d", row), item.CompensationPKWT)
 		workbook.SetCellValue(sheetName, fmt.Sprintf("N%d", row), item.Overtime)
 		workbook.SetCellValue(sheetName, fmt.Sprintf("O%d", row), item.PPh)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("P%d", row), item.BPJSTKJHT)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("Q%d", row), item.BPJSTKJP)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("R%d", row), item.BPJSKesehatan)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("S%d", row), item.Proportional)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("T%d", row), item.OtherDeduction)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("U%d", row), item.EmployeeLoanDeduction)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("V%d", row), item.NetPay)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("P%d", row), item.BPJSTKJHTEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("Q%d", row), payrollModelBPJSTKJHTEmployee(item))
+		workbook.SetCellValue(sheetName, fmt.Sprintf("R%d", row), item.BPJSTKJPEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("S%d", row), payrollModelBPJSTKJPEmployee(item))
+		workbook.SetCellValue(sheetName, fmt.Sprintf("T%d", row), item.BPJSTKJKKEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("U%d", row), item.BPJSTKJKKEmployee)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("V%d", row), item.BPJSTKJKMEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("W%d", row), item.BPJSTKJKMEmployee)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("X%d", row), item.BPJSKesehatanEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("Y%d", row), payrollModelBPJSKesehatanEmployee(item))
+		workbook.SetCellValue(sheetName, fmt.Sprintf("Z%d", row), item.Proportional)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("AA%d", row), item.OtherDeduction)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("AB%d", row), item.EmployeeLoanDeduction)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("AC%d", row), item.NetPay)
 	}
 
 	if len(run.Items) > 0 {
 		lastRow := len(run.Items) + 1
 		workbook.SetCellStyle(sheetName, "A2", fmt.Sprintf("A%d", lastRow), dateStyle)
 		workbook.SetCellStyle(sheetName, "C2", fmt.Sprintf("C%d", lastRow), numberStyle)
-		workbook.SetCellStyle(sheetName, "K2", fmt.Sprintf("V%d", lastRow), numberStyle)
+		workbook.SetCellStyle(sheetName, "K2", fmt.Sprintf("AC%d", lastRow), numberStyle)
 	}
 
 	buffer, err := workbook.WriteToBuffer()
@@ -289,11 +348,95 @@ func payrollItemGross(item *models.PayrollItemCreateRequest) float64 {
 	return item.BaseSalary + item.Bonus
 }
 
+func payrollCreateBPJSSplitTotal(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	return item.BPJSTKJHTEmployer +
+		item.BPJSTKJHTEmployee +
+		item.BPJSTKJPEmployer +
+		item.BPJSTKJPEmployee +
+		item.BPJSTKJKKEmployer +
+		item.BPJSTKJKKEmployee +
+		item.BPJSTKJKMEmployer +
+		item.BPJSTKJKMEmployee +
+		item.BPJSKesehatanEmployer +
+		item.BPJSKesehatanEmployee
+}
+
+func payrollCreateBPJSEmployerTotal(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	return roundPayrollMoney(item.BPJSTKJHTEmployer + item.BPJSTKJPEmployer + item.BPJSTKJKKEmployer + item.BPJSTKJKMEmployer + item.BPJSKesehatanEmployer)
+}
+
+func payrollCreateBPJSEmployeeTotal(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	splitTotal := item.BPJSTKJHTEmployee + item.BPJSTKJPEmployee + item.BPJSTKJKKEmployee + item.BPJSTKJKMEmployee + item.BPJSKesehatanEmployee
+	if splitTotal > 0.01 {
+		return roundPayrollMoney(splitTotal)
+	}
+	return roundPayrollMoney(item.BPJSTKJHT + item.BPJSTKJP + item.BPJSKesehatan)
+}
+
+func payrollCreateBPJSTotal(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	splitTotal := payrollCreateBPJSSplitTotal(item)
+	if splitTotal > 0.01 {
+		return roundPayrollMoney(splitTotal)
+	}
+	if item.BPJS > 0.01 {
+		return roundPayrollMoney(item.BPJS)
+	}
+	return roundPayrollMoney(item.BPJSTKJHT + item.BPJSTKJP + item.BPJSKesehatan)
+}
+
+func normalizePayrollCreateBPJSComponents(item *models.PayrollItemCreateRequest) {
+	if item == nil {
+		return
+	}
+	if payrollCreateBPJSSplitTotal(item) <= 0.01 {
+		item.BPJSTKJHTEmployee = item.BPJSTKJHT
+		item.BPJSTKJPEmployee = item.BPJSTKJP
+		item.BPJSKesehatanEmployee = item.BPJSKesehatan
+	}
+	item.BPJSTKJHT = item.BPJSTKJHTEmployee
+	item.BPJSTKJP = item.BPJSTKJPEmployee
+	item.BPJSKesehatan = item.BPJSKesehatanEmployee
+	item.BPJS = payrollCreateBPJSTotal(item)
+}
+
+func payrollModelBPJSTKJHTEmployee(item models.PayrollItem) float64 {
+	if item.BPJSTKJHTEmployee > 0.01 {
+		return item.BPJSTKJHTEmployee
+	}
+	return item.BPJSTKJHT
+}
+
+func payrollModelBPJSTKJPEmployee(item models.PayrollItem) float64 {
+	if item.BPJSTKJPEmployee > 0.01 {
+		return item.BPJSTKJPEmployee
+	}
+	return item.BPJSTKJP
+}
+
+func payrollModelBPJSKesehatanEmployee(item models.PayrollItem) float64 {
+	if item.BPJSKesehatanEmployee > 0.01 {
+		return item.BPJSKesehatanEmployee
+	}
+	return item.BPJSKesehatan
+}
+
 func payrollCalculatedNetPay(item *models.PayrollItemCreateRequest) float64 {
 	if item == nil {
 		return 0
 	}
-	return roundPayrollMoney(payrollItemGross(item) - item.BPJS - item.OtherDeduction - item.EmployeeLoanDeduction)
+	return roundPayrollMoney(payrollItemGross(item) - payrollCreateBPJSEmployeeTotal(item) - item.OtherDeduction - item.EmployeeLoanDeduction)
 }
 
 func normalizePayrollImportHeader(value string) string {
@@ -313,6 +456,30 @@ func payrollHeaderKey(value string) string {
 		return key
 	}
 	return normalized
+}
+
+func hasPayrollImportColumns(headerIndex map[string]int, columns []string) bool {
+	for _, column := range columns {
+		if _, ok := headerIndex[column]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func missingPayrollImportColumns(headerIndex map[string]int) []string {
+	missingColumns := []string{}
+	for _, requiredColumn := range requiredPayrollImportColumns {
+		if _, ok := headerIndex[requiredColumn]; !ok {
+			missingColumns = append(missingColumns, requiredColumn)
+		}
+	}
+
+	if !hasPayrollImportColumns(headerIndex, splitPayrollBPJSImportColumns) && !hasPayrollImportColumns(headerIndex, legacyPayrollBPJSImportColumns) {
+		missingColumns = append(missingColumns, "bpjs split columns or legacy bpjs columns")
+	}
+
+	return missingColumns
 }
 
 func parsePayrollImportNumber(value string) float64 {
@@ -429,9 +596,7 @@ func payrollImportItemTotals(item *models.PayrollItemCreateRequest) {
 	} else if item.Bonus == 0 {
 		item.Bonus = item.CompensationPKWT + item.Overtime + item.Proportional
 	}
-	if item.BPJS == 0 {
-		item.BPJS = item.BPJSTKJHT + item.BPJSTKJP + item.BPJSKesehatan
-	}
+	normalizePayrollCreateBPJSComponents(item)
 	if item.Department == "" {
 		item.Department = item.WorkUnit
 	}
@@ -702,8 +867,35 @@ func resolvePayrollPPh21ExpenseAccount(tx *gorm.DB, fallback *models.Account) (*
 	return nil, fmt.Errorf("akun Beban PPh 21 tidak ditemukan")
 }
 
+func resolvePayrollBPJSEmployerExpenseAccount(tx *gorm.DB, fallback *models.Account) (*models.Account, error) {
+	if account, err := resolvePayrollAccountByCodes(tx, "6107"); err == nil {
+		return account, nil
+	}
+
+	var account models.Account
+	if err := tx.
+		Where("deleted_at IS NULL AND is_active = ? AND is_header = ? AND type = ? AND LOWER(name) LIKE ? AND (LOWER(name) LIKE ? OR LOWER(name) LIKE ?)",
+			true,
+			false,
+			models.AccountTypeExpense,
+			"%bpjs%",
+			"%beban%",
+			"%iuran%",
+		).
+		Order("code ASC").
+		First(&account).Error; err == nil {
+		return &account, nil
+	}
+
+	if fallback != nil {
+		return fallback, nil
+	}
+
+	return nil, fmt.Errorf("akun Beban BPJS Pemberi Kerja tidak ditemukan")
+}
+
 func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models.PayrollRun, userID uint, customExpenseAccountID *uint, customEmployeeLoanAccountID *uint, recognitionDate time.Time) (*uint64, error) {
-	if run == nil || (run.TotalSalary+run.TotalBonus+run.TotalPPh <= 0.01) {
+	if run == nil || (run.TotalSalary+run.TotalBonus+run.TotalPPh+run.TotalBPJS <= 0.01) {
 		return nil, nil
 	}
 
@@ -749,11 +941,13 @@ func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models
 	var deductionPayableAccount *models.Account
 	grossSalary := roundPayrollMoney(run.TotalSalary + run.TotalBonus)
 	employeeLoanDeduction := roundPayrollMoney(run.TotalEmployeeLoanDeduction)
+	employerBPJS := roundPayrollMoney(run.TotalBPJSEmployer)
 	withheldDeductions := roundPayrollMoney(grossSalary - run.TotalOverall - employeeLoanDeduction)
 	if withheldDeductions < 0 {
 		withheldDeductions = 0
 	}
-	if withheldDeductions > 0.01 {
+	payrollDeductionLiability := roundPayrollMoney(withheldDeductions + employerBPJS)
+	if payrollDeductionLiability > 0.01 {
 		deductionPayableAccount, err = resolvePayrollDeductionPayableAccount(tx)
 		if err != nil {
 			return nil, err
@@ -788,6 +982,19 @@ func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models
 		Description:  fmt.Sprintf("Beban Gaji & Tunjangan Periode %s - %s", run.PayrollNumber, run.Notes),
 	})
 
+	if employerBPJS > 0.01 {
+		bpjsEmployerExpenseAccount, err := resolvePayrollBPJSEmployerExpenseAccount(tx, expenseAccount)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, services.JournalLineRequest{
+			AccountID:    uint64(bpjsEmployerExpenseAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(employerBPJS),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("Beban BPJS pemberi kerja Periode %s", run.PayrollNumber),
+		})
+	}
+
 	if run.TotalPPh > 0.01 && pphPayableAccount != nil {
 		pphExpenseAccount, err := resolvePayrollPPh21ExpenseAccount(tx, expenseAccount)
 		if err != nil {
@@ -814,11 +1021,11 @@ func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models
 		Description:  fmt.Sprintf("Utang Net Gaji Karyawan Periode %s", run.PayrollNumber),
 	})
 
-	if withheldDeductions > 0.01 && deductionPayableAccount != nil {
+	if payrollDeductionLiability > 0.01 && deductionPayableAccount != nil {
 		lines = append(lines, services.JournalLineRequest{
 			AccountID:    uint64(deductionPayableAccount.ID),
 			DebitAmount:  decimal.Zero,
-			CreditAmount: decimal.NewFromFloat(withheldDeductions),
+			CreditAmount: decimal.NewFromFloat(payrollDeductionLiability),
 			Description:  fmt.Sprintf("Utang BPJS & Potongan Payroll Periode %s", run.PayrollNumber),
 		})
 	}
@@ -837,7 +1044,7 @@ func (c *PayrollController) createPayrollAccrualJournal(tx *gorm.DB, run *models
 		EntryDate:   recognitionDate,
 		Reference:   fmt.Sprintf("PAYROLL-%s", run.PayrollNumber),
 		Description: fmt.Sprintf("Jurnal Pengakuan Payroll - %s", run.PayrollNumber),
-		Notes:       "Beban gaji dan PPh 21 yang ditanggung perusahaan diakui sebagai kewajiban. Tidak ada pengurangan kas/bank sampai settlement aktual.",
+		Notes:       "Beban gaji, BPJS pemberi kerja, dan PPh 21 yang ditanggung perusahaan diakui sebagai kewajiban. Tidak ada pengurangan kas/bank sampai settlement aktual.",
 		SourceType:  "PAYROLL_ACCRUAL",
 		SourceID:    sourceID,
 		AutoPost:    true,
@@ -1133,15 +1340,15 @@ func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 	dateStyle, _ := workbook.NewStyle(&excelize.Style{
 		NumFmt: 14,
 	})
-	workbook.SetCellStyle(sheetName, "A1", "V1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "AC1", headerStyle)
 	workbook.SetCellStyle(sheetName, "A1", "B1", highlightHeaderStyle)
-	workbook.SetCellStyle(sheetName, "L1", "L1", highlightHeaderStyle)
-	workbook.SetCellStyle(sheetName, "U1", "U1", highlightHeaderStyle)
-	workbook.SetRowHeight(sheetName, 1, 34)
-	workbook.SetColWidth(sheetName, "A", "V", 18)
+	workbook.SetCellStyle(sheetName, "P1", "Y1", highlightHeaderStyle)
+	workbook.SetCellStyle(sheetName, "AB1", "AB1", highlightHeaderStyle)
+	workbook.SetRowHeight(sheetName, 1, 44)
+	workbook.SetColWidth(sheetName, "A", "AC", 18)
 	workbook.SetColWidth(sheetName, "B", "B", 24)
-	workbook.SetColWidth(sheetName, "L", "L", 24)
-	workbook.SetColWidth(sheetName, "U", "U", 28)
+	workbook.SetColWidth(sheetName, "P", "Y", 22)
+	workbook.SetColWidth(sheetName, "AB", "AB", 28)
 
 	// Light sample values help HR keep the expected data shape without saving real employee data.
 	workbook.SetCellValue(sheetName, "A2", time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC))
@@ -1235,12 +1442,7 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		return
 	}
 
-	missingColumns := []string{}
-	for _, requiredColumn := range requiredPayrollImportColumns {
-		if _, ok := headerIndex[requiredColumn]; !ok {
-			missingColumns = append(missingColumns, requiredColumn)
-		}
-	}
+	missingColumns := missingPayrollImportColumns(headerIndex)
 	if len(missingColumns) > 0 {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error":           "Header template payroll belum lengkap",
@@ -1301,6 +1503,16 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 			BPJSTKJHT:             getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht"),
 			BPJSTKJP:              getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp"),
 			BPJSKesehatan:         getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan"),
+			BPJSTKJHTEmployer:     getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht_employer"),
+			BPJSTKJHTEmployee:     getPayrollImportNumber(row, headerIndex, "bpjs_tk_jht_employee"),
+			BPJSTKJPEmployer:      getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp_employer"),
+			BPJSTKJPEmployee:      getPayrollImportNumber(row, headerIndex, "bpjs_tk_jp_employee"),
+			BPJSTKJKKEmployer:     getPayrollImportNumber(row, headerIndex, "bpjs_tk_jkk_employer"),
+			BPJSTKJKKEmployee:     getPayrollImportNumber(row, headerIndex, "bpjs_tk_jkk_employee"),
+			BPJSTKJKMEmployer:     getPayrollImportNumber(row, headerIndex, "bpjs_tk_jkm_employer"),
+			BPJSTKJKMEmployee:     getPayrollImportNumber(row, headerIndex, "bpjs_tk_jkm_employee"),
+			BPJSKesehatanEmployer: getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan_employer"),
+			BPJSKesehatanEmployee: getPayrollImportNumber(row, headerIndex, "bpjs_kesehatan_employee"),
 			Proportional:          getPayrollImportNumber(row, headerIndex, "proportional"),
 			OtherDeduction:        getPayrollImportNumber(row, headerIndex, "other_deduction"),
 			EmployeeLoanDeduction: getPayrollImportNumber(row, headerIndex, "employee_loan_deduction"),
@@ -1314,6 +1526,8 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		response.Summary.TotalBonus += item.Bonus
 		response.Summary.TotalPPh += item.PPh
 		response.Summary.TotalBPJS += item.BPJS
+		response.Summary.TotalBPJSEmployer += payrollCreateBPJSEmployerTotal(&item)
+		response.Summary.TotalBPJSEmployee += payrollCreateBPJSEmployeeTotal(&item)
 		response.Summary.TotalEmployeeLoanDeduction += item.EmployeeLoanDeduction
 		response.Summary.TotalOverall += item.NetPay
 	}
@@ -1446,6 +1660,11 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 			reqItem.AttendanceAllowance < 0 ||
 			reqItem.CompensationPKWT < 0 || reqItem.Overtime < 0 || reqItem.BPJSTKJHT < 0 ||
 			reqItem.BPJSTKJP < 0 || reqItem.BPJSKesehatan < 0 || reqItem.Proportional < 0 ||
+			reqItem.BPJSTKJHTEmployer < 0 || reqItem.BPJSTKJHTEmployee < 0 ||
+			reqItem.BPJSTKJPEmployer < 0 || reqItem.BPJSTKJPEmployee < 0 ||
+			reqItem.BPJSTKJKKEmployer < 0 || reqItem.BPJSTKJKKEmployee < 0 ||
+			reqItem.BPJSTKJKMEmployer < 0 || reqItem.BPJSTKJKMEmployee < 0 ||
+			reqItem.BPJSKesehatanEmployer < 0 || reqItem.BPJSKesehatanEmployee < 0 ||
 			reqItem.OtherDeduction < 0 || reqItem.EmployeeLoanDeduction < 0 || reqItem.NetPay < 0 {
 			tx.Rollback()
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nilai payroll tidak boleh negatif"})
@@ -1472,6 +1691,16 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 			BPJSTKJHT:             reqItem.BPJSTKJHT,
 			BPJSTKJP:              reqItem.BPJSTKJP,
 			BPJSKesehatan:         reqItem.BPJSKesehatan,
+			BPJSTKJHTEmployer:     reqItem.BPJSTKJHTEmployer,
+			BPJSTKJHTEmployee:     reqItem.BPJSTKJHTEmployee,
+			BPJSTKJPEmployer:      reqItem.BPJSTKJPEmployer,
+			BPJSTKJPEmployee:      reqItem.BPJSTKJPEmployee,
+			BPJSTKJKKEmployer:     reqItem.BPJSTKJKKEmployer,
+			BPJSTKJKKEmployee:     reqItem.BPJSTKJKKEmployee,
+			BPJSTKJKMEmployer:     reqItem.BPJSTKJKMEmployer,
+			BPJSTKJKMEmployee:     reqItem.BPJSTKJKMEmployee,
+			BPJSKesehatanEmployer: reqItem.BPJSKesehatanEmployer,
+			BPJSKesehatanEmployee: reqItem.BPJSKesehatanEmployee,
 			Proportional:          reqItem.Proportional,
 			OtherDeduction:        reqItem.OtherDeduction,
 			EmployeeLoanDeduction: reqItem.EmployeeLoanDeduction,
@@ -1483,6 +1712,8 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		run.TotalBonus += item.Bonus
 		run.TotalPPh += item.PPh
 		run.TotalBPJS += item.BPJS
+		run.TotalBPJSEmployer += payrollCreateBPJSEmployerTotal(&reqItem)
+		run.TotalBPJSEmployee += payrollCreateBPJSEmployeeTotal(&reqItem)
 		run.TotalEmployeeLoanDeduction += item.EmployeeLoanDeduction
 		run.TotalOverall += item.NetPay
 		run.Items = append(run.Items, item)

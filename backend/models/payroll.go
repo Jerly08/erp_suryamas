@@ -47,6 +47,8 @@ type PayrollRun struct {
 	TotalBonus                 float64        `json:"total_bonus" gorm:"type:decimal(15,2);default:0"`
 	TotalPPh                   float64        `json:"total_pph" gorm:"column:total_pph;type:decimal(15,2);default:0"`
 	TotalBPJS                  float64        `json:"total_bpjs" gorm:"type:decimal(15,2);default:0"`
+	TotalBPJSEmployer          float64        `json:"total_bpjs_employer" gorm:"column:total_bpjs_employer;type:decimal(15,2);default:0"`
+	TotalBPJSEmployee          float64        `json:"total_bpjs_employee" gorm:"column:total_bpjs_employee;type:decimal(15,2);default:0"`
 	TotalEmployeeLoanDeduction float64        `json:"total_employee_loan_deduction" gorm:"column:total_employee_loan_deduction;type:decimal(15,2);default:0"`
 	TotalOverall               float64        `json:"total_overall" gorm:"type:decimal(15,2);default:0"`
 	EmployeeLoanAccountID      *uint          `json:"employee_loan_account_id" gorm:"column:employee_loan_account_id;index"`
@@ -151,6 +153,16 @@ type PayrollItem struct {
 	BPJSTKJHT             float64        `json:"bpjs_tk_jht" gorm:"type:decimal(15,2);default:0"`
 	BPJSTKJP              float64        `json:"bpjs_tk_jp" gorm:"type:decimal(15,2);default:0"`
 	BPJSKesehatan         float64        `json:"bpjs_kesehatan" gorm:"type:decimal(15,2);default:0"`
+	BPJSTKJHTEmployer     float64        `json:"bpjs_tk_jht_employer" gorm:"column:bpjs_tk_jht_employer;type:decimal(15,2);default:0"`
+	BPJSTKJHTEmployee     float64        `json:"bpjs_tk_jht_employee" gorm:"column:bpjs_tk_jht_employee;type:decimal(15,2);default:0"`
+	BPJSTKJPEmployer      float64        `json:"bpjs_tk_jp_employer" gorm:"column:bpjs_tk_jp_employer;type:decimal(15,2);default:0"`
+	BPJSTKJPEmployee      float64        `json:"bpjs_tk_jp_employee" gorm:"column:bpjs_tk_jp_employee;type:decimal(15,2);default:0"`
+	BPJSTKJKKEmployer     float64        `json:"bpjs_tk_jkk_employer" gorm:"column:bpjs_tk_jkk_employer;type:decimal(15,2);default:0"`
+	BPJSTKJKKEmployee     float64        `json:"bpjs_tk_jkk_employee" gorm:"column:bpjs_tk_jkk_employee;type:decimal(15,2);default:0"`
+	BPJSTKJKMEmployer     float64        `json:"bpjs_tk_jkm_employer" gorm:"column:bpjs_tk_jkm_employer;type:decimal(15,2);default:0"`
+	BPJSTKJKMEmployee     float64        `json:"bpjs_tk_jkm_employee" gorm:"column:bpjs_tk_jkm_employee;type:decimal(15,2);default:0"`
+	BPJSKesehatanEmployer float64        `json:"bpjs_kesehatan_employer" gorm:"column:bpjs_kesehatan_employer;type:decimal(15,2);default:0"`
+	BPJSKesehatanEmployee float64        `json:"bpjs_kesehatan_employee" gorm:"column:bpjs_kesehatan_employee;type:decimal(15,2);default:0"`
 	Proportional          float64        `json:"proportional" gorm:"type:decimal(15,2);default:0"`
 	OtherDeduction        float64        `json:"other_deduction" gorm:"type:decimal(15,2);default:0"`
 	EmployeeLoanDeduction float64        `json:"employee_loan_deduction" gorm:"column:employee_loan_deduction;type:decimal(15,2);default:0"`
@@ -189,6 +201,16 @@ type PayrollItemCreateRequest struct {
 	BPJSTKJHT             float64 `json:"bpjs_tk_jht"`
 	BPJSTKJP              float64 `json:"bpjs_tk_jp"`
 	BPJSKesehatan         float64 `json:"bpjs_kesehatan"`
+	BPJSTKJHTEmployer     float64 `json:"bpjs_tk_jht_employer"`
+	BPJSTKJHTEmployee     float64 `json:"bpjs_tk_jht_employee"`
+	BPJSTKJPEmployer      float64 `json:"bpjs_tk_jp_employer"`
+	BPJSTKJPEmployee      float64 `json:"bpjs_tk_jp_employee"`
+	BPJSTKJKKEmployer     float64 `json:"bpjs_tk_jkk_employer"`
+	BPJSTKJKKEmployee     float64 `json:"bpjs_tk_jkk_employee"`
+	BPJSTKJKMEmployer     float64 `json:"bpjs_tk_jkm_employer"`
+	BPJSTKJKMEmployee     float64 `json:"bpjs_tk_jkm_employee"`
+	BPJSKesehatanEmployer float64 `json:"bpjs_kesehatan_employer"`
+	BPJSKesehatanEmployee float64 `json:"bpjs_kesehatan_employee"`
 	Proportional          float64 `json:"proportional"`
 	OtherDeduction        float64 `json:"other_deduction"`
 	EmployeeLoanDeduction float64 `json:"employee_loan_deduction"`
@@ -240,6 +262,8 @@ type PayrollImportSummary struct {
 	TotalBonus                 float64 `json:"total_bonus"`
 	TotalPPh                   float64 `json:"total_pph"`
 	TotalBPJS                  float64 `json:"total_bpjs"`
+	TotalBPJSEmployer          float64 `json:"total_bpjs_employer"`
+	TotalBPJSEmployee          float64 `json:"total_bpjs_employee"`
 	TotalEmployeeLoanDeduction float64 `json:"total_employee_loan_deduction"`
 	TotalOverall               float64 `json:"total_overall"`
 }

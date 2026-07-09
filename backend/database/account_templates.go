@@ -173,6 +173,7 @@ func getTradingAccounts() []models.Account {
 		{Code: "6103", Name: "BEBAN PENYUSUTAN", Type: models.AccountTypeExpense, Category: models.CategoryDepreciationExp, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6105", Name: "BEBAN GAJI & TUNJANGAN", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "6106", Name: "BEBAN MATERAI & BIAYA LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryAdministrativeExp, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "6107", Name: "BEBAN BPJS PEMBERI KERJA", Type: models.AccountTypeExpense, Category: models.CategoryOperatingExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER INCOME (7xxx - pure REVENUE)
 		{Code: "7000", Name: "PENDAPATAN LAIN-LAIN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 1, IsHeader: true, IsActive: true},
