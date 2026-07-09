@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranding } from '@/contexts/BrandingContext';
+import { getScaledLogoSize } from '@/config/branding';
 import SimpleLayout from '@/components/layout/SimpleLayout';
 import {
   Box,
@@ -34,7 +36,6 @@ import {
   Center
 } from '@chakra-ui/react';
 import { FiLogIn, FiEye, FiEyeOff, FiShield, FiLock, FiMail, FiUsers, FiTrendingUp } from 'react-icons/fi';
-import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from '@/config/branding';
 
 const LoginContent = () => {
   const [email, setEmail] = useState('');
@@ -44,6 +45,7 @@ const LoginContent = () => {
   const [showPassword, setShowPassword] = useState(false);
   
   const { login, isAuthenticated } = useAuth();
+  const { companyName, logoUrl, logoScale, poweredByText } = useBranding();
   const router = useRouter();
   const toast = useToast();
   
@@ -161,9 +163,12 @@ const LoginContent = () => {
               <Box textAlign={{ base: 'center', lg: 'left' }}>
                 <VStack spacing={3} align={{ base: 'center', lg: 'flex-start' }} mb={6}>
                   <Image
-                    src={AVERY_LOGO_PATH}
-                    alt={AVERY_LOGO_ALT}
-                    h={{ base: '56px', md: '72px' }}
+                    src={logoUrl}
+                    alt={companyName}
+                    h={{
+                      base: getScaledLogoSize(56, logoScale),
+                      md: getScaledLogoSize(72, logoScale),
+                    }}
                     maxW={{ base: '260px', md: '360px' }}
                     objectFit="contain"
                   />
@@ -172,7 +177,7 @@ const LoginContent = () => {
                       Comprehensive Accounting Solution
                     </Text>
                     <Text color={textColor} fontSize="xs" opacity={0.75}>
-                      {POWERED_BY_TEXT}
+                      {poweredByText}
                     </Text>
                   </VStack>
                 </VStack>
@@ -373,14 +378,14 @@ const LoginContent = () => {
                   {/* Header */}
                   <VStack spacing={6} mb={8}>
                     <Image
-                      src={AVERY_LOGO_PATH}
-                      alt={AVERY_LOGO_ALT}
-                      h="52px"
+                      src={logoUrl}
+                      alt={companyName}
+                      h={getScaledLogoSize(52, logoScale)}
                       maxW="220px"
                       objectFit="contain"
                     />
                     <Text color={textColor} fontSize="xs" opacity={0.75} textAlign="center">
-                      {POWERED_BY_TEXT}
+                      {poweredByText}
                     </Text>
                     
                     <VStack spacing={2}>

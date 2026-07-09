@@ -8,6 +8,8 @@ import SimpleThemeToggle from '@/components/common/SimpleThemeToggle';
 import UnifiedNotifications from '@/components/notification/UnifiedNotifications';
 import { formatRoleForApproval } from '@/utils/roles';
 import { getUserDisplayName } from '@/utils/userDisplay';
+import { useBranding } from '@/contexts/BrandingContext';
+import { getScaledLogoSize } from '@/config/branding';
 import {
   Flex,
   Image,
@@ -25,7 +27,6 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react';
 import { FiMenu, FiChevronDown, FiLogOut } from 'react-icons/fi';
-import { AVERY_LOGO_ALT, AVERY_LOGO_PATH } from '@/config/branding';
 
 interface SimpleNavbarProps {
   onMenuClick?: () => void;
@@ -37,6 +38,7 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { colorMode, setColorMode } = useColorMode();
+  const { companyName, logoUrl, logoScale } = useBranding();
   const displayName = getUserDisplayName(user, { fallback: 'User', allowRoleFallback: false });
   const roleLabel = formatRoleForApproval(user?.role);
   
@@ -85,9 +87,12 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
 
       {/* Brand - visible on mobile when no sidebar */}
       <Image
-        src={AVERY_LOGO_PATH}
-        alt={AVERY_LOGO_ALT}
-        h={{ base: '28px', md: '32px' }}
+        src={logoUrl}
+        alt={companyName}
+        h={{
+          base: getScaledLogoSize(28, logoScale),
+          md: getScaledLogoSize(32, logoScale),
+        }}
         maxW={{ base: '112px', md: '132px' }}
         objectFit="contain"
         display={{ base: onMenuClick ? 'none' : 'block', lg: 'none' }}

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
@@ -64,6 +65,8 @@ func (sc *SettingsController) GetPublicSettings(c *gin.Context) {
 			"company_phone":      settings.CompanyPhone,
 			"company_email":      settings.CompanyEmail,
 			"company_logo":       settings.CompanyLogo,
+			"company_logo_scale": settings.CompanyLogoScale,
+			"company_icon":       settings.CompanyIcon,
 			"company_type":       settings.CompanyType,
 			"currency":           settings.Currency,
 			"date_format":        settings.DateFormat,
@@ -74,6 +77,96 @@ func (sc *SettingsController) GetPublicSettings(c *gin.Context) {
 			"thousand_separator": settings.ThousandSeparator,
 			"decimal_separator":  settings.DecimalSeparator,
 			"decimal_places":     settings.DecimalPlaces,
+		},
+	})
+}
+
+// GetPublicBranding returns only the fields needed to brand public application screens.
+func (sc *SettingsController) GetPublicBranding(c *gin.Context) {
+	settings, err := sc.settingsService.GetSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve branding"})
+		return
+	}
+
+	c.Header("Cache-Control", "no-store, max-age=0")
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"company_name":       settings.CompanyName,
+			"company_logo":       settings.CompanyLogo,
+			"company_logo_scale": settings.CompanyLogoScale,
+			"company_icon":       settings.CompanyIcon,
+			"updated_at":         settings.UpdatedAt,
+		},
+	})
+}
+
+// GetPublicBrandingIcon redirects a stable favicon URL to the current uploaded icon.
+func (sc *SettingsController) GetPublicBrandingIcon(c *gin.Context) {
+	settings, err := sc.settingsService.GetSettings()
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	iconPath := strings.TrimSpace(settings.CompanyIcon)
+	if !strings.HasPrefix(iconPath, "/uploads/company/") {
+		iconPath = "/avery-icon.png"
+	}
+
+	c.Header("Cache-Control", "no-store, max-age=0")
+	c.Redirect(http.StatusTemporaryRedirect, iconPath)
+}
+
+// GetPublicBrandingLogo redirects a stable loading-screen URL to the current uploaded logo.
+func (sc *SettingsController) GetPublicBrandingLogo(c *gin.Context) {
+	settings, err := sc.settingsService.GetSettings()
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	logoPath := strings.TrimSpace(settings.CompanyLogo)
+	if !strings.HasPrefix(logoPath, "/uploads/company/") {
+		logoPath = "/logo_avery.png"
+	}
+
+	c.Header("Cache-Control", "no-store, max-age=0")
+	c.Redirect(http.StatusTemporaryRedirect, logoPath)
+}
+
+// GetPublicBrandingManifest serves an installable manifest using the current company branding.
+func (sc *SettingsController) GetPublicBrandingManifest(c *gin.Context) {
+	settings, err := sc.settingsService.GetSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve branding manifest"})
+		return
+	}
+
+	companyName := strings.TrimSpace(settings.CompanyName)
+	if companyName == "" {
+		companyName = "Avery"
+	}
+
+	c.Header("Cache-Control", "no-store, max-age=0")
+	c.Header("Content-Type", "application/manifest+json")
+	c.JSON(http.StatusOK, gin.H{
+		"name":             companyName + " Finance Management",
+		"short_name":       companyName,
+		"description":      companyName + " accounting and finance management application",
+		"start_url":        "/dashboard",
+		"scope":            "/",
+		"display":          "standalone",
+		"orientation":      "portrait-primary",
+		"background_color": "#f8f9fa",
+		"theme_color":      "#2196F3",
+		"icons": []gin.H{
+			{
+				"src":     "/api/v1/branding/icon",
+				"sizes":   "any",
+				"purpose": "any maskable",
+			},
 		},
 	})
 }
@@ -522,8 +615,17 @@ func (sc *SettingsController) GetSettingsHistory(c *gin.Context) {
 	})
 }
 
-// UploadCompanyLogo handles POST /api/v1/settings/company/logo to upload and set the company logo
+// UploadCompanyLogo handles POST /api/v1/settings/company/logo.
 func (sc *SettingsController) UploadCompanyLogo(c *gin.Context) {
+	sc.uploadCompanyBrandImage(c, "company_logo", "Company logo uploaded successfully")
+}
+
+// UploadCompanyIcon handles POST /api/v1/settings/company/icon.
+func (sc *SettingsController) UploadCompanyIcon(c *gin.Context) {
+	sc.uploadCompanyBrandImage(c, "company_icon", "Company icon uploaded successfully")
+}
+
+func (sc *SettingsController) uploadCompanyBrandImage(c *gin.Context, field, successMessage string) {
 	// Get user ID from context
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -534,7 +636,7 @@ func (sc *SettingsController) UploadCompanyLogo(c *gin.Context) {
 	// Ensure admin (route also protected by middleware, this is an extra check)
 	userRole, _ := c.Get("role")
 	if userRole != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only administrators can upload company logo"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only administrators can upload company branding"})
 		return
 	}
 
@@ -570,15 +672,16 @@ func (sc *SettingsController) UploadCompanyLogo(c *gin.Context) {
 		}
 	}
 
-	if err := sc.settingsService.UpdateSettings(map[string]interface{}{"company_logo": relativePath}, uid); err != nil {
+	if err := sc.settingsService.UpdateSettings(map[string]interface{}{field: relativePath}, uid); err != nil {
 		// Cleanup file on failure
 		_ = os.Remove(filePath)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update company logo", "details": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update company branding", "details": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Company logo uploaded successfully",
+		"message": successMessage,
 		"path":    relativePath,
+		"field":   field,
 	})
 }

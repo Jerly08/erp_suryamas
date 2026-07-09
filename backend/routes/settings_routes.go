@@ -10,7 +10,7 @@ import (
 )
 
 // SetupSettingsRoutes registers all settings-related routes
-func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middleware.RBACManager) {
+func SetupSettingsRoutes(v1 *gin.RouterGroup, protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middleware.RBACManager) {
 	// Initialize settings service and controller
 	settingsService := services.NewSettingsService(db)
 	settingsController := controllers.NewSettingsController(settingsService)
@@ -26,6 +26,15 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middl
 	// Public settings endpoint (read-only, all authenticated users)
 	protected.GET("/settings/public", settingsController.GetPublicSettings)
 
+	// Branding must be available before authentication so the login page can use it.
+	branding := v1.Group("/branding")
+	{
+		branding.GET("/public", settingsController.GetPublicBranding)
+		branding.GET("/logo", settingsController.GetPublicBrandingLogo)
+		branding.GET("/icon", settingsController.GetPublicBrandingIcon)
+		branding.GET("/manifest.webmanifest", settingsController.GetPublicBrandingManifest)
+	}
+
 	// Settings routes (admin only)
 	settings := protected.Group("/settings")
 	settings.Use(rbacMgr.AutoPermission("settings"))
@@ -38,6 +47,7 @@ func SetupSettingsRoutes(protected *gin.RouterGroup, db *gorm.DB, rbacMgr *middl
 		settings.PUT("/company", settingsController.UpdateCompanyInfo)
 		settings.PUT("/system", settingsController.UpdateSystemConfig)
 		settings.POST("/company/logo", settingsController.UploadCompanyLogo)
+		settings.POST("/company/icon", settingsController.UploadCompanyIcon)
 
 		// Additional endpoints
 		settings.POST("/reset", settingsController.ResetToDefaults)

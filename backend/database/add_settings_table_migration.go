@@ -32,6 +32,7 @@ func AddSettingsTable(db *gorm.DB) error {
 			CompanyPhone:       "+62-21-5551234",
 			CompanyEmail:       "info@sistemakuntansi.co.id",
 			CompanyWebsite:     "https://sistemakuntansi.co.id",
+			CompanyLogoScale:   100,
 			TaxNumber:          "01.234.567.8-901.000",
 			Currency:           "IDR",
 			DateFormat:         "DD/MM/YYYY",

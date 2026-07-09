@@ -681,6 +681,8 @@
     "invoiceSettings": "Invoice Settings",
     "emailSettings": "Email Settings",
     "companyLogo": "Company Logo",
+    "companyLogoScale": "Application Logo Size",
+    "companyLogoScaleHelp": "Adjust the logo on login, loading, sidebar, and navbar. Click Save Changes to apply it.",
     "companyName": "Company Name",
     "companyNamePlaceholder": "Enter company name",
     "companyType": "Company Type",

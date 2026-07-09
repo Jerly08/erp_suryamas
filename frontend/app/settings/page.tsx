@@ -16,6 +16,13 @@ import {
 } from "@/services/periodClosingService";
 import { API_ENDPOINTS } from "@/config/api";
 import { getImageUrl } from "@/utils/imageUrl";
+import { useBranding } from "@/contexts/BrandingContext";
+import {
+  getScaledLogoSize,
+  MAX_LOGO_SCALE,
+  MIN_LOGO_SCALE,
+  normalizeLogoScale,
+} from "@/config/branding";
 import {
   Box,
   VStack,
@@ -42,6 +49,10 @@ import {
   NumberInputStepper,
   NumberIncrementStepper,
   NumberDecrementStepper,
+  Slider,
+  SliderTrack,
+  SliderFilledTrack,
+  SliderThumb,
   FormControl,
   FormLabel,
   useToast,
@@ -74,6 +85,7 @@ import {
   FiPackage,
   FiUnlock,
   FiClock,
+  FiUpload,
 } from "react-icons/fi";
 import Link from "next/link";
 
@@ -185,6 +197,8 @@ interface SystemSettings {
   company_type?: string; // Added field
   company_website?: string;
   company_logo?: string;
+  company_logo_scale?: number;
+  company_icon?: string;
   tax_number?: string;
   currency: string;
   date_format: string;
@@ -213,6 +227,7 @@ interface SystemSettings {
 
 const SettingsPage: React.FC = () => {
   const { t, language, setLanguage } = useTranslation();
+  const { logoUrl, logoScale, iconUrl, refreshBranding } = useBranding();
   const toast = useToast();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [formData, setFormData] = useState<SystemSettings | null>(null);
@@ -221,6 +236,10 @@ const SettingsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingIcon, setUploadingIcon] = useState(false);
+  const previewLogoScale = normalizeLogoScale(
+    formData?.company_logo_scale ?? logoScale,
+  );
   // Tax account settings
   const [taxAccountSettings, setTaxAccountSettings] =
     useState<TaxAccountSettings | null>(null);
@@ -710,6 +729,7 @@ const SettingsPage: React.FC = () => {
         setSettings(response.data.data);
         setFormData(response.data.data);
         setHasChanges(false);
+        await refreshBranding();
 
         // Update language if changed
         if (response.data.data.language !== language) {
@@ -741,35 +761,45 @@ const SettingsPage: React.FC = () => {
     setHasChanges(false);
   };
 
-  const handleLogoUpload = async (file: File) => {
+  const handleBrandImageUpload = async (
+    asset: "logo" | "icon",
+    file: File,
+  ) => {
     if (!file) return;
-    setUploadingLogo(true);
+    const isLogo = asset === "logo";
+    const field: "company_logo" | "company_icon" = isLogo
+      ? "company_logo"
+      : "company_icon";
+    const endpoint = isLogo
+      ? API_ENDPOINTS.SETTINGS_UPLOAD_LOGO
+      : API_ENDPOINTS.SETTINGS_UPLOAD_ICON;
+    const setUploading = isLogo ? setUploadingLogo : setUploadingIcon;
+
+    setUploading(true);
     try {
       const fd = new FormData();
       fd.append("image", file);
-      const resp = await api.post("/api/v1/settings/company/logo", fd, {
+      const resp = await api.post(endpoint, fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       const newPath: string | undefined = resp.data?.path;
       if (newPath) {
         setSettings((prev) =>
-          prev ? { ...prev, company_logo: newPath } : prev,
+          prev ? { ...prev, [field]: newPath } : prev,
         );
         setFormData((prev) =>
-          prev ? { ...prev, company_logo: newPath } : prev,
+          prev ? { ...prev, [field]: newPath } : prev,
         );
+        await refreshBranding();
         toast({
-          title:
-            t("settings.taxAccounts.messages.logoUpdated") || "Logo updated",
+          title: isLogo ? "Logo berhasil diperbarui" : "Ikon browser berhasil diperbarui",
           status: "success",
           duration: 2500,
           isClosable: true,
         });
       } else {
         toast({
-          title:
-            t("settings.taxAccounts.messages.uploadSuccessNoPath") ||
-            "Upload succeeded but no path returned",
+          title: "Upload berhasil tetapi path file tidak tersedia",
           status: "warning",
           duration: 3000,
           isClosable: true,
@@ -777,16 +807,14 @@ const SettingsPage: React.FC = () => {
       }
     } catch (err: unknown) {
       toast({
-        title:
-          t("settings.taxAccounts.messages.logoUploadFailed") ||
-          "Failed to upload logo",
-        description: getApiErrorMessage(err, "Failed to upload logo"),
+        title: isLogo ? "Gagal mengunggah logo" : "Gagal mengunggah ikon browser",
+        description: getApiErrorMessage(err, "Failed to upload branding image"),
         status: "error",
         duration: 5000,
         isClosable: true,
       });
     } finally {
-      setUploadingLogo(false);
+      setUploading(false);
     }
   };
 
@@ -882,47 +910,224 @@ const SettingsPage: React.FC = () => {
                 </CardHeader>
                 <CardBody>
                   <VStack spacing={4} alignItems="start">
-                    {/* Company Logo */}
-                    <FormControl>
-                      <FormLabel
-                        fontWeight="semibold"
-                        color={mutedTextColor}
-                        fontSize="sm"
-                      >
-                        {t("settings.companyLogo") || "Company Logo"}
-                      </FormLabel>
+                    <SimpleGrid
+                      columns={{ base: 1, xl: 2 }}
+                      spacing={6}
+                      width="full"
+                    >
+                      <FormControl>
+                        <FormLabel
+                          fontWeight="semibold"
+                          color={mutedTextColor}
+                          fontSize="sm"
+                        >
+                          Logo Aplikasi
+                        </FormLabel>
+                        <Stack
+                          direction={{ base: "column", sm: "row" }}
+                          spacing={4}
+                          align={{ base: "start", sm: "center" }}
+                        >
+                          <Box
+                            width="180px"
+                            height="80px"
+                            border="1px solid"
+                            borderColor={inputBorderColor}
+                            borderRadius="md"
+                            bg={readOnlyInputBg}
+                            display="flex"
+                            alignItems="center"
+                            justifyContent="center"
+                            p={3}
+                            flexShrink={0}
+                          >
+                            <Image
+                              src={
+                                getImageUrl(
+                                  formData?.company_logo || settings?.company_logo,
+                                ) || logoUrl
+                              }
+                              alt="Logo aplikasi"
+                              height={getScaledLogoSize(40, previewLogoScale)}
+                              maxWidth="100%"
+                              maxHeight="68px"
+                              objectFit="contain"
+                              fallbackStrategy="onError"
+                            />
+                          </Box>
+                          <VStack align="start" spacing={2}>
+                            <Button
+                              as="label"
+                              size="sm"
+                              leftIcon={<FiUpload />}
+                              colorScheme="blue"
+                              variant="outline"
+                              isLoading={uploadingLogo}
+                              loadingText="Mengunggah"
+                              cursor="pointer"
+                            >
+                              Pilih Logo
+                              <Input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/gif"
+                                display="none"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) void handleBrandImageUpload("logo", file);
+                                  e.target.value = "";
+                                }}
+                                isDisabled={uploadingLogo}
+                              />
+                            </Button>
+                            <FormHelperText mt={0} fontSize="xs">
+                              Tampil pada login, sidebar, navbar, dan loading screen. Maksimal 5 MB.
+                            </FormHelperText>
+                          </VStack>
+                        </Stack>
+                      </FormControl>
+
+                      <FormControl>
+                        <FormLabel
+                          fontWeight="semibold"
+                          color={mutedTextColor}
+                          fontSize="sm"
+                        >
+                          Ikon Browser (Favicon)
+                        </FormLabel>
+                        <Stack
+                          direction={{ base: "column", sm: "row" }}
+                          spacing={4}
+                          align={{ base: "start", sm: "center" }}
+                        >
+                          <Box
+                            boxSize="80px"
+                            border="1px solid"
+                            borderColor={inputBorderColor}
+                            borderRadius="md"
+                            bg={readOnlyInputBg}
+                            display="flex"
+                            alignItems="center"
+                            justifyContent="center"
+                            p={2}
+                            flexShrink={0}
+                          >
+                            <Image
+                              src={
+                                getImageUrl(
+                                  formData?.company_icon || settings?.company_icon,
+                                ) || iconUrl
+                              }
+                              alt="Ikon browser"
+                              boxSize="100%"
+                              objectFit="contain"
+                              borderRadius="sm"
+                              fallbackStrategy="onError"
+                            />
+                          </Box>
+                          <VStack align="start" spacing={2}>
+                            <Button
+                              as="label"
+                              size="sm"
+                              leftIcon={<FiUpload />}
+                              colorScheme="blue"
+                              variant="outline"
+                              isLoading={uploadingIcon}
+                              loadingText="Mengunggah"
+                              cursor="pointer"
+                            >
+                              Pilih Ikon
+                              <Input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/gif"
+                                display="none"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) void handleBrandImageUpload("icon", file);
+                                  e.target.value = "";
+                                }}
+                                isDisabled={uploadingIcon}
+                              />
+                            </Button>
+                            <FormHelperText mt={0} fontSize="xs">
+                              Gunakan gambar persegi, disarankan PNG 256 x 256 piksel.
+                            </FormHelperText>
+                          </VStack>
+                        </Stack>
+                      </FormControl>
+                    </SimpleGrid>
+
+                    <FormControl width="full">
+                      <HStack justify="space-between" mb={2} spacing={4}>
+                        <FormLabel
+                          mb={0}
+                          fontWeight="semibold"
+                          color={mutedTextColor}
+                          fontSize="sm"
+                        >
+                          {t("settings.companyLogoScale")}
+                        </FormLabel>
+                        <Text
+                          minWidth="52px"
+                          textAlign="right"
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          color={blueColor}
+                        >
+                          {previewLogoScale}%
+                        </Text>
+                      </HStack>
                       <Stack
-                        direction={{ base: "column", md: "row" }}
+                        direction={{ base: "column", sm: "row" }}
                         spacing={4}
-                        align="center"
+                        align={{ base: "stretch", sm: "center" }}
                       >
-                        <Image
-                          src={
-                            getImageUrl(
-                              formData?.company_logo ||
-                                settings?.company_logo ||
-                                "",
-                            ) || undefined
+                        <Slider
+                          aria-label={t("settings.companyLogoScale")}
+                          min={MIN_LOGO_SCALE}
+                          max={MAX_LOGO_SCALE}
+                          step={5}
+                          value={previewLogoScale}
+                          onChange={(value) =>
+                            handleFormChange("company_logo_scale", value)
                           }
-                          alt="Company Logo"
-                          boxSize="80px"
-                          objectFit="contain"
-                          borderRadius="md"
-                          fallbackStrategy="onError"
-                        />
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          variant="filled"
-                          {...fieldStyles}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) handleLogoUpload(f);
+                          flex="1"
+                          colorScheme="blue"
+                        >
+                          <SliderTrack>
+                            <SliderFilledTrack />
+                          </SliderTrack>
+                          <SliderThumb boxSize={5} />
+                        </Slider>
+                        <NumberInput
+                          min={MIN_LOGO_SCALE}
+                          max={MAX_LOGO_SCALE}
+                          step={5}
+                          value={previewLogoScale}
+                          onChange={(_, value) => {
+                            if (Number.isFinite(value)) {
+                              handleFormChange(
+                                "company_logo_scale",
+                                normalizeLogoScale(value),
+                              );
+                            }
                           }}
-                          isDisabled={uploadingLogo}
-                        />
-                        {uploadingLogo && <Spinner size="sm" />}
+                          width={{ base: "full", sm: "120px" }}
+                          keepWithinRange
+                          clampValueOnBlur
+                        >
+                          <NumberInputField
+                            aria-label={`${t("settings.companyLogoScale")} (%)`}
+                            pr={8}
+                          />
+                          <NumberInputStepper>
+                            <NumberIncrementStepper />
+                            <NumberDecrementStepper />
+                          </NumberInputStepper>
+                        </NumberInput>
                       </Stack>
+                      <FormHelperText fontSize="xs">
+                        {t("settings.companyLogoScaleHelp")}
+                      </FormHelperText>
                     </FormControl>
                     <Divider borderColor={dividerColor} />
 

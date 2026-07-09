@@ -880,7 +880,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			ultraFastRoutes.SetupUltraFastPaymentRoutes(r)
 
 			// ⚙️ Setup Settings routes
-			SetupSettingsRoutes(protected, db, rbacMgr)
+			SetupSettingsRoutes(v1, protected, db, rbacMgr)
 
 			// 🔄 Setup CashBank SSOT Integration routes (NEW - Phase 1 Implementation)
 			// This provides unified view of CashBank data integrated with SSOT Journal system

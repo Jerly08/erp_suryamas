@@ -5,16 +5,19 @@ import { ChakraProvider, ColorModeScript, localStorageManager } from '@chakra-ui
 import { ThemeProvider } from '@/contexts/SimpleThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { LanguageProvider } from '@/contexts/LanguageContext';
+import { BrandingProvider, useBranding } from '@/contexts/BrandingContext';
+import { getScaledLogoSize } from '@/config/branding';
+import { API_ENDPOINTS } from '@/config/api';
 import theme from '@/theme';
-import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from '@/config/branding';
 import Image from 'next/image';
 
 interface ClientProvidersProps {
   children: React.ReactNode;
 }
 
-export default function ClientProviders({ children }: ClientProvidersProps) {
+function ClientProvidersContent({ children }: ClientProvidersProps) {
   const [mounted, setMounted] = useState(false);
+  const { logoScale, poweredByText } = useBranding();
 
   useEffect(() => {
     setMounted(true);
@@ -38,12 +41,14 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
           padding: '2rem'
         }}>
           <Image
-            src={AVERY_LOGO_PATH}
-            alt={AVERY_LOGO_ALT}
+            src={API_ENDPOINTS.BRANDING_LOGO}
+            alt="Application logo"
             width={260}
             height={56}
+            priority
+            unoptimized
             style={{
-              height: '56px',
+              height: getScaledLogoSize(56, logoScale),
               maxWidth: '260px',
               objectFit: 'contain',
               marginBottom: '0.75rem'
@@ -57,7 +62,7 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
             fontSize: '0.75rem',
             opacity: 0.6,
             marginTop: '0.5rem'
-          }}>{POWERED_BY_TEXT}</div>
+          }}>{poweredByText}</div>
         </div>
       </div>
     );
@@ -74,5 +79,13 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
         </LanguageProvider>
       </ThemeProvider>
     </ChakraProvider>
+  );
+}
+
+export default function ClientProviders({ children }: ClientProvidersProps) {
+  return (
+    <BrandingProvider>
+      <ClientProvidersContent>{children}</ClientProvidersContent>
+    </BrandingProvider>
   );
 }

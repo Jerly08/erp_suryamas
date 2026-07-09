@@ -563,6 +563,12 @@ export const API_ENDPOINTS = {
   SETTINGS: "/api/v1/settings",
   SETTINGS_PUBLIC: "/api/v1/settings/public",
   SETTINGS_UPDATE: "/api/v1/settings",
+  SETTINGS_UPLOAD_LOGO: "/api/v1/settings/company/logo",
+  SETTINGS_UPLOAD_ICON: "/api/v1/settings/company/icon",
+  BRANDING_PUBLIC: "/api/v1/branding/public",
+  BRANDING_LOGO: "/api/v1/branding/logo",
+  BRANDING_ICON: "/api/v1/branding/icon",
+  BRANDING_MANIFEST: "/api/v1/branding/manifest.webmanifest",
 
   // Fiscal Year Closing (with /api/v1 prefix)
   FISCAL_CLOSING: {

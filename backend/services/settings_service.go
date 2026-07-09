@@ -171,6 +171,24 @@ func (s *SettingsService) validateSettings(updates map[string]interface{}) error
 			return errors.New("decimal places must be between 0 and 4")
 		}
 	}
+	// Validate and normalize logo display scale from JSON numbers.
+	if value, exists := updates["company_logo_scale"]; exists {
+		var logoScale float64
+		switch number := value.(type) {
+		case float64:
+			logoScale = number
+		case float32:
+			logoScale = float64(number)
+		case int:
+			logoScale = float64(number)
+		default:
+			return errors.New("company logo scale must be a number")
+		}
+		if math.Trunc(logoScale) != logoScale || logoScale < 50 || logoScale > 180 {
+			return errors.New("company logo scale must be a whole number between 50 and 180")
+		}
+		updates["company_logo_scale"] = int(logoScale)
+	}
 	// Validate language
 	if language, ok := updates["language"].(string); ok {
 		if language != "id" && language != "en" {
@@ -236,6 +254,7 @@ func (s *SettingsService) createDefaultSettings() models.Settings {
 		CompanyAddress:     "Jl. Sudirman Kav. 45-46, Jakarta Pusat 10210, Indonesia",
 		CompanyPhone:       "+62-21-5551234",
 		CompanyEmail:       "info@sistemakuntansi.co.id",
+		CompanyLogoScale:   100,
 		Currency:           ifThen(cfg != nil && cfg.CurrencySettings.BaseCurrency != "", cfg.CurrencySettings.BaseCurrency, "IDR"),
 		DateFormat:         "DD/MM/YYYY",
 		FiscalYearStart:    "January 1",

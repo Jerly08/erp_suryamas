@@ -1,27 +1,25 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ClientProviders from './ClientProviders';
+import { DEFAULT_APP_NAME } from '@/config/branding';
 
 export const metadata: Metadata = {
-  title: "Avery",
-  description: "Avery accounting application",
-  applicationName: "Avery",
-  manifest: "/manifest.webmanifest",
+  title: DEFAULT_APP_NAME,
+  description: "Accounting and finance management application",
+  applicationName: DEFAULT_APP_NAME,
+  manifest: "/api/v1/branding/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Avery",
+    title: DEFAULT_APP_NAME,
   },
   formatDetection: {
     telephone: false,
   },
   icons: {
-    icon: [
-      { url: "/avery-icon.png?v=20260529", type: "image/png", sizes: "256x256" },
-      { url: "/favicon.ico?v=20260529", type: "image/x-icon" },
-    ],
-    shortcut: [{ url: "/avery-icon.png?v=20260529", type: "image/png", sizes: "256x256" }],
-    apple: [{ url: "/avery-icon.png?v=20260529", type: "image/png", sizes: "256x256" }],
+    icon: [{ url: "/api/v1/branding/icon", sizes: "any" }],
+    shortcut: [{ url: "/api/v1/branding/icon", sizes: "any" }],
+    apple: [{ url: "/api/v1/branding/icon", sizes: "any" }],
   },
 };
 

@@ -25,6 +25,8 @@ type Settings struct {
 	CompanyPhone   string `json:"company_phone"`
 	CompanyEmail   string `json:"company_email"`
 	CompanyLogo    string `json:"company_logo"`
+	CompanyLogoScale int  `json:"company_logo_scale" gorm:"default:100"`
+	CompanyIcon    string `json:"company_icon"`
 	CompanyWebsite string `json:"company_website"`
 	
 	// Financial Settings
@@ -86,6 +88,8 @@ type SettingsResponse struct {
 	CompanyPhone   string `json:"company_phone"`
 	CompanyEmail   string `json:"company_email"`
 	CompanyLogo    string `json:"company_logo"`
+	CompanyLogoScale int  `json:"company_logo_scale"`
+	CompanyIcon    string `json:"company_icon"`
 	CompanyWebsite string `json:"company_website"`
 	
 	// Financial Settings
@@ -137,6 +141,8 @@ func (s *Settings) ToResponse() SettingsResponse {
 		CompanyPhone:       s.CompanyPhone,
 		CompanyEmail:       s.CompanyEmail,
 		CompanyLogo:        s.CompanyLogo,
+		CompanyLogoScale:   s.CompanyLogoScale,
+		CompanyIcon:        s.CompanyIcon,
 		CompanyWebsite:     s.CompanyWebsite,
 		Currency:           s.Currency,
 		DateFormat:         s.DateFormat,
@@ -164,4 +170,3 @@ func (s *Settings) ToResponse() SettingsResponse {
 		RequireJournalApproval: s.RequireJournalApproval,
 	}
 }
-

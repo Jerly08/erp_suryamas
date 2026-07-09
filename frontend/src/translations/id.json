@@ -450,6 +450,8 @@
     "invoiceSettings": "Pengaturan Invoice",
     "emailSettings": "Pengaturan Email",
     "companyLogo": "Logo Perusahaan",
+    "companyLogoScale": "Ukuran Logo Aplikasi",
+    "companyLogoScaleHelp": "Atur tampilan logo pada login, loading, sidebar, dan navbar. Klik Simpan Perubahan untuk menerapkan.",
     "companyName": "Nama Perusahaan",
     "companyNamePlaceholder": "Masukkan nama perusahaan",
     "companyType": "Tipe Perusahaan",

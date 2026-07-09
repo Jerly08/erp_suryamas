@@ -37,7 +37,8 @@ import { normalizeRole } from "@/utils/roles";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useTheme } from "@/contexts/SimpleThemeContext";
 import { usePermissions } from "@/hooks/usePermissions";
-import { AVERY_LOGO_ALT, AVERY_LOGO_PATH, POWERED_BY_TEXT } from "@/config/branding";
+import { useBranding } from "@/contexts/BrandingContext";
+import { getScaledLogoSize } from "@/config/branding";
 
 // Menu structure - will be translated dynamically
 // companyType: 'SERVICE' | 'TRADING' | 'MANUFACTURING'
@@ -268,6 +269,7 @@ export default function Sidebar({
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { canView, canMenu, loading: permissionLoading } = usePermissions();
+  const { companyName, logoUrl, logoScale, poweredByText } = useBranding();
 
   // Get company type from user context
   const companyType = user?.company_type || "";
@@ -336,9 +338,12 @@ export default function Sidebar({
           justifyContent="space-between"
         >
           <Image
-            src={AVERY_LOGO_PATH}
-            alt={AVERY_LOGO_ALT}
-            h={{ base: "34px", md: "42px" }}
+            src={logoUrl}
+            alt={companyName}
+            h={{
+              base: getScaledLogoSize(34, logoScale),
+              md: getScaledLogoSize(42, logoScale),
+            }}
             maxW="150px"
             objectFit="contain"
           />
@@ -383,7 +388,7 @@ export default function Sidebar({
 
         <Box px="6" py="4" borderTop="1px solid" borderTopColor={sidebarBorder}>
           <Text fontSize="10px" color={groupLabelColor} lineHeight="short" opacity={0.75}>
-            {POWERED_BY_TEXT}
+            {poweredByText}
           </Text>
         </Box>
       </Box>

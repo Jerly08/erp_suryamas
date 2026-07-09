@@ -42,6 +42,15 @@ const nextConfig: NextConfig = {
 		ignoreDuringBuilds: true,
 	},
 	output: 'standalone',
+	async redirects() {
+		return [
+			{
+				source: '/favicon.ico',
+				destination: '/api/v1/branding/icon',
+				permanent: false,
+			},
+		];
+	},
 	// Konfigurasi Webpack hanya untuk mode non-Turbopack
 	...(!process.env.TURBOPACK && {
 		webpack: (config, { isServer }) => {
