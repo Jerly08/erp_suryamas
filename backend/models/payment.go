@@ -70,17 +70,19 @@ type Payment struct {
 
 // PaymentAllocation represents payment allocation to invoices or bills
 type PaymentAllocation struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	PaymentID       uint64    `json:"payment_id" gorm:"not null;index"`
-	InvoiceID       *uint     `json:"invoice_id" gorm:"index"`
-	BillID          *uint     `json:"bill_id" gorm:"index"`
-	AllocatedAmount float64   `json:"allocated_amount" gorm:"type:decimal(15,2);default:0"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                    uint      `json:"id" gorm:"primaryKey"`
+	PaymentID             uint64    `json:"payment_id" gorm:"not null;index"`
+	InvoiceID             *uint     `json:"invoice_id" gorm:"index"`
+	BillID                *uint     `json:"bill_id" gorm:"index"`
+	PurchasePaymentTermID *uint     `json:"purchase_payment_term_id" gorm:"index"`
+	AllocatedAmount       float64   `json:"allocated_amount" gorm:"type:decimal(15,2);default:0"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 
 	// Relations
-	Payment Payment `json:"payment" gorm:"foreignKey:PaymentID"`
-	Sale    *Sale   `json:"sale,omitempty" gorm:"foreignKey:InvoiceID"`
+	Payment             Payment              `json:"payment" gorm:"foreignKey:PaymentID"`
+	Sale                *Sale                `json:"sale,omitempty" gorm:"foreignKey:InvoiceID"`
+	PurchasePaymentTerm *PurchasePaymentTerm `json:"purchase_payment_term,omitempty" gorm:"foreignKey:PurchasePaymentTermID"`
 }
 
 // Payment Status Constants

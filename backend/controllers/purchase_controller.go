@@ -1497,13 +1497,14 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount       float64 `json:"amount" binding:"required,gt=0"`
-		ExchangeRate float64 `json:"exchange_rate"`
-		Date         string  `json:"date" binding:"required"`
-		Method       string  `json:"method" binding:"required"`
-		CashBankID   uint    `json:"cash_bank_id" binding:"required"`
-		Reference    string  `json:"reference"`
-		Notes        string  `json:"notes"`
+		Amount        float64 `json:"amount" binding:"required,gt=0"`
+		ExchangeRate  float64 `json:"exchange_rate"`
+		Date          string  `json:"date" binding:"required"`
+		Method        string  `json:"method" binding:"required"`
+		CashBankID    uint    `json:"cash_bank_id" binding:"required"`
+		PaymentTermID *uint   `json:"payment_term_id"`
+		Reference     string  `json:"reference"`
+		Notes         string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -1512,13 +1513,14 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 			"error":   "Invalid request data",
 			"details": err.Error(),
 			"expected_fields": map[string]string{
-				"amount":        "number (required, min=0)",
-				"exchange_rate": "number (optional, required for USD cash/bank)",
-				"date":          "datetime string (required, ISO format)",
-				"method":        "string (required)",
-				"cash_bank_id":  "number (required)",
-				"reference":     "string (optional)",
-				"notes":         "string (optional)",
+				"amount":          "number (required, min=0)",
+				"exchange_rate":   "number (optional, required for USD cash/bank)",
+				"date":            "datetime string (required, ISO format)",
+				"method":          "string (required)",
+				"cash_bank_id":    "number (required)",
+				"payment_term_id": "number (optional)",
+				"reference":       "string (optional)",
+				"notes":           "string (optional)",
 			},
 		})
 		return
@@ -1578,6 +1580,28 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		requestedAmount = outstandingAmount
 	}
 
+	if request.PaymentTermID != nil && *request.PaymentTermID != 0 {
+		termOutstanding, err := pc.purchaseService.GetPurchasePaymentTermOutstanding(uint(purchaseID), *request.PaymentTermID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		if requestedAmount-termOutstanding > 0.005 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":            "Payment amount exceeds selected term outstanding amount",
+				"term_outstanding": termOutstanding,
+				"requested_amount": requestedAmount,
+				"payment_term_id":  *request.PaymentTermID,
+			})
+			return
+		}
+		if math.Abs(requestedAmount-termOutstanding) <= 0.005 {
+			requestedAmount = termOutstanding
+		}
+	}
+
 	// Get user ID with error handling
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
@@ -1610,8 +1634,9 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		Notes:        fmt.Sprintf("Payment for Purchase %s - %s", purchase.Code, request.Notes),
 		BillAllocations: []services.BillAllocation{
 			{
-				BillID: uint(purchaseID),
-				Amount: requestedAmount,
+				BillID:        uint(purchaseID),
+				Amount:        requestedAmount,
+				PaymentTermID: request.PaymentTermID,
 			},
 		},
 	}

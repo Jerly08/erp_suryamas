@@ -81,17 +81,36 @@ type Purchase struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Vendor           Contact           `json:"vendor" gorm:"foreignKey:VendorID"`
-	User             User              `json:"user" gorm:"foreignKey:UserID"`
-	PurchaseItems    []PurchaseItem    `json:"purchase_items" gorm:"foreignKey:PurchaseID"`
-	PurchasePayments []PurchasePayment `json:"purchase_payments,omitempty" gorm:"foreignKey:PurchaseID"`
-	BankAccount      *CashBank         `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
-	CreditAccount    *Account          `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
-	OtherCostAccount *Account          `json:"other_cost_account,omitempty" gorm:"foreignKey:OtherCostAccountID"`
-	ApprovalRequest  *ApprovalRequest  `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
-	Approver         *User             `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	PurchaseRequest  *PurchaseRequest  `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
-	Project          *Project          `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor           Contact               `json:"vendor" gorm:"foreignKey:VendorID"`
+	User             User                  `json:"user" gorm:"foreignKey:UserID"`
+	PurchaseItems    []PurchaseItem        `json:"purchase_items" gorm:"foreignKey:PurchaseID"`
+	PurchasePayments []PurchasePayment     `json:"purchase_payments,omitempty" gorm:"foreignKey:PurchaseID"`
+	PaymentTerms     []PurchasePaymentTerm `json:"payment_terms,omitempty" gorm:"foreignKey:PurchaseID"`
+	BankAccount      *CashBank             `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
+	CreditAccount    *Account              `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
+	OtherCostAccount *Account              `json:"other_cost_account,omitempty" gorm:"foreignKey:OtherCostAccountID"`
+	ApprovalRequest  *ApprovalRequest      `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
+	Approver         *User                 `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	PurchaseRequest  *PurchaseRequest      `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
+	Project          *Project              `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+}
+
+type PurchasePaymentTerm struct {
+	ID                uint           `json:"id" gorm:"primaryKey"`
+	PurchaseID        uint           `json:"purchase_id" gorm:"not null;index"`
+	Sequence          int            `json:"sequence" gorm:"not null;default:1"`
+	Percentage        float64        `json:"percentage" gorm:"type:decimal(8,4);default:0"`
+	Amount            float64        `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	PaidAmount        float64        `json:"paid_amount" gorm:"-"`
+	OutstandingAmount float64        `json:"outstanding_amount" gorm:"-"`
+	DueDate           time.Time      `json:"due_date"`
+	Description       string         `json:"description" gorm:"size:255"`
+	Status            string         `json:"status" gorm:"size:20;default:'PENDING'"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
+
+	Purchase Purchase `json:"-" gorm:"foreignKey:PurchaseID"`
 }
 
 type PurchaseItem struct {
@@ -219,6 +238,13 @@ const (
 	PurchasePaymentProofRejected = "REJECTED"
 )
 
+// Purchase Payment Term Status Constants
+const (
+	PurchasePaymentTermPending = "PENDING"
+	PurchasePaymentTermPartial = "PARTIAL"
+	PurchasePaymentTermPaid    = "PAID"
+)
+
 // Filter and Request DTOs
 type PurchaseFilter struct {
 	Status           string `json:"status"`
@@ -247,10 +273,11 @@ type PurchaseCreateRequest struct {
 	ProjectID         *uint `json:"project_id"`
 
 	// Payment method fields
-	PaymentMethod    string `json:"payment_method"`    // CASH, CREDIT, TRANSFER
-	BankAccountID    *uint  `json:"bank_account_id"`   // Required if payment_method is CASH or TRANSFER
-	CreditAccountID  *uint  `json:"credit_account_id"` // Required if payment_method is CREDIT
-	PaymentReference string `json:"payment_reference"`
+	PaymentMethod    string                       `json:"payment_method"`    // CASH, CREDIT, TRANSFER
+	BankAccountID    *uint                        `json:"bank_account_id"`   // Required if payment_method is CASH or TRANSFER
+	CreditAccountID  *uint                        `json:"credit_account_id"` // Required if payment_method is CREDIT
+	PaymentReference string                       `json:"payment_reference"`
+	PaymentTerms     []PurchasePaymentTermRequest `json:"payment_terms"`
 
 	// Legacy tax field (for backward compatibility - ignored in calculation)
 	Tax                  float64 `json:"tax"`
@@ -279,10 +306,11 @@ type PurchaseUpdateRequest struct {
 	Discount *float64   `json:"discount"`
 
 	// Payment method fields
-	PaymentMethod    *string `json:"payment_method"`
-	BankAccountID    *uint   `json:"bank_account_id"`
-	CreditAccountID  *uint   `json:"credit_account_id"`
-	PaymentReference *string `json:"payment_reference"`
+	PaymentMethod    *string                      `json:"payment_method"`
+	BankAccountID    *uint                        `json:"bank_account_id"`
+	CreditAccountID  *uint                        `json:"credit_account_id"`
+	PaymentReference *string                      `json:"payment_reference"`
+	PaymentTerms     []PurchasePaymentTermRequest `json:"payment_terms"`
 
 	// Legacy tax field (for backward compatibility - ignored in calculation)
 	Tax                  *float64 `json:"tax"`
@@ -302,6 +330,14 @@ type PurchaseUpdateRequest struct {
 
 	Notes *string               `json:"notes"`
 	Items []PurchaseItemRequest `json:"items"`
+}
+
+type PurchasePaymentTermRequest struct {
+	Sequence    int       `json:"sequence"`
+	Percentage  float64   `json:"percentage"`
+	Amount      float64   `json:"amount"`
+	DueDate     time.Time `json:"due_date"`
+	Description string    `json:"description"`
 }
 
 type PurchaseItemRequest struct {

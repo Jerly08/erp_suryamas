@@ -30,6 +30,7 @@ export interface PurchaseCreateRequest {
   other_cost_account_id?: number;
   notes?: string;
   items: PurchaseItemRequest[]; // backend expects `items`
+  payment_terms?: PurchasePaymentTermRequest[];
   request_priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
 }
 
@@ -221,6 +222,7 @@ export interface Purchase {
   project?: ProjectSummary | null;
   purchase_items?: PurchaseItem[];
   purchase_payments?: PurchasePayment[];
+  payment_terms?: PurchasePaymentTerm[];
   approval_request?: {
     id: number;
     status: string;
@@ -261,12 +263,36 @@ export interface PurchaseSummary {
 }
 
 // Purchase Payment Integration Interfaces
+export interface PurchasePaymentTermRequest {
+  sequence: number;
+  percentage?: number;
+  amount: number;
+  due_date: string;
+  description?: string;
+}
+
+export interface PurchasePaymentTerm {
+  id: number;
+  purchase_id: number;
+  sequence: number;
+  percentage: number;
+  amount: number;
+  paid_amount?: number;
+  outstanding_amount?: number;
+  due_date?: string;
+  description?: string;
+  status: "PENDING" | "PARTIAL" | "PAID" | string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface PurchasePaymentRequest {
   amount: number;
   exchange_rate?: number;
   payment_date: string; // ISO string
   payment_method: string;
   cash_bank_id?: number;
+  payment_term_id?: number;
   reference?: string;
   notes?: string;
 }
@@ -465,6 +491,7 @@ class PurchaseService {
       date: data.payment_date, // ✅ Fixed: backend expects "date" not "payment_date"
       method: data.payment_method, // ✅ Fixed: backend expects "method" not "payment_method"
       cash_bank_id: data.cash_bank_id, // ✅ Correct
+      payment_term_id: data.payment_term_id,
       reference: data.reference || "", // ✅ Correct
       notes: data.notes || "", // ✅ Correct
     };
@@ -495,6 +522,7 @@ class PurchaseService {
       date: formattedDate, // Send as properly formatted date string
       method: data.payment_method,
       cash_bank_id: data.cash_bank_id,
+      payment_term_id: data.payment_term_id,
       reference: data.reference || "",
       notes: data.notes || "",
     };

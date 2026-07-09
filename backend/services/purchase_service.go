@@ -71,6 +71,270 @@ func purchasePPhPaymentStatus(totalPPh float64, paidAmount float64) string {
 	return models.PurchasePPhPaymentStatusUnpaid
 }
 
+func purchaseTermDefaultDueDate(purchase *models.Purchase) time.Time {
+	if purchase != nil && !purchase.DueDate.IsZero() {
+		return purchase.DueDate
+	}
+	if purchase != nil && !purchase.Date.IsZero() {
+		return purchase.Date
+	}
+	return time.Now()
+}
+
+func buildPurchasePaymentTerms(purchase *models.Purchase, requests []models.PurchasePaymentTermRequest) ([]models.PurchasePaymentTerm, error) {
+	if purchase == nil {
+		return nil, fmt.Errorf("purchase is required")
+	}
+
+	totalAmount := roundPurchaseMoney(purchase.TotalAmount)
+	defaultDueDate := purchaseTermDefaultDueDate(purchase)
+	if totalAmount <= 0.01 {
+		return nil, fmt.Errorf("purchase total amount must be greater than zero before creating payment terms")
+	}
+
+	if len(requests) == 0 {
+		return []models.PurchasePaymentTerm{{
+			PurchaseID:        purchase.ID,
+			Sequence:          1,
+			Percentage:        100,
+			Amount:            totalAmount,
+			DueDate:           defaultDueDate,
+			Description:       "Termin 1",
+			Status:            models.PurchasePaymentTermPending,
+			OutstandingAmount: totalAmount,
+		}}, nil
+	}
+
+	terms := make([]models.PurchasePaymentTerm, 0, len(requests))
+	runningTotal := 0.0
+	for index, request := range requests {
+		sequence := request.Sequence
+		if sequence <= 0 {
+			sequence = index + 1
+		}
+
+		amount := roundPurchaseMoney(request.Amount)
+		percentage := request.Percentage
+		if amount <= 0 && percentage > 0 {
+			amount = roundPurchaseMoney(totalAmount * percentage / 100)
+		}
+		if amount <= 0 {
+			return nil, fmt.Errorf("payment term %d amount must be greater than zero", sequence)
+		}
+		if percentage <= 0 {
+			percentage = roundPurchaseMoney(amount / totalAmount * 100)
+		}
+
+		dueDate := request.DueDate
+		if dueDate.IsZero() {
+			dueDate = defaultDueDate
+		}
+
+		description := strings.TrimSpace(request.Description)
+		if description == "" {
+			description = fmt.Sprintf("Termin %d", sequence)
+		}
+
+		terms = append(terms, models.PurchasePaymentTerm{
+			PurchaseID:        purchase.ID,
+			Sequence:          sequence,
+			Percentage:        percentage,
+			Amount:            amount,
+			DueDate:           dueDate,
+			Description:       description,
+			Status:            models.PurchasePaymentTermPending,
+			OutstandingAmount: amount,
+		})
+		runningTotal = roundPurchaseMoney(runningTotal + amount)
+	}
+
+	if math.Abs(runningTotal-totalAmount) > 0.01 {
+		return nil, fmt.Errorf("total payment terms %.2f must equal purchase total %.2f", runningTotal, totalAmount)
+	}
+
+	// Absorb one-cent rounding residue into the final term.
+	if len(terms) > 0 && runningTotal != totalAmount {
+		diff := roundPurchaseMoney(totalAmount - runningTotal)
+		terms[len(terms)-1].Amount = roundPurchaseMoney(terms[len(terms)-1].Amount + diff)
+	}
+
+	return terms, nil
+}
+
+func hydratePurchasePaymentTermsWithAllocations(tx *gorm.DB, purchase *models.Purchase) error {
+	if purchase == nil || len(purchase.PaymentTerms) == 0 {
+		return nil
+	}
+
+	termIDs := make([]uint, 0, len(purchase.PaymentTerms))
+	for _, term := range purchase.PaymentTerms {
+		termIDs = append(termIDs, term.ID)
+	}
+
+	termPaidAmounts := map[uint]float64{}
+	if len(termIDs) > 0 {
+		type termAllocationTotal struct {
+			TermID uint
+			Total  float64
+		}
+		var totals []termAllocationTotal
+		if err := tx.Model(&models.PaymentAllocation{}).
+			Select("purchase_payment_term_id AS term_id, COALESCE(SUM(allocated_amount), 0) AS total").
+			Where("purchase_payment_term_id IN ?", termIDs).
+			Group("purchase_payment_term_id").
+			Scan(&totals).Error; err != nil {
+			return err
+		}
+		for _, total := range totals {
+			termPaidAmounts[total.TermID] = roundPurchaseMoney(total.Total)
+		}
+	}
+
+	genericPaidAmount := 0.0
+	if err := tx.Model(&models.PaymentAllocation{}).
+		Where("bill_id = ? AND purchase_payment_term_id IS NULL", purchase.ID).
+		Select("COALESCE(SUM(allocated_amount), 0)").
+		Scan(&genericPaidAmount).Error; err != nil {
+		return err
+	}
+	genericPaidAmount = roundPurchaseMoney(genericPaidAmount)
+
+	for index := range purchase.PaymentTerms {
+		term := &purchase.PaymentTerms[index]
+		paidAmount := termPaidAmounts[term.ID]
+		if genericPaidAmount > 0 {
+			remainingForTerm := roundPurchaseMoney(term.Amount - paidAmount)
+			if remainingForTerm > 0 {
+				allocation := math.Min(remainingForTerm, genericPaidAmount)
+				paidAmount = roundPurchaseMoney(paidAmount + allocation)
+				genericPaidAmount = roundPurchaseMoney(genericPaidAmount - allocation)
+			}
+		}
+
+		if paidAmount > term.Amount && paidAmount-term.Amount <= 0.01 {
+			paidAmount = term.Amount
+		}
+		term.PaidAmount = roundPurchaseMoney(math.Min(paidAmount, term.Amount))
+		term.OutstandingAmount = roundPurchaseMoney(math.Max(term.Amount-term.PaidAmount, 0))
+		switch {
+		case term.OutstandingAmount <= 0.01:
+			term.Status = models.PurchasePaymentTermPaid
+			term.OutstandingAmount = 0
+		case term.PaidAmount > 0.01:
+			term.Status = models.PurchasePaymentTermPartial
+		default:
+			term.Status = models.PurchasePaymentTermPending
+		}
+	}
+
+	return nil
+}
+
+func (s *PurchaseService) loadAndHydratePurchasePaymentTerms(tx *gorm.DB, purchase *models.Purchase) error {
+	if purchase == nil {
+		return nil
+	}
+	if !tx.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		return nil
+	}
+	if err := tx.Where("purchase_id = ?", purchase.ID).
+		Order("sequence ASC, due_date ASC, id ASC").
+		Find(&purchase.PaymentTerms).Error; err != nil {
+		return err
+	}
+	return hydratePurchasePaymentTermsWithAllocations(tx, purchase)
+}
+
+func (s *PurchaseService) syncPurchasePaymentTerms(purchase *models.Purchase, requests []models.PurchasePaymentTermRequest) error {
+	if purchase == nil {
+		return nil
+	}
+	if !s.db.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		return nil
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if !models.IsCreditPurchaseMethod(purchase.PaymentMethod) {
+			return tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchasePaymentTerm{}).Error
+		}
+
+		terms, err := buildPurchasePaymentTerms(purchase, requests)
+		if err != nil {
+			return err
+		}
+		if err := tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchasePaymentTerm{}).Error; err != nil {
+			return err
+		}
+		for index := range terms {
+			if err := tx.Create(&terms[index]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *PurchaseService) ensurePurchasePaymentTermsForCredit(purchase *models.Purchase) error {
+	if purchase == nil || !models.IsCreditPurchaseMethod(purchase.PaymentMethod) {
+		return nil
+	}
+	if !s.db.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		return nil
+	}
+	var count int64
+	if err := s.db.Model(&models.PurchasePaymentTerm{}).
+		Where("purchase_id = ? AND deleted_at IS NULL", purchase.ID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	return s.syncPurchasePaymentTerms(purchase, nil)
+}
+
+func (s *PurchaseService) GetPurchasePaymentTermOutstanding(purchaseID uint, termID uint) (float64, error) {
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.loadAndHydratePurchasePaymentTerms(s.db, purchase); err != nil {
+		return 0, err
+	}
+	for _, term := range purchase.PaymentTerms {
+		if term.ID == termID {
+			return roundPurchaseMoney(term.OutstandingAmount), nil
+		}
+	}
+	return 0, fmt.Errorf("payment term %d does not belong to purchase %d", termID, purchaseID)
+}
+
+func (s *PurchaseService) SyncPurchasePaymentTermProgress(purchaseID uint) error {
+	if !s.db.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		return nil
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var purchase models.Purchase
+		if err := tx.First(&purchase, purchaseID).Error; err != nil {
+			return err
+		}
+		if err := s.loadAndHydratePurchasePaymentTerms(tx, &purchase); err != nil {
+			return err
+		}
+		for _, term := range purchase.PaymentTerms {
+			if err := tx.Model(&models.PurchasePaymentTerm{}).
+				Where("id = ?", term.ID).
+				Updates(map[string]interface{}{
+					"status":     term.Status,
+					"updated_at": time.Now(),
+				}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func syncPurchasePPhPaymentStatus(purchase *models.Purchase) {
 	if purchase == nil {
 		return
@@ -158,6 +422,11 @@ func (s *PurchaseService) GetPurchases(filter models.PurchaseFilter) (*PurchaseR
 		fmt.Printf("? Failed to retrieve purchases: %v\n", err)
 		return nil, fmt.Errorf("failed to retrieve purchases: %v", err)
 	}
+	for i := range purchases {
+		if err := s.loadAndHydratePurchasePaymentTerms(s.db, &purchases[i]); err != nil {
+			fmt.Printf("?? Failed to hydrate payment terms for purchase %d: %v\n", purchases[i].ID, err)
+		}
+	}
 	fmt.Printf("? Retrieved %d purchases (total: %d)\n", len(purchases), total)
 
 	totalPages := int(math.Ceil(float64(total) / float64(filter.Limit)))
@@ -177,6 +446,9 @@ func (s *PurchaseService) GetPurchaseByID(id uint) (*models.Purchase, error) {
 	if err != nil {
 		fmt.Printf("? Failed to retrieve purchase %d: %v\n", id, err)
 		return nil, fmt.Errorf("purchase not found (ID: %d): %v", id, err)
+	}
+	if err := s.loadAndHydratePurchasePaymentTerms(s.db, purchase); err != nil {
+		fmt.Printf("?? Failed to hydrate payment terms for purchase %d: %v\n", id, err)
 	}
 	fmt.Printf("? Purchase %d retrieved: %s (Status: %s)\n", id, purchase.Code, purchase.Status)
 	return purchase, nil
@@ -337,6 +609,11 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		return nil, fmt.Errorf("failed to save purchase to database: %v", err)
 	}
 	fmt.Printf("? Purchase %d saved successfully with code %s\n", createdPurchase.ID, createdPurchase.Code)
+
+	if err := s.syncPurchasePaymentTerms(createdPurchase, request.PaymentTerms); err != nil {
+		fmt.Printf("? Failed to sync payment terms for purchase %d: %v\n", createdPurchase.ID, err)
+		return nil, fmt.Errorf("failed to sync payment terms: %v", err)
+	}
 
 	if err := s.syncLinkedPurchaseRequestItems(createdPurchase); err != nil {
 		fmt.Printf("? Failed to sync linked purchase request items for purchase %d: %v\n", createdPurchase.ID, err)
@@ -511,6 +788,13 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		return nil, fmt.Errorf("failed to save updated purchase: %v", err)
 	}
 	fmt.Printf("? Purchase %d updated successfully\n", id)
+
+	if request.PaymentTerms != nil || request.PaymentMethod != nil {
+		if err := s.syncPurchasePaymentTerms(updatedPurchase, request.PaymentTerms); err != nil {
+			fmt.Printf("? Failed to sync payment terms for updated purchase %d: %v\n", id, err)
+			return nil, fmt.Errorf("failed to sync payment terms: %v", err)
+		}
+	}
 
 	if err := s.syncLinkedPurchaseRequestItems(updatedPurchase); err != nil {
 		fmt.Printf("? Failed to sync linked purchase request items for updated purchase %d: %v\n", id, err)
@@ -1107,6 +1391,9 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 	_, err = s.purchaseRepo.Update(purchase)
 	if err != nil {
 		return nil, err
+	}
+	if err := s.ensurePurchasePaymentTermsForCredit(purchase); err != nil {
+		return nil, fmt.Errorf("failed to ensure payment terms: %v", err)
 	}
 
 	// NOTE: Stock updates, journal entries, and cash/bank balance updates
@@ -2065,6 +2352,9 @@ func (s *PurchaseService) postFinalApprovedPurchase(purchaseID uint) error {
 			fmt.Printf("?? Warning: Failed to update credit purchase payment tracking: %v\n", err)
 		} else {
 			fmt.Printf("?? Initialized credit purchase payment tracking\n")
+		}
+		if err := s.ensurePurchasePaymentTermsForCredit(purchase); err != nil {
+			fmt.Printf("?? Warning: Failed to ensure credit purchase payment terms: %v\n", err)
 		}
 	} else {
 		// For immediate payment, mark as fully paid
@@ -3937,6 +4227,10 @@ func (s *PurchaseService) UpdatePurchasePaymentAmounts(purchaseID uint, paidAmou
 
 	if err != nil {
 		return fmt.Errorf("failed to update purchase payment amounts: %v", err)
+	}
+
+	if err := s.SyncPurchasePaymentTermProgress(purchaseID); err != nil {
+		return fmt.Errorf("failed to sync purchase payment term progress: %v", err)
 	}
 
 	return nil

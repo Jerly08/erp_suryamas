@@ -208,8 +208,16 @@ interface PurchaseFormData {
   bank_account_id: string;
   credit_account_id: string; // New field for liability account
   payment_reference: string;
+  payment_terms: PurchasePaymentTermFormData[];
 
   items: PurchaseItemFormData[];
+}
+
+interface PurchasePaymentTermFormData {
+  sequence: number;
+  amount: string;
+  due_date: string;
+  description: string;
 }
 
 interface PurchaseItemFormData {
@@ -357,6 +365,64 @@ const normalizePurchasePaymentFields = (
 
   return nextState;
 };
+
+const parsePurchaseNumericInput = (value: string): number => {
+  if (!value) return 0;
+  const normalized = value.replace(/\./g, "").replace(",", ".");
+  const parsed = parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const roundPurchaseAmount = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 100) / 100;
+};
+
+const calculatePurchaseFormGrandTotal = (data: PurchaseFormData): number => {
+  const subtotal = data.items.reduce((total, item) => {
+    const qty = parsePurchaseNumericInput(item.quantity);
+    const price = parsePurchaseNumericInput(item.unit_price);
+    const discount = parsePurchaseNumericInput(item.discount);
+    return total + Math.max(qty * price - discount, 0);
+  }, 0);
+  const orderDiscountRate = parsePurchaseNumericInput(data.discount) / 100;
+  const discountedSubtotal = subtotal * (1 - orderDiscountRate);
+  const ppnAmount =
+    discountedSubtotal * (parsePurchaseNumericInput(data.ppn_rate) / 100);
+  const otherAdditions =
+    discountedSubtotal *
+    (parsePurchaseNumericInput(data.other_tax_additions) / 100);
+  const freightCost = parsePurchaseNumericInput(data.freight_cost);
+  const otherCostAmount = parsePurchaseNumericInput(data.other_cost_amount);
+  const pph21Amount =
+    discountedSubtotal * (parsePurchaseNumericInput(data.pph21_rate) / 100);
+  const pph23Amount =
+    discountedSubtotal * (parsePurchaseNumericInput(data.pph23_rate) / 100);
+  const otherDeductions =
+    discountedSubtotal *
+    (parsePurchaseNumericInput(data.other_tax_deductions) / 100);
+
+  return roundPurchaseAmount(
+    discountedSubtotal +
+      ppnAmount +
+      otherAdditions +
+      freightCost +
+      otherCostAmount -
+      pph21Amount -
+      pph23Amount -
+      otherDeductions,
+  );
+};
+
+const mapPaymentTermsToFormData = (
+  terms?: Purchase["payment_terms"],
+): PurchasePaymentTermFormData[] =>
+  (terms || []).map((term, index) => ({
+    sequence: term.sequence || index + 1,
+    amount: (term.amount || 0).toString(),
+    due_date: term.due_date ? term.due_date.split("T")[0] : "",
+    description: term.description || `Termin ${term.sequence || index + 1}`,
+  }));
 
 interface Receipt {
   id: number;
@@ -668,6 +734,41 @@ const getPurchaseRequestOptionLabel = (purchaseRequest: PurchaseRequest) => {
   return `${purchaseRequest.pr_number}${titlePart}${departmentPart} (${formatCurrency(
     purchaseRequest.total_estimated_amount,
   )})`;
+};
+
+const getPurchaseRequestRequesterName = (
+  purchaseRequest: PurchaseRequest,
+) => {
+  const requester = purchaseRequest.requester;
+  const fullName = [requester?.first_name, requester?.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return fullName || requester?.username || "";
+};
+
+const getPurchaseRequestSearchOption = (
+  purchaseRequest: PurchaseRequest,
+) => {
+  const title = getPurchaseRequestTitle(purchaseRequest);
+  const searchParts = [
+    title,
+    purchaseRequest.department,
+    purchaseRequest.project?.code,
+    purchaseRequest.project?.name,
+    purchaseRequest.vendor?.name,
+    purchaseRequest.vendor?.code,
+    getPurchaseRequestRequesterName(purchaseRequest),
+    formatCurrency(purchaseRequest.total_estimated_amount),
+  ].filter(Boolean);
+
+  return {
+    id: purchaseRequest.id,
+    code: purchaseRequest.pr_number,
+    name: searchParts.join(" - "),
+    active: true,
+  };
 };
 
 const mapPurchaseRequestItemToFormData = (
@@ -1085,6 +1186,7 @@ const PurchasesPage: React.FC = () => {
     bank_account_id: "",
     credit_account_id: "", // New field for liability account
     payment_reference: "",
+    payment_terms: [],
 
     items: [],
   });
@@ -1267,6 +1369,23 @@ const PurchasesPage: React.FC = () => {
     isAccounting || isFinanceManagerRole(roleNorm) || roleNorm === "admin";
   const canSelectAccountFromCOA =
     roleNorm === "admin" || isAccounting;
+  const toSearchableCOAOptions = useCallback(
+    (accounts: GLAccount[]) =>
+      accounts.map((account) => {
+        const accountMeta = [account.type, account.category]
+          .filter(Boolean)
+          .join(" / ");
+        return {
+          id: account.id,
+          code: account.code,
+          name: accountMeta
+            ? `${account.name} (${accountMeta})`
+            : account.name,
+          active: account.is_active,
+        };
+      }),
+    [],
+  );
 
   const getDefaultPurchaseItemAccount = useCallback(
     (itemType?: string) => {
@@ -3990,6 +4109,7 @@ const PurchasesPage: React.FC = () => {
         bank_account_id: detailResponse.bank_account_id?.toString() || "",
         credit_account_id: detailResponse.credit_account_id?.toString() || "",
         payment_reference: detailResponse.payment_reference || "",
+        payment_terms: mapPaymentTermsToFormData(detailResponse.payment_terms),
         items: detailResponse.purchase_items?.map(
           mapPurchaseItemToFormData,
         ) || [
@@ -4688,6 +4808,7 @@ const PurchasesPage: React.FC = () => {
       bank_account_id: "",
       credit_account_id: "",
       payment_reference: "",
+      payment_terms: [],
 
       items: [],
     });
@@ -4702,6 +4823,250 @@ const PurchasesPage: React.FC = () => {
     await fetchCreditAccounts(); // Load credit accounts (liability) for dropdown
     await fetchAssetCategories(); // Load asset categories for fixed asset items
     onCreateOpen();
+  };
+
+  const getPaymentTermSummary = () => {
+    const purchaseTotal = calculatePurchaseFormGrandTotal(formData);
+    const termTotal = roundPurchaseAmount(
+      formData.payment_terms.reduce(
+        (sum, term) => sum + parsePurchaseNumericInput(term.amount),
+        0,
+      ),
+    );
+    return {
+      purchaseTotal,
+      termTotal,
+      difference: roundPurchaseAmount(purchaseTotal - termTotal),
+    };
+  };
+
+  const addPaymentTermRow = () => {
+    const { purchaseTotal, termTotal } = getPaymentTermSummary();
+    const remaining = roundPurchaseAmount(Math.max(purchaseTotal - termTotal, 0));
+    const nextSequence = formData.payment_terms.length + 1;
+    setFormData((prev) => ({
+      ...prev,
+      payment_terms: [
+        ...prev.payment_terms,
+        {
+          sequence: nextSequence,
+          amount: (remaining > 0 ? remaining : purchaseTotal).toString(),
+          due_date: prev.due_date || prev.date,
+          description: `Termin ${nextSequence}`,
+        },
+      ],
+    }));
+  };
+
+  const updatePaymentTermRow = (
+    index: number,
+    field: "amount" | "due_date" | "description",
+    value: string,
+  ) => {
+    setFormData((prev) => ({
+      ...prev,
+      payment_terms: prev.payment_terms.map((term, termIndex) =>
+        termIndex === index
+          ? {
+              ...term,
+              [field]: value,
+            }
+          : term,
+      ),
+    }));
+  };
+
+  const removePaymentTermRow = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      payment_terms: prev.payment_terms
+        .filter((_, termIndex) => termIndex !== index)
+        .map((term, termIndex) => ({
+          ...term,
+          sequence: termIndex + 1,
+          description: term.description || `Termin ${termIndex + 1}`,
+        })),
+    }));
+  };
+
+  const buildPaymentTermsPayload = (paymentMethod: string) => {
+    if (paymentMethod !== "CREDIT") {
+      return undefined;
+    }
+
+    const purchaseTotal = calculatePurchaseFormGrandTotal(formData);
+    const cleanTerms = formData.payment_terms.filter(
+      (term) =>
+        parsePurchaseNumericInput(term.amount) > 0 ||
+        term.due_date ||
+        term.description.trim(),
+    );
+
+    const termsToValidate =
+      cleanTerms.length > 0
+        ? cleanTerms
+        : [
+            {
+              sequence: 1,
+              amount: purchaseTotal.toString(),
+              due_date: formData.due_date || formData.date,
+              description: "Termin 1",
+            },
+          ];
+
+    for (const term of termsToValidate) {
+      if (parsePurchaseNumericInput(term.amount) <= 0) {
+        throw new Error("Nominal setiap termin harus lebih dari 0.");
+      }
+      if (!term.due_date) {
+        throw new Error("Tanggal jatuh tempo setiap termin wajib diisi.");
+      }
+    }
+
+    const termTotal = roundPurchaseAmount(
+      termsToValidate.reduce(
+        (sum, term) => sum + parsePurchaseNumericInput(term.amount),
+        0,
+      ),
+    );
+    if (Math.abs(termTotal - purchaseTotal) > 0.01) {
+      throw new Error(
+        `Total termin ${formatCurrency(termTotal)} harus sama dengan total purchase ${formatCurrency(purchaseTotal)}.`,
+      );
+    }
+
+    return termsToValidate.map((term, index) => ({
+      sequence: index + 1,
+      amount: parsePurchaseNumericInput(term.amount),
+      due_date: `${term.due_date}T00:00:00Z`,
+      description: term.description.trim() || `Termin ${index + 1}`,
+    }));
+  };
+
+  const renderCreditPaymentTerms = () => {
+    if (formData.payment_method !== "CREDIT") return null;
+
+    const { purchaseTotal, termTotal, difference } = getPaymentTermSummary();
+    const hasTerms = formData.payment_terms.length > 0;
+    const isBalanced = Math.abs(difference) <= 0.01 || !hasTerms;
+
+    return (
+      <Box
+        mt={4}
+        p={4}
+        borderWidth="1px"
+        borderRadius="md"
+        borderColor={borderColor}
+        bg={notesBoxBg}
+      >
+        <HStack justify="space-between" align="start" mb={3}>
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" color={textPrimary}>
+              Termin Pembayaran Credit
+            </Text>
+            <Text fontSize="xs" color={textSecondary}>
+              Atur jadwal pembayaran vendor. Jurnal hutang tetap memakai total
+              purchase, termin dipakai saat record payment.
+            </Text>
+          </Box>
+          <Button size="sm" leftIcon={<FiPlus />} onClick={addPaymentTermRow}>
+            Tambah Termin
+          </Button>
+        </HStack>
+
+        {!hasTerms ? (
+          <Alert status="info" borderRadius="md" mb={3}>
+            <AlertIcon />
+            <Text fontSize="sm">
+              Jika termin tidak diisi, sistem otomatis membuat 1 termin sebesar{" "}
+              {formatCurrency(purchaseTotal)}.
+            </Text>
+          </Alert>
+        ) : (
+          <VStack spacing={3} align="stretch">
+            {formData.payment_terms.map((term, index) => (
+              <SimpleGrid
+                key={`${term.sequence}-${index}`}
+                columns={{ base: 1, md: 12 }}
+                spacing={3}
+                alignItems="end"
+              >
+                <FormControl gridColumn={{ base: "auto", md: "span 2" }}>
+                  <FormLabel fontSize="xs">Termin</FormLabel>
+                  <Input
+                    size="sm"
+                    value={term.description}
+                    onChange={(e) =>
+                      updatePaymentTermRow(index, "description", e.target.value)
+                    }
+                    placeholder={`Termin ${index + 1}`}
+                  />
+                </FormControl>
+                <FormControl gridColumn={{ base: "auto", md: "span 4" }}>
+                  <FormLabel fontSize="xs">Nominal</FormLabel>
+                  <Input
+                    size="sm"
+                    value={term.amount}
+                    onChange={(e) =>
+                      updatePaymentTermRow(index, "amount", e.target.value)
+                    }
+                    placeholder="0"
+                    textAlign="right"
+                  />
+                </FormControl>
+                <FormControl gridColumn={{ base: "auto", md: "span 4" }}>
+                  <FormLabel fontSize="xs">Jatuh Tempo</FormLabel>
+                  <Input
+                    size="sm"
+                    type="date"
+                    value={term.due_date}
+                    onChange={(e) =>
+                      updatePaymentTermRow(index, "due_date", e.target.value)
+                    }
+                  />
+                </FormControl>
+                <IconButton
+                  aria-label="Hapus termin"
+                  icon={<FiTrash2 />}
+                  size="sm"
+                  variant="outline"
+                  colorScheme="red"
+                  gridColumn={{ base: "auto", md: "span 2" }}
+                  onClick={() => removePaymentTermRow(index)}
+                />
+              </SimpleGrid>
+            ))}
+          </VStack>
+        )}
+
+        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3} mt={4}>
+          <Box>
+            <Text fontSize="xs" color={textSecondary}>
+              Total Purchase
+            </Text>
+            <Text fontSize="sm" fontWeight="bold">
+              {formatCurrency(purchaseTotal)}
+            </Text>
+          </Box>
+          <Box>
+            <Text fontSize="xs" color={textSecondary}>
+              Total Termin
+            </Text>
+            <Text fontSize="sm" fontWeight="bold">
+              {formatCurrency(termTotal || purchaseTotal)}
+            </Text>
+          </Box>
+          <Box>
+            <Text fontSize="xs" color={textSecondary}>
+              Selisih
+            </Text>
+            <Badge colorScheme={isBalanced ? "green" : "red"}>
+              {hasTerms ? formatCurrency(difference) : "Auto 1 termin"}
+            </Badge>
+          </Box>
+        </SimpleGrid>
+      </Box>
+    );
   };
 
   // Handle save for both create and edit
@@ -4861,6 +5226,31 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    let paymentTermsPayload:
+      | Array<{
+          sequence: number;
+          amount: number;
+          due_date: string;
+          description: string;
+        }>
+      | undefined;
+    try {
+      paymentTermsPayload = buildPaymentTermsPayload(
+        normalizedPaymentMethodPreview,
+      );
+    } catch (termError: any) {
+      toast({
+        title: "Termin pembayaran belum valid",
+        description:
+          termError?.message ||
+          "Periksa kembali nominal dan tanggal jatuh tempo termin.",
+        status: "warning",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -4915,6 +5305,7 @@ const PurchasesPage: React.FC = () => {
           normalizedPaymentMethod === "CHECK"
             ? normalizedPayment.payment_reference.trim()
             : "",
+        payment_terms: paymentTermsPayload,
         items: formData.items.map((item) => ({
           item_type: item.item_type || "INVENTORY",
           is_fixed_asset: item.item_type === "ASSET",
@@ -5044,6 +5435,7 @@ const PurchasesPage: React.FC = () => {
         bank_account_id: detailResponse.bank_account_id?.toString() || "",
         credit_account_id: detailResponse.credit_account_id?.toString() || "",
         payment_reference: "", // Clear payment reference
+        payment_terms: mapPaymentTermsToFormData(detailResponse.payment_terms),
         items:
           detailResponse.purchase_items?.map((item) => ({
             ...mapPurchaseItemToFormData(item),
@@ -6690,6 +7082,128 @@ const PurchasesPage: React.FC = () => {
 	                                </>
 	                              )}
 	                            </SimpleGrid>
+                            {selectedPurchase.payment_method === "CREDIT" &&
+                              (selectedPurchase.payment_terms?.length || 0) >
+                                0 && (
+                                <Box
+                                  mt={4}
+                                  p={3}
+                                  borderWidth="1px"
+                                  borderRadius="md"
+                                  borderColor={borderColor}
+                                  bg={notesBoxBg}
+                                >
+                                  <HStack justify="space-between" mb={3}>
+                                    <Text fontWeight="semibold">
+                                      Termin Pembayaran
+                                    </Text>
+                                    <Badge colorScheme="orange">
+                                      {selectedPurchase.payment_terms?.length}{" "}
+                                      TERMIN
+                                    </Badge>
+                                  </HStack>
+                                  <VStack align="stretch" spacing={2}>
+                                    {selectedPurchase.payment_terms?.map(
+                                      (term) => (
+                                        <Box
+                                          key={term.id}
+                                          p={3}
+                                          borderWidth="1px"
+                                          borderColor={borderColor}
+                                          borderRadius="md"
+                                          bg={cardBg}
+                                        >
+                                          <SimpleGrid
+                                            columns={{ base: 1, md: 5 }}
+                                            spacing={3}
+                                            fontSize="sm"
+                                          >
+                                            <Box>
+                                              <Text
+                                                color={textSecondary}
+                                                fontSize="xs"
+                                              >
+                                                Termin
+                                              </Text>
+                                              <Text fontWeight="semibold">
+                                                {term.description ||
+                                                  `Termin ${term.sequence}`}
+                                              </Text>
+                                            </Box>
+                                            <Box>
+                                              <Text
+                                                color={textSecondary}
+                                                fontSize="xs"
+                                              >
+                                                Nominal
+                                              </Text>
+                                              <Text fontWeight="semibold">
+                                                {formatCurrency(term.amount)}
+                                              </Text>
+                                            </Box>
+                                            <Box>
+                                              <Text
+                                                color={textSecondary}
+                                                fontSize="xs"
+                                              >
+                                                Terbayar
+                                              </Text>
+                                              <Text>
+                                                {formatCurrency(
+                                                  term.paid_amount || 0,
+                                                )}
+                                              </Text>
+                                            </Box>
+                                            <Box>
+                                              <Text
+                                                color={textSecondary}
+                                                fontSize="xs"
+                                              >
+                                                Sisa
+                                              </Text>
+                                              <Text fontWeight="semibold">
+                                                {formatCurrency(
+                                                  term.outstanding_amount ??
+                                                    term.amount,
+                                                )}
+                                              </Text>
+                                            </Box>
+                                            <Box>
+                                              <Text
+                                                color={textSecondary}
+                                                fontSize="xs"
+                                              >
+                                                Jatuh Tempo
+                                              </Text>
+                                              <Text>
+                                                {term.due_date
+                                                  ? new Date(
+                                                      term.due_date,
+                                                    ).toLocaleDateString(
+                                                      "id-ID",
+                                                    )
+                                                  : "-"}
+                                              </Text>
+                                              <Badge
+                                                mt={1}
+                                                colorScheme={
+                                                  term.status === "PAID"
+                                                    ? "green"
+                                                    : term.status === "PARTIAL"
+                                                      ? "orange"
+                                                      : "yellow"
+                                                }
+                                              >
+                                                {term.status}
+                                              </Badge>
+                                            </Box>
+                                          </SimpleGrid>
+                                        </Box>
+                                      ),
+                                    )}
+                                  </VStack>
+                                </Box>
+                              )}
                             {(() => {
                               const paymentProof =
                                 getPurchasePaymentProofRecord(selectedPurchase);
@@ -7866,6 +8380,8 @@ const PurchasesPage: React.FC = () => {
                             )}
                           </SimpleGrid>
 
+                          {renderCreditPaymentTerms()}
+
                           {/* Payment Reference (for non-credit and non-cash payments) */}
                           {formData.payment_method !== "CREDIT" &&
                             formData.payment_method !== "CASH" && (
@@ -8037,11 +8553,14 @@ const PurchasesPage: React.FC = () => {
                               {loadingPRs ? (
                                 <Spinner size="sm" />
                               ) : (
-                                <Select
+                                <SearchableSelect
+                                  options={purchaseRequests.map(
+                                    getPurchaseRequestSearchOption,
+                                  )}
                                   placeholder="Select PR (Optional)"
                                   value={formData.purchase_request_id}
-                                  onChange={(e) => {
-                                    const selectedPrId = e.target.value;
+                                  onChange={(value) => {
+                                    const selectedPrId = value.toString();
                                     const selectedPr = purchaseRequests.find(
                                       (pr) => pr.id.toString() === selectedPrId,
                                     );
@@ -8096,21 +8615,19 @@ const PurchasesPage: React.FC = () => {
                                     }));
                                   }}
                                   size="sm"
-                                  bg={inputBg}
-                                  color={inputTextColor}
-                                  borderColor={inputBorderColor}
-                                  _hover={{ borderColor: inputHoverBorder }}
-                                  _focusVisible={fieldFocusStyles}
-                                  _placeholder={{
-                                    color: inputPlaceholderColor,
+                                  isLoading={loadingPRs}
+                                  displayFormat={(option) => {
+                                    const purchaseRequest =
+                                      purchaseRequests.find(
+                                        (pr) => pr.id === option.id,
+                                      );
+                                    return purchaseRequest
+                                      ? getPurchaseRequestOptionLabel(
+                                          purchaseRequest,
+                                        )
+                                      : `${option.code} - ${option.name}`;
                                   }}
-                                >
-                                  {purchaseRequests.map((pr) => (
-                                    <option key={pr.id} value={pr.id}>
-                                      {getPurchaseRequestOptionLabel(pr)}
-                                    </option>
-                                  ))}
-                                </Select>
+                                />
                               )}
                               <FormHelperText
                                 fontSize="xs"
@@ -10024,6 +10541,8 @@ const PurchasesPage: React.FC = () => {
                               )}
                             </SimpleGrid>
 
+                            {renderCreditPaymentTerms()}
+
                             {/* Payment Reference (for non-credit and non-cash payments) */}
                             {formData.payment_method !== "CREDIT" &&
                               formData.payment_method !== "CASH" && (
@@ -11321,26 +11840,23 @@ const PurchasesPage: React.FC = () => {
                                 <FormLabel fontSize="sm">
                                   Akun Biaya Lain-lain
                                 </FormLabel>
-                                <Select
+                                <SearchableSelect
+                                  options={toSearchableCOAOptions(
+                                    otherCostExpenseAccounts,
+                                  )}
                                   value={accountingCOAForm.other_cost_account_id}
-                                  onChange={(e) =>
+                                  onChange={(value) =>
                                     setAccountingCOAForm((prev) => ({
                                       ...prev,
-                                      other_cost_account_id: e.target.value,
+                                      other_cost_account_id: value.toString(),
                                     }))
                                   }
                                   placeholder="Default 6106"
-                                  disabled={loadingExpenseAccounts}
-                                >
-                                  {otherCostExpenseAccounts.map((account) => (
-                                    <option
-                                      key={account.id}
-                                      value={account.id?.toString()}
-                                    >
-                                      {account.code} - {account.name}
-                                    </option>
-                                  ))}
-                                </Select>
+                                  isLoading={loadingExpenseAccounts}
+                                  displayFormat={(option) =>
+                                    `${option.code} - ${option.name}`
+                                  }
+                                />
                               </FormControl>
                             )}
                             <FormControl>
@@ -11520,25 +12036,21 @@ const PurchasesPage: React.FC = () => {
                           <FormLabel fontSize="sm">
                             Akun Hutang / Liability
                           </FormLabel>
-                          <Select
+                          <SearchableSelect
+                            options={toSearchableCOAOptions(creditAccounts)}
                             placeholder="Pilih akun hutang"
                             value={accountingCOAForm.credit_account_id}
-                            onChange={(e) =>
+                            onChange={(value) =>
                               setAccountingCOAForm((prev) => ({
                                 ...prev,
-                                credit_account_id: e.target.value,
+                                credit_account_id: value.toString(),
                               }))
                             }
-                          >
-                            {creditAccounts.map((account) => (
-                              <option
-                                key={account.id}
-                                value={account.id.toString()}
-                              >
-                                {account.code} - {account.name}
-                              </option>
-                            ))}
-                          </Select>
+                            isLoading={loadingCreditAccounts}
+                            displayFormat={(option) =>
+                              `${option.code} - ${option.name}`
+                            }
+                          />
                           <FormHelperText>
                             Akun ini menjadi sisi kredit untuk purchase kredit.
                           </FormHelperText>
@@ -11570,10 +12082,13 @@ const PurchasesPage: React.FC = () => {
                                     {formatCurrency(item.total_price)}
                                   </Td>
                                   <Td>
-                                    <Select
+                                    <SearchableSelect
+                                      options={toSearchableCOAOptions(
+                                        expenseAccounts,
+                                      )}
                                       placeholder="Pilih GL/COA"
                                       value={item.expense_account_id}
-                                      onChange={(e) =>
+                                      onChange={(value) =>
                                         setAccountingCOAForm((prev) => ({
                                           ...prev,
                                           items: prev.items.map((row, idx) =>
@@ -11581,23 +12096,17 @@ const PurchasesPage: React.FC = () => {
                                               ? {
                                                   ...row,
                                                   expense_account_id:
-                                                    e.target.value,
+                                                    value.toString(),
                                                 }
                                               : row,
                                           ),
                                         }))
                                       }
-                                    >
-                                      {expenseAccounts.map((account) => (
-                                        <option
-                                          key={account.id}
-                                          value={account.id?.toString()}
-                                        >
-                                          {account.code} - {account.name} (
-                                          {account.type})
-                                        </option>
-                                      ))}
-                                    </Select>
+                                      isLoading={loadingExpenseAccounts}
+                                      displayFormat={(option) =>
+                                        `${option.code} - ${option.name}`
+                                      }
+                                    />
                                   </Td>
                                 </Tr>
                               ))}

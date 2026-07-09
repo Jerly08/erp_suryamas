@@ -18,15 +18,21 @@ func NewPurchaseRepository(db *gorm.DB) *PurchaseRepository {
 }
 
 func (r *PurchaseRepository) withPurchasePaymentPreloads(query *gorm.DB) *gorm.DB {
-	if !r.db.Migrator().HasTable(&models.PurchasePayment{}) {
-		return query
+	if r.db.Migrator().HasTable(&models.PurchasePayment{}) {
+		query = query.
+			Preload("PurchasePayments").
+			Preload("PurchasePayments.Payment").
+			Preload("PurchasePayments.PaymentProofUploader").
+			Preload("PurchasePayments.PaymentProofReviewer")
 	}
 
-	return query.
-		Preload("PurchasePayments").
-		Preload("PurchasePayments.Payment").
-		Preload("PurchasePayments.PaymentProofUploader").
-		Preload("PurchasePayments.PaymentProofReviewer")
+	if r.db.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		query = query.Preload("PaymentTerms", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sequence ASC, due_date ASC, id ASC")
+		})
+	}
+
+	return query
 }
 
 func isDateOnlyFilter(value string) (string, bool) {

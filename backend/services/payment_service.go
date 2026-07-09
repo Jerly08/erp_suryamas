@@ -677,9 +677,10 @@ func (s *PaymentService) CreatePayablePayment(request PaymentCreateRequest, user
 
 		// Create payment allocation
 		paymentAllocation := &models.PaymentAllocation{
-			PaymentID:       uint64(payment.ID),
-			BillID:          &allocation.BillID,
-			AllocatedAmount: allocatedAmount,
+			PaymentID:             uint64(payment.ID),
+			BillID:                &allocation.BillID,
+			PurchasePaymentTermID: allocation.PaymentTermID,
+			AllocatedAmount:       allocatedAmount,
 		}
 
 		if err := tx.Create(paymentAllocation).Error; err != nil {
@@ -1730,8 +1731,9 @@ type InvoiceAllocation struct {
 }
 
 type BillAllocation struct {
-	BillID uint    `json:"bill_id"`
-	Amount float64 `json:"amount"`
+	BillID        uint    `json:"bill_id"`
+	Amount        float64 `json:"amount"`
+	PaymentTermID *uint   `json:"payment_term_id"`
 }
 
 // PaymentAllocation is defined in repositories package
