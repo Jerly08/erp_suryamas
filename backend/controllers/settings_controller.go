@@ -102,21 +102,10 @@ func (sc *SettingsController) GetPublicBranding(c *gin.Context) {
 	})
 }
 
-// GetPublicBrandingIcon redirects a stable favicon URL to the current uploaded icon.
+// GetPublicBrandingIcon intentionally serves a blank browser favicon.
 func (sc *SettingsController) GetPublicBrandingIcon(c *gin.Context) {
-	settings, err := sc.settingsService.GetSettings()
-	if err != nil {
-		c.Status(http.StatusNotFound)
-		return
-	}
-
-	iconPath := strings.TrimSpace(settings.CompanyIcon)
-	if !strings.HasPrefix(iconPath, "/uploads/company/") {
-		iconPath = "/avery-icon.png"
-	}
-
 	c.Header("Cache-Control", "no-store, max-age=0")
-	c.Redirect(http.StatusTemporaryRedirect, iconPath)
+	c.Redirect(http.StatusTemporaryRedirect, "/favicon.svg?v=no-avery")
 }
 
 // GetPublicBrandingLogo redirects a stable loading-screen URL to the current uploaded logo.
@@ -146,7 +135,7 @@ func (sc *SettingsController) GetPublicBrandingManifest(c *gin.Context) {
 
 	companyName := strings.TrimSpace(settings.CompanyName)
 	if companyName == "" {
-		companyName = "Avery"
+		companyName = "Finance Management"
 	}
 
 	c.Header("Cache-Control", "no-store, max-age=0")
@@ -163,9 +152,9 @@ func (sc *SettingsController) GetPublicBrandingManifest(c *gin.Context) {
 		"theme_color":      "#2196F3",
 		"icons": []gin.H{
 			{
-				"src":     "/api/v1/branding/icon",
-				"sizes":   "any",
-				"purpose": "any maskable",
+				"src":   "/favicon.svg?v=no-avery",
+				"sizes": "32x32",
+				"type":  "image/svg+xml",
 			},
 		},
 	})

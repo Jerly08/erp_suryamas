@@ -69,12 +69,12 @@ func TestPublicBrandingEndpoints(t *testing.T) {
 		require.Equal(t, "/uploads/company/logo.png", response.Header().Get("Location"))
 	})
 
-	t.Run("redirects stable icon URL to uploaded icon", func(t *testing.T) {
+	t.Run("redirects stable icon URL to blank favicon", func(t *testing.T) {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/branding/icon", nil))
 
 		require.Equal(t, http.StatusTemporaryRedirect, response.Code)
-		require.Equal(t, "/uploads/company/icon.png", response.Header().Get("Location"))
+		require.Equal(t, "/favicon.svg?v=no-avery", response.Header().Get("Location"))
 	})
 
 	t.Run("returns dynamic web manifest", func(t *testing.T) {
@@ -87,9 +87,16 @@ func TestPublicBrandingEndpoints(t *testing.T) {
 		var payload struct {
 			Name      string `json:"name"`
 			ShortName string `json:"short_name"`
+			Icons     []struct {
+				Src  string `json:"src"`
+				Type string `json:"type"`
+			} `json:"icons"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
 		require.Equal(t, "PT Cabang Contoh Finance Management", payload.Name)
 		require.Equal(t, "PT Cabang Contoh", payload.ShortName)
+		require.Len(t, payload.Icons, 1)
+		require.Equal(t, "/favicon.svg?v=no-avery", payload.Icons[0].Src)
+		require.Equal(t, "image/svg+xml", payload.Icons[0].Type)
 	})
 }
