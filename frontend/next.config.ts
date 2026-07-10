@@ -54,6 +54,11 @@ const nextConfig: NextConfig = {
 				destination: '/favicon.svg?v=no-avery',
 				permanent: false,
 			},
+			{
+				source: '/manifest.webmanifest',
+				destination: '/api/v1/branding/manifest.webmanifest',
+				permanent: false,
+			},
 		];
 	},
 	// Konfigurasi Webpack hanya untuk mode non-Turbopack
