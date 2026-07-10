@@ -218,82 +218,16 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		}
 	}
 
-	// Add DEBIT line
-	// ✅ CRITICAL FIX: Calculate correct debit amount
-	// The debit should equal all credits (Revenue + PPN + other tax additions - tax deductions)
-	//
-	// IMPORTANT: Subtotal already has discount applied (it's sum of LineTotal which is after discount)
-	// Formula: Debit = Subtotal (after discount) + PPN + OtherTaxAdditions + ShippingCost
-	// Then TotalAmount = Debit - Tax Deductions (PPh, etc)
-
-	// Calculate gross amount (after all additions, BEFORE tax deductions)
-	// This is the total amount BEFORE customer withholds taxes
-	// Subtotal already includes item discounts, so we start from there
-	grossAmount := decimal.NewFromFloat(sale.Subtotal).Add(decimal.NewFromFloat(sale.PPN))
-
-	// Add any other tax additions if they exist
-	if sale.OtherTaxAdditions > 0 {
-		grossAmount = grossAmount.Add(decimal.NewFromFloat(sale.OtherTaxAdditions))
+	// TotalAmount is the customer receivable/cash amount after withholding-tax
+	// deductions. Those deductions are posted as separate asset debits below.
+	receivableAmount := decimal.NewFromFloat(sale.TotalAmount).Round(2)
+	if !receivableAmount.IsPositive() {
+		return fmt.Errorf("sale total must be positive before journal posting: %.2f", sale.TotalAmount)
 	}
 
-	// ✅ CRITICAL FIX: Add shipping cost to gross amount
-	// Shipping is part of the total amount that customer pays
-	if sale.ShippingCost > 0 {
-		grossAmount = grossAmount.Add(decimal.NewFromFloat(sale.ShippingCost))
-	}
-
-	// ✅ CRITICAL FIX: Subtract tax deductions (PPh, PPh21, PPh23)
-	// Customer withholds these taxes, so we receive LESS than gross amount
-	// The withheld taxes become our prepaid tax asset
-	if sale.PPh > 0 {
-		grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.PPh))
-	}
-	if sale.PPh21Amount > 0 {
-		grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.PPh21Amount))
-	}
-	if sale.PPh23Amount > 0 {
-		grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.PPh23Amount))
-	}
-	if sale.OtherTaxDeductions > 0 {
-		grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.OtherTaxDeductions))
-	}
-
-	// ✅ FIX: Subtract sale-level discount if exists and not already applied
-	// Note: Item-level discounts are already in Subtotal via LineTotal
-	// Sale-level discount (DiscountAmount) should be subtracted from gross
-	if sale.DiscountAmount > 0 && sale.DiscountPercent > 0 {
-		// Check if discount is already applied to subtotal
-		// If TaxableAmount exists and is less than Subtotal, discount is already applied
-		if sale.TaxableAmount > 0 && sale.TaxableAmount < sale.Subtotal {
-			log.Printf("⚠️ [DISCOUNT] Sale-level discount already applied in Subtotal (TaxableAmount=%.2f < Subtotal=%.2f)",
-				sale.TaxableAmount, sale.Subtotal)
-			// Don't subtract again
-		} else {
-			log.Printf("⚠️ [DISCOUNT] Applying sale-level discount: %.2f (%.2f%%)",
-				sale.DiscountAmount, sale.DiscountPercent)
-			grossAmount = grossAmount.Sub(decimal.NewFromFloat(sale.DiscountAmount))
-		}
-	}
-
-	log.Printf("📊 [DEBIT CALC] Subtotal=%.2f + PPN=%.2f + OtherTaxAdd=%.2f + Shipping=%.2f - PPh=%.2f - PPh21=%.2f - PPh23=%.2f - OtherTaxDed=%.2f = GrossAmount=%.2f",
-		sale.Subtotal, sale.PPN, sale.OtherTaxAdditions, sale.ShippingCost,
-		sale.PPh, sale.PPh21Amount, sale.PPh23Amount, sale.OtherTaxDeductions,
-		grossAmount.InexactFloat64())
-	log.Printf("📊 [DEBIT CALC] TotalAmount from DB=%.2f (GrossAmount should equal TotalAmount)", sale.TotalAmount)
-
-	// Validate data consistency
-	// Note: grossAmount already has tax deductions subtracted, so it should equal TotalAmount
-	if math.Abs(grossAmount.InexactFloat64()-sale.TotalAmount) > 100.0 {
-		log.Printf("⚠️ [DATA WARNING] TotalAmount mismatch! Expected=%.2f, Actual=%.2f, Diff=%.2f",
-			grossAmount.InexactFloat64(), sale.TotalAmount, grossAmount.InexactFloat64()-sale.TotalAmount)
-		log.Printf("⚠️ This may indicate corrupted data or calculation error during sale creation")
-		log.Printf("⚠️ Using calculated GrossAmount instead of DB TotalAmount for journal entry")
-	}
-
-	// Main debit entry - full gross amount (customer owes us this much)
 	lines = append(lines, SalesJournalLineRequest{
 		AccountID:    uint64(debitAccount.ID),
-		DebitAmount:  grossAmount,
+		DebitAmount:  receivableAmount,
 		CreditAmount: decimal.Zero,
 		Description:  fmt.Sprintf("Penjualan - %s", sale.InvoiceNumber),
 	})
@@ -381,80 +315,68 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		}
 	}
 
-	// 3. PPN if exists
-	// ✅ FIX: Safety net — recalculate PPN if sale.PPN=0 but PPNPercent > 0
-	ppnValue := sale.PPN
-	if ppnValue == 0 && sale.PPNPercent > 0 {
-		taxableAmt := sale.TaxableAmount
-		if taxableAmt == 0 {
-			taxableAmt = sale.Subtotal - sale.DiscountAmount
+	// Global discount is a contra-revenue debit. Item-level discounts are already
+	// included in SaleItem.LineTotal and must not be posted again.
+	if sale.DiscountAmount >= 0.01 {
+		discountAccount, err := resolveByCode("4102")
+		if err != nil {
+			return fmt.Errorf("sales discount account 4102 not found: %v", err)
 		}
-		if taxableAmt > 0 {
-			ppnValue = taxableAmt * (sale.PPNPercent / 100)
-			log.Printf("⚠️ [SSOT] PPN was 0 but PPNPercent=%.2f, recalculated PPN=%.2f from TaxableAmount=%.2f", sale.PPNPercent, ppnValue, taxableAmt)
-		}
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(discountAccount.ID),
+			DebitAmount:  decimal.NewFromFloat(sale.DiscountAmount).Round(2),
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("Potongan Penjualan - %s", sale.InvoiceNumber),
+		})
 	}
 
+	// 3. PPN if exists
+	ppnValue := sale.PPN
 	if ppnValue > 0 {
 		ppnAccount, err := s.taxAccountHelper.GetSalesOutputVATAccount(dbToUse)
 		if err != nil {
-			log.Printf("⚠️ PPN Keluaran account from tax settings not found, skipping PPN entry: %v", err)
-		} else {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(ppnAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(ppnValue),
-				Description:  fmt.Sprintf("PPN Keluaran - %s", sale.InvoiceNumber),
-			})
+			return fmt.Errorf("akun PPN Keluaran belum tersedia atau belum dikonfigurasi: %v", err)
 		}
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(ppnAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: decimal.NewFromFloat(ppnValue).Round(2),
+			Description:  fmt.Sprintf("PPN Keluaran - %s", sale.InvoiceNumber),
+		})
 	}
 
-	// 3b. Other Tax Additions (if exists) - must be credited to match the debit
-	// These are additional taxes charged to customer, so they're credited as tax liabilities
-	// ✅ FIX: Only create entry if amount is significant (>= 1.00)
-	if sale.OtherTaxAdditions >= 1.0 {
+	// Other tax additions charged to the customer are credited as liabilities.
+	otherTaxAdditions := decimal.NewFromFloat(sale.OtherTaxAdditions).Round(2)
+	if otherTaxAdditions.IsPositive() {
 		otherTaxAddAccount, err := resolveByCode("2108") // Other tax additions account
 		if err != nil {
-			log.Printf("⚠️ Other tax additions account (2108) not found, using generic tax account (2103)")
 			otherTaxAddAccount, err = resolveByCode("2103")
 		}
-		if err == nil {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(otherTaxAddAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(sale.OtherTaxAdditions),
-				Description:  fmt.Sprintf("Penambahan Pajak Lainnya - %s", sale.InvoiceNumber),
-			})
-			log.Printf("💰 [OtherTaxAdditions] Recorded: Rp %.2f", sale.OtherTaxAdditions)
-		} else {
-			log.Printf("⚠️ Failed to record OtherTaxAdditions: no account found")
+		if err != nil {
+			return fmt.Errorf("akun penambahan pajak lainnya belum tersedia: %v", err)
 		}
-	} else if sale.OtherTaxAdditions > 0 {
-		log.Printf("⚠️ [OtherTaxAdditions] Skipped small amount: Rp %.2f (< 1.00)", sale.OtherTaxAdditions)
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(otherTaxAddAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: otherTaxAdditions,
+			Description:  fmt.Sprintf("Penambahan Pajak Lainnya - %s", sale.InvoiceNumber),
+		})
 	}
 
-	// 3c. Shipping Cost (if exists and taxable/non-taxable)
-	// Shipping is revenue/income, so it's credited
-	// ✅ FIX: Only create entry if amount is significant (>= 1.00)
-	if sale.ShippingCost >= 1.0 {
-		shippingAccount, err := resolveByCode("4102") // Shipping revenue account
+	// Shipping charged to the customer is operating revenue, regardless of its
+	// PPN treatment for the individual transaction.
+	shippingAmount := decimal.NewFromFloat(sale.ShippingCost).Round(2)
+	if shippingAmount.IsPositive() {
+		shippingAccount, err := s.taxAccountHelper.GetSalesShippingRevenueAccount(dbToUse)
 		if err != nil {
-			log.Printf("⚠️ Shipping revenue account (4102) not found, using main revenue account (4101-001)")
-			shippingAccount, err = resolveByCode("4101-001")
+			return fmt.Errorf("akun Pendapatan Ongkir belum tersedia atau belum dikonfigurasi: %v", err)
 		}
-		if err == nil {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(shippingAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: decimal.NewFromFloat(sale.ShippingCost),
-				Description:  fmt.Sprintf("Pendapatan Ongkir - %s", sale.InvoiceNumber),
-			})
-			log.Printf("💰 [ShippingCost] Recorded: Rp %.2f", sale.ShippingCost)
-		} else {
-			log.Printf("⚠️ Failed to record ShippingCost: no account found")
-		}
-	} else if sale.ShippingCost > 0 {
-		log.Printf("⚠️ [ShippingCost] Skipped small amount: Rp %.2f (< 1.00)", sale.ShippingCost)
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(shippingAccount.ID),
+			DebitAmount:  decimal.Zero,
+			CreditAmount: shippingAmount,
+			Description:  fmt.Sprintf("Pendapatan Ongkir - %s", sale.InvoiceNumber),
+		})
 	}
 
 	// 4. Tax Deductions - PPh (ASSET - Prepaid Tax)
@@ -498,15 +420,12 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		log.Printf("💰 [PPh21] Recorded as prepaid tax (Asset): Rp %.2f", sale.PPh21Amount)
 	}
 
-	// PPh 23 - use configured account
-	// ✅ CRITICAL FIX: PPh23 account MUST exist if PPh23Amount > 0, otherwise journal won't balance
-	// Because grossAmount already has PPh23 subtracted, we MUST create the debit entry for prepaid tax
+	// PPh23 is debited as prepaid tax because TotalAmount is already net of the
+	// withholding performed by the customer.
 	if sale.PPh23Amount > 0 {
 		pph23Account, err := s.taxAccountHelper.GetWithholdingTax23Account(dbToUse)
 		if err != nil {
-			// ✅ FIX: Return error instead of silently skipping
-			// If PPh23 is applied to sale, the account MUST exist
-			// Otherwise grossAmount is reduced but no corresponding debit entry exists = imbalance
+			// If PPh23 is applied to the sale, the asset account must exist.
 			log.Printf("❌ [CRITICAL] PPh23 prepaid account not found but PPh23Amount=%.2f is applied to Sale #%d",
 				sale.PPh23Amount, sale.ID)
 			log.Printf("❌ This would cause journal imbalance. Please configure PPh23 account in Tax Settings or create account code 1115")
@@ -522,23 +441,21 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 	}
 
 	// Other Tax Deductions (if exists)
-	if sale.OtherTaxDeductions > 0 {
+	otherTaxDeductions := decimal.NewFromFloat(sale.OtherTaxDeductions).Round(2)
+	if otherTaxDeductions.IsPositive() {
 		otherTaxDedAccount, err := resolveByCode("1105-003") // Other Tax Deductions Prepaid (PPH FINAL COA template)
 		if err != nil {
-			log.Printf("⚠️ Other tax deductions prepaid account (1105-003) not found, using 1105-001")
 			otherTaxDedAccount, err = resolveByCode("1105-001")
 		}
-		if err == nil {
-			lines = append(lines, SalesJournalLineRequest{
-				AccountID:    uint64(otherTaxDedAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(sale.OtherTaxDeductions),
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("Potongan Pajak Lainnya - %s", sale.InvoiceNumber),
-			})
-			log.Printf("💰 [OtherTaxDeductions] Recorded as prepaid tax (Asset): Rp %.2f", sale.OtherTaxDeductions)
-		} else {
-			log.Printf("⚠️ Other tax deductions prepaid account not found, skipping")
+		if err != nil {
+			return fmt.Errorf("akun potongan pajak lainnya belum tersedia: %v", err)
 		}
+		lines = append(lines, SalesJournalLineRequest{
+			AccountID:    uint64(otherTaxDedAccount.ID),
+			DebitAmount:  otherTaxDeductions,
+			CreditAmount: decimal.Zero,
+			Description:  fmt.Sprintf("Potongan Pajak Lainnya - %s", sale.InvoiceNumber),
+		})
 	}
 
 	// ========================================
@@ -686,62 +603,11 @@ func (s *SalesJournalServiceSSOT) CreateSalesJournal(sale *models.Sale, tx *gorm
 		totalDebit.InexactFloat64(), totalCredit.InexactFloat64(),
 		totalDebit.Sub(totalCredit).InexactFloat64())
 
-	// Verify balanced with rounding tolerance
+	// Never mutate accounting values to hide an upstream mismatch.
 	difference := totalDebit.Sub(totalCredit).Abs()
-	// ✅ FIX: Increase tolerance to 100 for data inconsistencies
-	// Many sales have small rounding errors from discount/tax calculations
-	toleranceThreshold := decimal.NewFromFloat(100.0) // Allow up to 100 Rupiah tolerance
-
-	if difference.GreaterThan(toleranceThreshold) {
-		// Significant imbalance - try to auto-adjust if reasonable
-		if difference.LessThanOrEqual(decimal.NewFromFloat(500.0)) {
-			// For differences <= 500, adjust the first debit line (Cash/Bank/Receivable)
-			log.Printf("⚠️ [AUTO-ADJUST] Imbalance detected: %.2f (adjusting...)", difference.InexactFloat64())
-
-			if len(lines) > 0 && lines[0].DebitAmount.GreaterThan(decimal.Zero) {
-				// Adjust first debit line
-				oldDebit := lines[0].DebitAmount
-				if totalDebit.LessThan(totalCredit) {
-					// Need to increase debit
-					lines[0].DebitAmount = lines[0].DebitAmount.Add(difference)
-					log.Printf("✅ [AUTO-ADJUST] Increased first debit line: %.2f → %.2f (+%.2f)",
-						oldDebit.InexactFloat64(), lines[0].DebitAmount.InexactFloat64(), difference.InexactFloat64())
-				} else {
-					// Need to decrease debit
-					lines[0].DebitAmount = lines[0].DebitAmount.Sub(difference)
-					log.Printf("✅ [AUTO-ADJUST] Decreased first debit line: %.2f → %.2f (-%.2f)",
-						oldDebit.InexactFloat64(), lines[0].DebitAmount.InexactFloat64(), difference.InexactFloat64())
-				}
-
-				// Recalculate totals
-				totalDebit = decimal.Zero
-				totalCredit = decimal.Zero
-				for _, line := range lines {
-					totalDebit = totalDebit.Add(line.DebitAmount)
-					totalCredit = totalCredit.Add(line.CreditAmount)
-				}
-				log.Printf("✅ [AUTO-ADJUST] After adjustment: Debit=%.2f, Credit=%.2f, Diff=%.2f",
-					totalDebit.InexactFloat64(), totalCredit.InexactFloat64(),
-					totalDebit.Sub(totalCredit).Abs().InexactFloat64())
-			}
-		}
-
-		// Check again after adjustment
-		difference = totalDebit.Sub(totalCredit).Abs()
-		if difference.GreaterThan(toleranceThreshold) {
-			log.Printf("❌ [BALANCE ERROR] Journal entry still imbalanced after adjustment:")
-			log.Printf("   Debit: %.2f | Credit: %.2f | Difference: %.2f",
-				totalDebit.InexactFloat64(), totalCredit.InexactFloat64(), difference.InexactFloat64())
-			log.Printf("   This indicates data corruption in Sale #%d", sale.ID)
-			log.Printf("   Please verify: Subtotal, PPN, Taxes, Discounts, and Shipping calculations")
-			return fmt.Errorf("journal entry not balanced: debit=%.2f, credit=%.2f, difference=%.2f (tolerance: %.2f)",
-				totalDebit.InexactFloat64(), totalCredit.InexactFloat64(), difference.InexactFloat64(), toleranceThreshold.InexactFloat64())
-		}
-	}
-
-	if difference.GreaterThan(decimal.Zero) && difference.LessThanOrEqual(toleranceThreshold) {
-		log.Printf("✅ [BALANCE] Accepted with rounding difference: %.2f (within tolerance of %.2f)",
-			difference.InexactFloat64(), toleranceThreshold.InexactFloat64())
+	if difference.GreaterThan(decimal.NewFromFloat(0.005)) {
+		return fmt.Errorf("journal entry not balanced: debit=%.2f, credit=%.2f, difference=%.2f",
+			totalDebit.InexactFloat64(), totalCredit.InexactFloat64(), difference.InexactFloat64())
 	}
 
 	// Create journal entry

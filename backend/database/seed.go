@@ -25,6 +25,7 @@ func SeedData(db *gorm.DB) {
 		log.Printf("Error seeding accounts: %v", err)
 	} else {
 		log.Println("✅ Accounts seeded successfully with duplicate protection")
+		ensureSalesShippingRevenueAccountSetting(db)
 	}
 	EnsureOpeningBalanceEquityAccount(db)
 	// Note: FixAccountHierarchies not needed - SeedAccountsImproved handles parent relationships
@@ -75,6 +76,25 @@ func SeedData(db *gorm.DB) {
 	// Dashboard will display only actual business data
 
 	log.Println("Database seeding completed successfully")
+}
+
+func ensureSalesShippingRevenueAccountSetting(db *gorm.DB) {
+	if !db.Migrator().HasTable(&models.TaxAccountSettings{}) {
+		return
+	}
+
+	var account models.Account
+	if err := db.Where("code = ? AND type = ? AND is_active = ? AND is_header = ?", "4101-010", models.AccountTypeRevenue, true, false).
+		First(&account).Error; err != nil {
+		log.Printf("Warning: Pendapatan Ongkir account is not available for tax settings: %v", err)
+		return
+	}
+
+	if err := db.Model(&models.TaxAccountSettings{}).
+		Where("is_active = ? AND sales_shipping_revenue_account_id IS NULL", true).
+		Update("sales_shipping_revenue_account_id", account.ID).Error; err != nil {
+		log.Printf("Warning: failed to configure Pendapatan Ongkir account: %v", err)
+	}
 }
 
 func seedUsers(db *gorm.DB) {

@@ -68,6 +68,14 @@ func TestGenerateProfitLossFromBalances_ClassifiesNonOperatingAndTaxAccounts(t *
 		},
 		{
 			AccountID:       2,
+			AccountCode:     "4101-010",
+			AccountName:     "Pendapatan Ongkir",
+			AccountType:     models.AccountTypeRevenue,
+			AccountCategory: models.CategoryOperatingRevenue,
+			NetBalance:      32.5,
+		},
+		{
+			AccountID:       3,
 			AccountCode:     "5101",
 			AccountName:     "Pembelian Barang Dagang",
 			AccountType:     models.AccountTypeExpense,
@@ -75,7 +83,7 @@ func TestGenerateProfitLossFromBalances_ClassifiesNonOperatingAndTaxAccounts(t *
 			NetBalance:      400,
 		},
 		{
-			AccountID:       3,
+			AccountID:       4,
 			AccountCode:     "6102",
 			AccountName:     "Beban Administrasi",
 			AccountType:     models.AccountTypeExpense,
@@ -83,7 +91,7 @@ func TestGenerateProfitLossFromBalances_ClassifiesNonOperatingAndTaxAccounts(t *
 			NetBalance:      300,
 		},
 		{
-			AccountID:       4,
+			AccountID:       5,
 			AccountCode:     "7103",
 			AccountName:     "Laba Selisih Kurs",
 			AccountType:     models.AccountTypeRevenue,
@@ -91,7 +99,7 @@ func TestGenerateProfitLossFromBalances_ClassifiesNonOperatingAndTaxAccounts(t *
 			NetBalance:      50,
 		},
 		{
-			AccountID:       5,
+			AccountID:       6,
 			AccountCode:     "8103",
 			AccountName:     "Rugi Selisih Kurs",
 			AccountType:     models.AccountTypeExpense,
@@ -99,7 +107,7 @@ func TestGenerateProfitLossFromBalances_ClassifiesNonOperatingAndTaxAccounts(t *
 			NetBalance:      200,
 		},
 		{
-			AccountID:       6,
+			AccountID:       7,
 			AccountCode:     "9101",
 			AccountName:     "Beban Pajak Penghasilan",
 			AccountType:     models.AccountTypeExpense,
@@ -110,15 +118,18 @@ func TestGenerateProfitLossFromBalances_ClassifiesNonOperatingAndTaxAccounts(t *
 
 	report := service.generateProfitLossFromBalances(balances, start, end)
 
-	require.Equal(t, 1000.0, report.Revenue.TotalRevenue)
+	require.Equal(t, 1032.5, report.Revenue.TotalRevenue)
 	require.Equal(t, 400.0, report.COGS.TotalCOGS)
 	require.Equal(t, 300.0, report.OperatingExpenses.TotalOpEx)
-	require.Equal(t, 300.0, report.OperatingIncome)
+	require.Equal(t, 332.5, report.OperatingIncome)
 	require.Equal(t, 50.0, report.OtherIncome)
 	require.Equal(t, 200.0, report.OtherExpenses)
-	require.Equal(t, 150.0, report.IncomeBeforeTax)
+	require.Equal(t, 182.5, report.IncomeBeforeTax)
 	require.Equal(t, 100.0, report.TaxExpense)
-	require.Equal(t, 50.0, report.NetIncome)
+	require.Equal(t, 82.5, report.NetIncome)
+
+	require.Len(t, report.Revenue.Items, 2)
+	require.Contains(t, []string{report.Revenue.Items[0].AccountCode, report.Revenue.Items[1].AccountCode}, "4101-010")
 
 	require.Len(t, report.OtherIncomeItems, 1)
 	require.Equal(t, "7103", report.OtherIncomeItems[0].AccountCode)

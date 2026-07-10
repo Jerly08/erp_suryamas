@@ -449,7 +449,7 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 		ReceivableAccountID: request.ReceivableAccountID,
 		ShippingMethod:      request.ShippingMethod,
 		ShippingCost:        request.ShippingCost,
-		ShippingTaxable:     request.ShippingTaxable,
+		ShippingTaxable:     getOrDefault(request.ShippingTaxable, true),
 		BillingAddress:      request.BillingAddress,
 		ShippingAddress:     request.ShippingAddress,
 		Notes:               request.Notes,
@@ -468,10 +468,6 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 
 	sale.DueDate = deriveSaleDueDate(sale.PaymentTerms, sale.DueDate, request.PaymentSchedules)
 
-	// Calculate totals
-	var subtotal float64 = 0
-	var totalPPN float64 = 0
-	var totalPPH float64 = 0
 	remainingProductStock := make(map[uint]int)
 
 	// Process sale items
@@ -557,10 +553,8 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 
 		// Calculate taxes if taxable
 		if item.Taxable {
-			item.PPNAmount = item.LineTotal * (sale.PPNPercent / 100)
-			item.PPhAmount = item.LineTotal * (sale.PPhPercent / 100)
-			totalPPN += item.PPNAmount
-			totalPPH += item.PPhAmount
+			item.PPNAmount = item.LineTotal * (1 - sale.DiscountPercent/100) * (sale.PPNPercent / 100)
+			item.PPhAmount = item.LineTotal * (1 - sale.DiscountPercent/100) * (sale.PPhPercent / 100)
 		}
 
 		item.TotalTax = item.PPNAmount + item.PPhAmount
@@ -568,59 +562,10 @@ func (s *SalesServiceV2) CreateSale(request models.SaleCreateRequest, userID uin
 
 		applySaleItemFulfillmentSnapshot(&item, fulfillmentSnapshot)
 
-		subtotal += item.LineTotal
 		sale.SaleItems = append(sale.SaleItems, item)
 	}
 
-	// Calculate sale totals
-	sale.Subtotal = subtotal
-	sale.SubTotal = subtotal // Compatibility field
-
-	// ✅ FIX: Apply sale-level discount
-	sale.DiscountAmount = subtotal * (sale.DiscountPercent / 100)
-	sale.TaxableAmount = subtotal - sale.DiscountAmount
-	sale.NetBeforeTax = sale.TaxableAmount // Net amount before any taxes
-
-	// ✅ FIX: Recalculate PPN from TaxableAmount (after sale-level discount)
-	// Item-level PPN was calculated before sale discount, so recalculate
-	if sale.PPNPercent > 0 || sale.PPNRate > 0 {
-		ppnRate := sale.PPNPercent
-		if ppnRate == 0 {
-			ppnRate = sale.PPNRate
-		}
-		sale.PPN = sale.TaxableAmount * (ppnRate / 100)
-		sale.PPNAmount = sale.PPN // Enhanced field
-	} else {
-		sale.PPN = totalPPN // Use item-level PPN if no rate specified
-		sale.PPNAmount = totalPPN
-	}
-
-	// ✅ FIX: Calculate enhanced tax fields
-	// PPh21 and PPh23 are calculated from TaxableAmount if rates are provided
-	if sale.PPh21Rate > 0 {
-		sale.PPh21Amount = sale.TaxableAmount * (sale.PPh21Rate / 100)
-	}
-	if sale.PPh23Rate > 0 {
-		sale.PPh23Amount = sale.TaxableAmount * (sale.PPh23Rate / 100)
-	}
-
-	// Legacy PPh field
-	sale.PPh = totalPPH
-
-	// Total tax additions (added to invoice total)
-	sale.TotalTaxAdditions = sale.OtherTaxAdditions
-
-	// Total tax deductions (subtracted from invoice total)
-	sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
-
-	// Total tax for display
-	sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
-	sale.Tax = sale.TotalTax // Compatibility field
-
-	// ✅ FIX: Calculate final TotalAmount correctly
-	// Formula: TaxableAmount + PPN + OtherTaxAdditions + ShippingCost - TotalTaxDeductions
-	sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
-	sale.OutstandingAmount = sale.TotalAmount // Initially all outstanding
+	applyCalculatedSalesAmounts(sale, sale.SaleItems)
 
 	log.Printf("📊 [CALC] Subtotal=%.2f, Discount=%.2f, TaxableAmt=%.2f", sale.Subtotal, sale.DiscountAmount, sale.TaxableAmount)
 	log.Printf("📊 [CALC] PPN=%.2f, Additions=%.2f, Deductions=%.2f, Shipping=%.2f",
@@ -715,9 +660,9 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 			tx.Rollback()
 			return nil, fmt.Errorf("tidak bisa mengubah pajak pada penjualan yang sudah difakturkan")
 		}
-		if request.ShippingCost != nil {
+		if request.ShippingCost != nil || request.ShippingTaxable != nil {
 			tx.Rollback()
-			return nil, fmt.Errorf("tidak bisa mengubah biaya pengiriman pada penjualan yang sudah difakturkan")
+			return nil, fmt.Errorf("tidak bisa mengubah biaya atau status pajak pengiriman pada penjualan yang sudah difakturkan")
 		}
 
 		// Only allow non-financial field updates
@@ -883,6 +828,9 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	if request.ShippingCost != nil {
 		sale.ShippingCost = *request.ShippingCost
 	}
+	if request.ShippingTaxable != nil {
+		sale.ShippingTaxable = *request.ShippingTaxable
+	}
 	if request.BillingAddress != nil {
 		sale.BillingAddress = *request.BillingAddress
 	}
@@ -928,9 +876,6 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 		}
 
 		// Add new items and recalculate
-		var subtotal float64 = 0
-		var totalPPN float64 = 0
-		var totalPPH float64 = 0
 		remainingProductStock := make(map[uint]int)
 		sale.SaleItems = []models.SaleItem{}
 
@@ -1020,10 +965,8 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 				if ppnRate == 0 {
 					ppnRate = sale.PPNPercent
 				}
-				item.PPNAmount = item.LineTotal * (ppnRate / 100)
-				item.PPhAmount = item.LineTotal * (sale.PPhPercent / 100)
-				totalPPN += item.PPNAmount
-				totalPPH += item.PPhAmount
+				item.PPNAmount = item.LineTotal * (1 - sale.DiscountPercent/100) * (ppnRate / 100)
+				item.PPhAmount = item.LineTotal * (1 - sale.DiscountPercent/100) * (sale.PPhPercent / 100)
 			}
 
 			item.TotalTax = item.PPNAmount + item.PPhAmount
@@ -1031,95 +974,14 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 
 			applySaleItemFulfillmentSnapshot(&item, fulfillmentSnapshot)
 
-			subtotal += item.LineTotal
 			sale.SaleItems = append(sale.SaleItems, item)
 		}
 
-		// Apply same calculation logic as CreateSale
-		sale.Subtotal = subtotal
-		sale.SubTotal = subtotal
-
-		// Apply sale-level discount
-		sale.DiscountAmount = subtotal * (sale.DiscountPercent / 100)
-		sale.TaxableAmount = subtotal - sale.DiscountAmount
-		sale.NetBeforeTax = sale.TaxableAmount
-
-		// Recalculate PPN from TaxableAmount
-		if sale.PPNPercent > 0 || sale.PPNRate > 0 {
-			ppnRate := sale.PPNPercent
-			if ppnRate == 0 {
-				ppnRate = sale.PPNRate
-			}
-			sale.PPN = sale.TaxableAmount * (ppnRate / 100)
-			sale.PPNAmount = sale.PPN
-		} else {
-			sale.PPN = totalPPN
-			sale.PPNAmount = totalPPN
-		}
-
-		// Calculate enhanced tax fields
-		if sale.PPh21Rate > 0 {
-			sale.PPh21Amount = sale.TaxableAmount * (sale.PPh21Rate / 100)
-		} else {
-			sale.PPh21Amount = 0
-		}
-		if sale.PPh23Rate > 0 {
-			sale.PPh23Amount = sale.TaxableAmount * (sale.PPh23Rate / 100)
-		} else {
-			sale.PPh23Amount = 0
-		}
-
-		sale.PPh = totalPPH
-		sale.TotalTaxAdditions = sale.OtherTaxAdditions
-		sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
-		sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
-		sale.Tax = sale.TotalTax
-
-		// Calculate final TotalAmount
-		sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
-		sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
+		applyCalculatedSalesAmounts(&sale, sale.SaleItems)
 
 		log.Printf("📊 [UPDATE] TotalAmount=%.2f, Outstanding=%.2f", sale.TotalAmount, sale.OutstandingAmount)
 	} else {
-		// ✅ FIX: Recalculate totals even if items didn't change (tax fields may have changed)
-		// This ensures PPh23, PPh21, and other tax fields are properly applied
-
-		// Recalculate from existing subtotal
-		sale.DiscountAmount = sale.Subtotal * (sale.DiscountPercent / 100)
-		sale.TaxableAmount = sale.Subtotal - sale.DiscountAmount
-		sale.NetBeforeTax = sale.TaxableAmount
-
-		// Recalculate PPN
-		if sale.PPNPercent > 0 || sale.PPNRate > 0 {
-			ppnRate := sale.PPNPercent
-			if ppnRate == 0 {
-				ppnRate = sale.PPNRate
-			}
-			sale.PPN = sale.TaxableAmount * (ppnRate / 100)
-			sale.PPNAmount = sale.PPN
-		}
-
-		// Recalculate enhanced tax fields
-		if sale.PPh21Rate > 0 {
-			sale.PPh21Amount = sale.TaxableAmount * (sale.PPh21Rate / 100)
-		} else {
-			sale.PPh21Amount = 0
-		}
-		if sale.PPh23Rate > 0 {
-			sale.PPh23Amount = sale.TaxableAmount * (sale.PPh23Rate / 100)
-		} else {
-			sale.PPh23Amount = 0
-		}
-
-		// Recalculate totals
-		sale.TotalTaxAdditions = sale.OtherTaxAdditions
-		sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
-		sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
-		sale.Tax = sale.TotalTax
-
-		// Calculate final TotalAmount
-		sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
-		sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
+		applyCalculatedSalesAmounts(&sale, sale.SaleItems)
 
 		log.Printf("📊 [UPDATE-TAX-ONLY] TaxableAmt=%.2f, PPh23=%.2f, Deductions=%.2f, TotalAmount=%.2f",
 			sale.TaxableAmount, sale.PPh23Amount, sale.TotalTaxDeductions, sale.TotalAmount)
@@ -1310,6 +1172,7 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 
 	oldStatus := sale.Status
 	sale.Status = "INVOICED"
+	applyCalculatedSalesAmounts(&sale, sale.SaleItems)
 	if err := assignAndValidateSaleReceivableAccount(tx, &sale, false); err != nil {
 		tx.Rollback()
 		return nil, err
@@ -1339,48 +1202,6 @@ func (s *SalesServiceV2) CreateInvoice(saleID uint, userID uint) (*models.Sale, 
 	if err := tx.Save(&sale).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to create invoice: %v", err)
-	}
-
-	// Keep invoice amounts identical to the saved draft/confirmed sale.
-	// We only recover PPN from persisted item-level tax amounts when they already
-	// exist in the transaction, and never infer tax from a default rate here.
-	if sale.PPN == 0 && sale.PPNAmount == 0 {
-		var persistedItemPPN float64
-		if err := tx.Model(&models.SaleItem{}).
-			Where("sale_id = ?", sale.ID).
-			Select("COALESCE(SUM(ppn_amount), 0)").
-			Scan(&persistedItemPPN).Error; err != nil {
-			log.Printf("⚠️ [CreateInvoice] Failed to inspect persisted item PPN for Sale #%d: %v", sale.ID, err)
-		} else if persistedItemPPN > 0 {
-			taxableAmount := sale.TaxableAmount
-			if taxableAmount == 0 {
-				taxableAmount = sale.Subtotal - sale.DiscountAmount
-			}
-
-			sale.PPN = persistedItemPPN
-			sale.PPNAmount = persistedItemPPN
-			if sale.PPNRate == 0 {
-				sale.PPNRate = sale.PPNPercent
-			}
-			sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
-			sale.TotalAmount = taxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
-			sale.OutstandingAmount = sale.TotalAmount - sale.PaidAmount
-
-			if err := tx.Model(&sale).Updates(map[string]interface{}{
-				"ppn":                sale.PPN,
-				"ppn_amount":         sale.PPNAmount,
-				"ppn_rate":           sale.PPNRate,
-				"total_tax":          sale.TotalTax,
-				"total_amount":       sale.TotalAmount,
-				"outstanding_amount": sale.OutstandingAmount,
-			}).Error; err != nil {
-				log.Printf("⚠️ [CreateInvoice] Failed to sync persisted item PPN for Sale #%d: %v", sale.ID, err)
-			} else {
-				log.Printf("✅ [CreateInvoice] Synced persisted item PPN for Sale #%d: %.2f", sale.ID, sale.PPN)
-			}
-		} else if sale.PPNPercent > 0 || sale.PPNRate > 0 {
-			log.Printf("ℹ️ [CreateInvoice] Sale #%d has tax rate metadata but no persisted PPN amount. Invoice will keep saved non-tax total without injecting tax.", sale.ID)
-		}
 	}
 
 	// CREATE JOURNAL ENTRIES for INVOICED status using SSOT service

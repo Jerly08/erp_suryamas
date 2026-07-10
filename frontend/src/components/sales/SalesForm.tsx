@@ -81,6 +81,7 @@ import {
   filterActiveLeafAccounts,
   filterOperationalCashBankAccounts,
 } from "@/utils/accountFilters";
+import { calculateSalesAmounts } from "@/utils/salesCalculation";
 
 interface SalesFormProps {
   isOpen: boolean;
@@ -165,6 +166,7 @@ interface FormData {
   payment_method?: string;
   shipping_method?: string;
   shipping_cost: number;
+  shipping_taxable: boolean;
   billing_address?: string;
   shipping_address?: string;
   notes?: string;
@@ -323,6 +325,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       payment_method_type: "CREDIT" as "CASH" | "BANK" | "CREDIT",
       receivable_account_id: undefined,
       shipping_cost: 0,
+      shipping_taxable: true,
       items: [
         {
           product_id: 0,
@@ -365,6 +368,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const watchPPh23Rate = watch("pph23_rate");
   const watchOtherTaxDeductions = watch("other_tax_deductions");
   const watchShippingCost = watch("shipping_cost");
+  const watchShippingTaxable = watch("shipping_taxable");
   const watchPaymentTerms = watch("payment_terms");
   const watchPaymentSchedules = watch("payment_schedules");
   const watchPaymentMethodType = watch("payment_method_type");
@@ -950,6 +954,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           : undefined,
       shipping_method: saleData.shipping_method || undefined,
       shipping_cost: saleData.shipping_cost || 0,
+      shipping_taxable: saleData.shipping_taxable ?? true,
       billing_address: saleData.billing_address || undefined,
       shipping_address: saleData.shipping_address || undefined,
       notes: saleData.notes || undefined,
@@ -1198,31 +1203,23 @@ const SalesForm: React.FC<SalesFormProps> = ({
 
   const calculateTotal = () => {
     const subtotal = calculateSubtotal();
-
-    // Calculate global discount based on type (percentage or amount)
-    const globalDiscount =
+    const discountPercent =
       discountType === "percentage"
-        ? subtotal * (watchDiscountPercent / 100)
-        : Math.min(watchDiscountPercent || 0, subtotal); // Can't discount more than subtotal
-
-    const afterDiscount = subtotal - globalDiscount;
-
-    // Tax calculations using enhanced fields (same as Tax Summary)
-    // Use explicit check to allow 0 as valid value
-    const ppnRate = watchPPNRate ?? watchPPNPercent ?? defaultTaxRate;
-    const ppnAmount = afterDiscount * (ppnRate / 100);
-    const otherAdditions = watchOtherTaxAdditions || 0;
-    const totalAdditions = ppnAmount + otherAdditions;
-
-    const pph21Amount = afterDiscount * (watchPPh21Rate / 100);
-    const pph23Amount = afterDiscount * (watchPPh23Rate / 100);
-    const otherDeductions = watchOtherTaxDeductions || 0;
-    const totalDeductions = pph21Amount + pph23Amount + otherDeductions;
-
-    const finalTotal =
-      afterDiscount + totalAdditions - totalDeductions + watchShippingCost;
-
-    return finalTotal;
+        ? watchDiscountPercent
+        : subtotal > 0
+          ? (Math.min(watchDiscountPercent || 0, subtotal) / subtotal) * 100
+          : 0;
+    return calculateSalesAmounts({
+      items: watchItems,
+      discountPercent,
+      ppnRate: watchPPNRate ?? watchPPNPercent ?? defaultTaxRate,
+      pph21Rate: watchPPh21Rate,
+      pph23Rate: watchPPh23Rate,
+      otherTaxAdditions: watchOtherTaxAdditions,
+      otherTaxDeductions: watchOtherTaxDeductions,
+      shippingCost: watchShippingCost,
+      shippingTaxable: watchShippingTaxable,
+    }).totalAmount;
   };
 
   const getPaymentSchedulePercentageTotal = () => {
@@ -1510,6 +1507,18 @@ const SalesForm: React.FC<SalesFormProps> = ({
         }
       }
 
+      const itemSubtotal = validItems.reduce(
+        (sum, item) => sum + calculateLineTotal(item),
+        0,
+      );
+      const normalizedDiscountPercent =
+        discountType === "percentage"
+          ? data.discount_percent
+          : itemSubtotal > 0
+            ? (Math.min(data.discount_percent || 0, itemSubtotal) / itemSubtotal) *
+              100
+            : 0;
+
       const receivableAccountId = resolveReceivableAccountId(
         data.receivable_account_id,
       );
@@ -1636,7 +1645,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             valid_until: data.valid_until
               ? `${data.valid_until}T00:00:00Z`
               : undefined,
-            discount_percent: data.discount_percent,
+            discount_percent: normalizedDiscountPercent,
             ppn_percent: data.ppn_percent,
             pph_percent: data.pph_percent,
             pph_type: data.pph_type,
@@ -1656,6 +1665,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                 : undefined,
             shipping_method: data.shipping_method,
             shipping_cost: data.shipping_cost,
+            shipping_taxable: data.shipping_taxable,
             billing_address: data.billing_address,
             shipping_address: data.shipping_address,
             notes: data.notes,
@@ -1703,7 +1713,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
             : undefined,
           currency: data.currency,
           exchange_rate: data.exchange_rate,
-          discount_percent: data.discount_percent,
+          discount_percent: normalizedDiscountPercent,
           // Legacy tax fields
           ppn_percent: data.ppn_percent,
           pph_percent: data.pph_percent,
@@ -1725,6 +1735,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
               : undefined,
           shipping_method: data.shipping_method,
           shipping_cost: data.shipping_cost,
+          shipping_taxable: data.shipping_taxable,
           billing_address: data.billing_address,
           shipping_address: data.shipping_address,
           notes: data.notes,
@@ -2962,6 +2973,22 @@ const SalesForm: React.FC<SalesFormProps> = ({
                             <FormHelperText fontSize="xs">
                               {t("sales.tooltips.shippingCost")}
                             </FormHelperText>
+                            <Flex mt={2} align="center" justify="space-between">
+                              <Text fontSize="xs" color={textColor}>
+                                {t("sales.form.shippingTaxable")}
+                              </Text>
+                              <Switch
+                                size="sm"
+                                colorScheme="blue"
+                                isChecked={watchShippingTaxable}
+                                onChange={(event) =>
+                                  setValue("shipping_taxable", event.target.checked, {
+                                    shouldDirty: true,
+                                  })
+                                }
+                                isDisabled={isInvoiced}
+                              />
+                            </Flex>
                           </FormControl>
                         </HStack>
                       </Box>
@@ -3077,40 +3104,38 @@ const SalesForm: React.FC<SalesFormProps> = ({
                             </Text>
                             {(() => {
                               const subtotal = calculateSubtotal();
-                              const discountAmount =
-                                discountType === "percentage"
-                                  ? subtotal * (watchDiscountPercent / 100)
-                                  : Math.min(
-                                      watchDiscountPercent || 0,
-                                      subtotal,
-                                    );
-                              const afterDiscount = subtotal - discountAmount;
-
-                              // Tax calculations using enhanced fields
-                              // Use nullish coalescing to allow 0 as valid value
                               const ppnRate =
                                 watchPPNRate ??
                                 watchPPNPercent ??
                                 defaultTaxRate;
-                              const ppnAmount = afterDiscount * (ppnRate / 100);
-                              const otherAdditions =
-                                watchOtherTaxAdditions || 0;
-                              const totalAdditions = ppnAmount + otherAdditions;
-
-                              const pph21Amount =
-                                afterDiscount * (watchPPh21Rate / 100);
-                              const pph23Amount =
-                                afterDiscount * (watchPPh23Rate / 100);
+                              const discountPercent =
+                                discountType === "percentage"
+                                  ? watchDiscountPercent
+                                  : subtotal > 0
+                                    ? (Math.min(watchDiscountPercent || 0, subtotal) /
+                                        subtotal) *
+                                      100
+                                    : 0;
+                              const amounts = calculateSalesAmounts({
+                                items: watchItems,
+                                discountPercent,
+                                ppnRate,
+                                pph21Rate: watchPPh21Rate,
+                                pph23Rate: watchPPh23Rate,
+                                otherTaxAdditions: watchOtherTaxAdditions,
+                                otherTaxDeductions: watchOtherTaxDeductions,
+                                shippingCost: watchShippingCost,
+                                shippingTaxable: watchShippingTaxable,
+                              });
+                              const discountAmount = amounts.discountAmount;
+                              const afterDiscount = amounts.netBeforeTax;
+                              const ppnAmount = amounts.ppnAmount;
+                              const otherAdditions = watchOtherTaxAdditions || 0;
+                              const pph21Amount = amounts.pph21Amount;
+                              const pph23Amount = amounts.pph23Amount;
                               const otherDeductions =
                                 watchOtherTaxDeductions || 0;
-                              const totalDeductions =
-                                pph21Amount + pph23Amount + otherDeductions;
-
-                              const finalTotal =
-                                afterDiscount +
-                                totalAdditions -
-                                totalDeductions +
-                                watchShippingCost;
+                              const finalTotal = amounts.totalAmount;
 
                               return (
                                 <VStack spacing={2} fontSize="xs">
@@ -3143,9 +3168,28 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                       )}
                                     </Text>
                                   </HStack>
+                                  {watchShippingCost > 0 && (
+                                    <HStack justify="space-between" w="full">
+                                      <Text color={textColor}>
+                                        + {t("sales.form.shippingCost")}:
+                                      </Text>
+                                      <Text color={textColor}>
+                                        {salesService.formatCurrency(
+                                          watchShippingCost,
+                                        )}
+                                      </Text>
+                                    </HStack>
+                                  )}
+                                  <HStack justify="space-between" w="full">
+                                    <Text color={textColor}>DPP PPN:</Text>
+                                    <Text color={textColor}>
+                                      {salesService.formatCurrency(
+                                        amounts.taxableAmount,
+                                      )}
+                                    </Text>
+                                  </HStack>
 
                                   <Divider />
-
                                   <HStack justify="space-between" w="full">
                                     <Text color={successTextColor}>
                                       + PPN ({ppnRate}%):
@@ -3205,19 +3249,6 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                       </Text>
                                     </HStack>
                                   )}
-                                  {watchShippingCost > 0 && (
-                                    <HStack justify="space-between" w="full">
-                                      <Text color={textColor}>
-                                        + Shipping Cost:
-                                      </Text>
-                                      <Text color={textColor}>
-                                        {salesService.formatCurrency(
-                                          watchShippingCost,
-                                        )}
-                                      </Text>
-                                    </HStack>
-                                  )}
-
                                   <Divider />
 
                                   <HStack justify="space-between" w="full">

@@ -108,6 +108,8 @@ func getServiceAccounts() []models.Account {
 		{Code: "4101", Name: "PENDAPATAN JASA", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 2, IsHeader: true, IsActive: true, IsSystemCritical: true},
 		{Code: "4101-001", Name: "PENDAPATAN JASA KONSULTASI", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
 		{Code: "4101-002", Name: "PENDAPATAN JASA PROFESIONAL", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
+		{Code: "4101-010", Name: "PENDAPATAN ONGKIR", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
+		{Code: "4102", Name: "RETUR & POTONGAN PENJUALAN", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 2, IsHeader: false, IsActive: true},
 
 		// COST OF SERVICE (BEBAN POKOK JASA)
 		{Code: "5000", Name: "BEBAN POKOK JASA", Type: models.AccountTypeExpense, Category: models.CategoryCostOfGoodsSold, Level: 1, IsHeader: true, IsActive: true, IsSystemCritical: true},
@@ -156,6 +158,7 @@ func getTradingAccounts() []models.Account {
 		{Code: "4000", Name: "PENDAPATAN", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 1, IsHeader: true, IsActive: true, IsSystemCritical: true},
 		{Code: "4101", Name: "PENJUALAN BARANG", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 2, IsHeader: true, IsActive: true, IsSystemCritical: true},
 		{Code: "4101-001", Name: "PENJUALAN LOKAL", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
+		{Code: "4101-010", Name: "PENDAPATAN ONGKIR", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
 		{Code: "4102", Name: "RETUR & POTONGAN PENJUALAN", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 2, IsHeader: false, IsActive: true},
 
 		// COGS
@@ -209,6 +212,8 @@ func getManufacturingAccounts() []models.Account {
 		{Code: "4000", Name: "PENDAPATAN", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 1, IsHeader: true, IsActive: true, IsSystemCritical: true},
 		{Code: "4101", Name: "PENJUALAN PRODUK", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 2, IsHeader: true, IsActive: true, IsSystemCritical: true},
 		{Code: "4101-001", Name: "PENJUALAN PRODUK JADI", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
+		{Code: "4101-010", Name: "PENDAPATAN ONGKIR", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 3, IsHeader: false, IsActive: true},
+		{Code: "4102", Name: "RETUR & POTONGAN PENJUALAN", Type: models.AccountTypeRevenue, Category: models.CategoryOperatingRevenue, Level: 2, IsHeader: false, IsActive: true},
 
 		// COGS / COGM
 		{Code: "5000", Name: "HARGA POKOK PRODUKSI", Type: models.AccountTypeExpense, Category: models.CategoryCostOfGoodsSold, Level: 1, IsHeader: true, IsActive: true, IsSystemCritical: true},

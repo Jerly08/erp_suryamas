@@ -58,9 +58,11 @@ func (s *SalesReportExportService) ExportToCSV(data *SalesSummaryData, userID ui
 
 	// Summary with localization
 	w.Write([]string{utils.T("summary", language)})
-	w.Write([]string{"Total Sales (Gross)", fmt.Sprintf("%.2f", data.TotalSales)})
+	w.Write([]string{utils.T("total_invoice_value", language), fmt.Sprintf("%.2f", data.TotalSales)})
 	w.Write([]string{utils.T("total_revenue", language), fmt.Sprintf("%.2f", data.TotalRevenue)})
-	w.Write([]string{"Total Tax", fmt.Sprintf("%.2f", data.TotalTax)})
+	w.Write([]string{utils.T("shipping_revenue", language), fmt.Sprintf("%.2f", data.TotalShippingRevenue)})
+	w.Write([]string{utils.T("taxable_base", language), fmt.Sprintf("%.2f", data.TotalTaxableBase)})
+	w.Write([]string{utils.T("output_vat", language), fmt.Sprintf("%.2f", data.TotalTax)})
 	w.Write([]string{"Total Discount", fmt.Sprintf("%.2f", data.TotalDiscount)})
 	w.Write([]string{"Total Returns", fmt.Sprintf("%.2f", data.TotalReturns)})
 	w.Write([]string{"Net Revenue", fmt.Sprintf("%.2f", data.NetRevenue)})
@@ -204,9 +206,11 @@ func (s *SalesReportExportService) ExportToPDF(data *SalesSummaryData, userID ui
 		label string
 		value string
 	}{
-		{"Total Sales (Gross)", formatRupiahSimple(data.TotalSales)},
+		{utils.T("total_invoice_value", language), formatRupiahSimple(data.TotalSales)},
 		{utils.T("total_revenue", language), formatRupiahSimple(data.TotalRevenue)},
-		{"Total Tax", formatRupiahSimple(data.TotalTax)},
+		{utils.T("shipping_revenue", language), formatRupiahSimple(data.TotalShippingRevenue)},
+		{utils.T("taxable_base", language), formatRupiahSimple(data.TotalTaxableBase)},
+		{utils.T("output_vat", language), formatRupiahSimple(data.TotalTax)},
 		{"Total Discount", formatRupiahSimple(data.TotalDiscount)},
 		{"Total Returns", formatRupiahSimple(data.TotalReturns)},
 		{"Net Revenue", formatRupiahSimple(data.NetRevenue)},

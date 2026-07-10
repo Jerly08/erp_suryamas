@@ -167,33 +167,92 @@ type CashFlowData struct {
 
 // SalesSummaryData represents comprehensive sales analytics
 type SalesSummaryData struct {
-	Company            CompanyInfo         `json:"company"`
-	StartDate          time.Time           `json:"start_date"`
-	EndDate            time.Time           `json:"end_date"`
-	Currency           string              `json:"currency"`
-	TotalRevenue       float64             `json:"total_revenue"`
-	TotalSales         float64             `json:"total_sales"`
-	TotalTransactions  int64               `json:"total_transactions"`
-	TotalTax           float64             `json:"total_tax"`
-	TotalDiscount      float64             `json:"total_discount"`
-	TotalReturns       float64             `json:"total_returns"`
-	NetRevenue         float64             `json:"net_revenue"`
-	AverageOrderValue  float64             `json:"average_order_value"`
-	TotalCustomers     int64               `json:"total_customers"`
-	NewCustomers       int64               `json:"new_customers"`
-	ReturningCustomers int64               `json:"returning_customers"`
-	SalesByPeriod      []PeriodData        `json:"sales_by_period"`
-	SalesByCustomer    []CustomerSalesData `json:"sales_by_customer"`
-	SalesByProduct     []ProductSalesData  `json:"sales_by_product"`
-	SalesByStatus      []StatusData        `json:"sales_by_status"`
-	Items              []SalesSummaryItem  `json:"items"`
-	TopPerformers      TopPerformersData   `json:"top_performers"`
-	GrowthAnalysis     GrowthAnalysisData  `json:"growth_analysis"`
-	GeneratedAt        time.Time           `json:"generated_at"`
+	Company              CompanyInfo         `json:"company"`
+	StartDate            time.Time           `json:"start_date"`
+	EndDate              time.Time           `json:"end_date"`
+	Currency             string              `json:"currency"`
+	TotalRevenue         float64             `json:"total_revenue"`
+	TotalSales           float64             `json:"total_sales"`
+	TotalShippingRevenue float64             `json:"total_shipping_revenue"`
+	TotalTaxableBase     float64             `json:"total_taxable_base"`
+	TotalTransactions    int64               `json:"total_transactions"`
+	TotalTax             float64             `json:"total_tax"`
+	TotalDiscount        float64             `json:"total_discount"`
+	TotalReturns         float64             `json:"total_returns"`
+	NetRevenue           float64             `json:"net_revenue"`
+	AverageOrderValue    float64             `json:"average_order_value"`
+	TotalCustomers       int64               `json:"total_customers"`
+	NewCustomers         int64               `json:"new_customers"`
+	ReturningCustomers   int64               `json:"returning_customers"`
+	SalesByPeriod        []PeriodData        `json:"sales_by_period"`
+	SalesByCustomer      []CustomerSalesData `json:"sales_by_customer"`
+	SalesByProduct       []ProductSalesData  `json:"sales_by_product"`
+	SalesByStatus        []StatusData        `json:"sales_by_status"`
+	Items                []SalesSummaryItem  `json:"items"`
+	TopPerformers        TopPerformersData   `json:"top_performers"`
+	GrowthAnalysis       GrowthAnalysisData  `json:"growth_analysis"`
+	GeneratedAt          time.Time           `json:"generated_at"`
 	// Enhanced debugging and monitoring fields
 	DebugInfo        map[string]interface{} `json:"debug_info,omitempty"`
 	DataQualityScore float64                `json:"data_quality_score,omitempty"`
 	ProcessingTime   string                 `json:"processing_time,omitempty"`
+}
+
+type salesSummarySaleAmounts struct {
+	InvoiceTotal    float64
+	Revenue         float64
+	ShippingRevenue float64
+	TaxableBase     float64
+	PPN             float64
+	Discount        float64
+}
+
+// getSalesSummarySaleAmounts keeps operational sales reporting aligned with
+// persisted invoice totals while separating recognized revenue from tax.
+func getSalesSummarySaleAmounts(sale *models.Sale) salesSummarySaleAmounts {
+	if sale == nil {
+		return salesSummarySaleAmounts{}
+	}
+
+	calculated := calculateSalesAmounts(sale, sale.SaleItems)
+
+	invoiceTotal := sale.TotalAmount
+	if invoiceTotal == 0 {
+		invoiceTotal = calculated.TotalAmount
+	}
+
+	netGoodsRevenue := sale.NetBeforeTax
+	if netGoodsRevenue == 0 {
+		netGoodsRevenue = calculated.NetBeforeTax
+	}
+
+	taxableBase := sale.TaxableAmount
+	if taxableBase == 0 {
+		taxableBase = calculated.TaxableAmount
+	}
+
+	ppn := sale.PPNAmount
+	if ppn == 0 {
+		ppn = sale.PPN
+	}
+	if ppn == 0 {
+		ppn = calculated.PPNAmount
+	}
+
+	discount := sale.DiscountAmount
+	if discount == 0 {
+		discount = calculated.DiscountAmount
+	}
+
+	shippingRevenue := sale.ShippingCost
+	return salesSummarySaleAmounts{
+		InvoiceTotal:    invoiceTotal,
+		Revenue:         math.Round((netGoodsRevenue+shippingRevenue)*100) / 100,
+		ShippingRevenue: shippingRevenue,
+		TaxableBase:     taxableBase,
+		PPN:             ppn,
+		Discount:        discount,
+	}
 }
 
 // SalesSummaryItem represents an individual sale transaction in the summary
@@ -1214,21 +1273,13 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 	statusMap := make(map[string]*StatusData)
 
 	for _, sale := range sales {
-		summary.TotalRevenue += sale.TotalAmount
-		// Sum tax: prioritize PPNAmount, fallback to TotalTax, then Tax/PPN
-		taxForSale := sale.PPNAmount
-		if taxForSale == 0 {
-			taxForSale = sale.TotalTax
-		}
-		if taxForSale == 0 {
-			taxForSale = sale.PPN
-		}
-		if taxForSale == 0 {
-			taxForSale = sale.Tax
-		}
-		summary.TotalTax += taxForSale
-		// Sum discount
-		summary.TotalDiscount += sale.DiscountAmount
+		saleAmounts := getSalesSummarySaleAmounts(&sale)
+		summary.TotalSales += saleAmounts.InvoiceTotal
+		summary.TotalRevenue += saleAmounts.Revenue
+		summary.TotalShippingRevenue += saleAmounts.ShippingRevenue
+		summary.TotalTaxableBase += saleAmounts.TaxableBase
+		summary.TotalTax += saleAmounts.PPN
+		summary.TotalDiscount += saleAmounts.Discount
 		for _, saleReturn := range sale.SaleReturns {
 			if saleReturn.Status == models.ReturnStatusApproved {
 				summary.TotalReturns += saleReturn.TotalAmount
@@ -1318,12 +1369,12 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 	// Calculate derived metrics
 	summary.TotalCustomers = int64(len(customerSet))
 	if summary.TotalTransactions > 0 {
-		summary.AverageOrderValue = summary.TotalRevenue / float64(summary.TotalTransactions)
+		summary.AverageOrderValue = summary.TotalSales / float64(summary.TotalTransactions)
 	}
 
-	// Calculate TotalSales (bruto = includes tax) and NetRevenue (after tax+discount)
-	summary.TotalSales = summary.TotalRevenue
-	summary.NetRevenue = summary.TotalRevenue - summary.TotalTax - summary.TotalDiscount - summary.TotalReturns
+	// Revenue is already net of discounts and excludes PPN. Approved returns
+	// reduce it without subtracting tax or discounts a second time.
+	summary.NetRevenue = summary.TotalRevenue - summary.TotalReturns
 
 	// Calculate average prices and order values
 	for _, customerData := range customerMap {
@@ -1331,8 +1382,8 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			customerData.AverageOrder = customerData.TotalAmount / float64(customerData.TransactionCount)
 		}
 		// Calculate percentage of total
-		if summary.TotalRevenue > 0 {
-			customerData.PercentageOfTotal = (customerData.TotalAmount / summary.TotalRevenue) * 100
+		if summary.TotalSales > 0 {
+			customerData.PercentageOfTotal = (customerData.TotalAmount / summary.TotalSales) * 100
 		}
 	}
 
@@ -1356,8 +1407,8 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 
 	// Calculate percentages for status data
 	for _, statusData := range statusMap {
-		if summary.TotalRevenue > 0 {
-			statusData.Percentage = (statusData.Amount / summary.TotalRevenue) * 100
+		if summary.TotalSales > 0 {
+			statusData.Percentage = (statusData.Amount / summary.TotalSales) * 100
 		}
 	}
 
@@ -1490,10 +1541,13 @@ func (ers *EnhancedReportService) GenerateSalesSummary(startDate, endDate time.T
 			"records_processed":     len(sales),
 		},
 		"data_summary": map[string]interface{}{
-			"total_revenue":    summary.TotalRevenue,
-			"total_customers":  summary.TotalCustomers,
-			"avg_order_value":  summary.AverageOrderValue,
-			"periods_analyzed": len(summary.SalesByPeriod),
+			"total_invoice_value":    summary.TotalSales,
+			"total_revenue":          summary.TotalRevenue,
+			"total_shipping_revenue": summary.TotalShippingRevenue,
+			"total_taxable_base":     summary.TotalTaxableBase,
+			"total_customers":        summary.TotalCustomers,
+			"avg_order_value":        summary.AverageOrderValue,
+			"periods_analyzed":       len(summary.SalesByPeriod),
 		},
 	}
 

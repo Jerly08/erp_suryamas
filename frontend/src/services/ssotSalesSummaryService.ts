@@ -8,6 +8,8 @@ export interface SSOTSalesSummaryData {
   currency: string;
   total_revenue: number;
   total_sales: number;
+  total_shipping_revenue: number;
+  total_taxable_base: number;
   total_transactions?: number;
   total_tax?: number;
   total_discount?: number;

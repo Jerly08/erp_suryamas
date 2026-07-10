@@ -25,7 +25,10 @@ func newSalesPPh23TestDB(t *testing.T) *gorm.DB {
 		&models.CashBank{},
 		&models.CashBankTransaction{},
 		&models.Sale{},
+		&models.SaleItem{},
 		&models.SalePayment{},
+		&models.SalePaymentSchedule{},
+		&models.AccountingPeriod{},
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 	); err != nil {
@@ -119,6 +122,8 @@ func seedSalesPPh23Fixture(t *testing.T, db *gorm.DB, outstandingAmount float64)
 		DueDate:           time.Date(2026, time.April, 30, 0, 0, 0, 0, time.UTC),
 		InvoiceNumber:     "INV-001",
 		Subtotal:          1000000,
+		NetBeforeTax:      1000000,
+		TaxableAmount:     1000000,
 		TotalAmount:       980000,
 		PaidAmount:        980000 - outstandingAmount,
 		OutstandingAmount: outstandingAmount,
@@ -161,6 +166,18 @@ func seedSalesPPh23CashBankFixture(t *testing.T, db *gorm.DB) models.CashBank {
 	}
 	if err := db.Create(&cashBank).Error; err != nil {
 		t.Fatalf("seed cash bank: %v", err)
+	}
+	if err := db.Create(&models.CashBankTransaction{
+		CashBankID:      cashBank.ID,
+		ReferenceType:   "OPENING_BALANCE",
+		Amount:          1000000,
+		Currency:        "IDR",
+		ExchangeRate:    1,
+		BookAmountIDR:   1000000,
+		BalanceAfter:    1000000,
+		TransactionDate: time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC),
+	}).Error; err != nil {
+		t.Fatalf("seed cash bank opening movement: %v", err)
 	}
 
 	return cashBank
@@ -242,6 +259,7 @@ func TestSettlePPh23CanReduceOutstandingForLegacyGrossInvoice(t *testing.T) {
 		InvoiceNumber:     "INV-GROSS-PPH",
 		TaxableAmount:     1000000,
 		Subtotal:          1000000,
+		NetBeforeTax:      1000000,
 		TotalAmount:       1000000,
 		PaidAmount:        500000,
 		OutstandingAmount: 500000,

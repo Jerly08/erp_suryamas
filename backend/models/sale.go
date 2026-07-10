@@ -67,7 +67,7 @@ type Sale struct {
 	ReceivableAccountID           *uint          `json:"receivable_account_id" gorm:"index"`
 	ShippingMethod                string         `json:"shipping_method" gorm:"size:50"`
 	ShippingCost                  float64        `json:"shipping_cost" gorm:"type:decimal(15,2);default:0"`
-	ShippingTaxable               bool           `json:"shipping_taxable" gorm:"default:false"`
+	ShippingTaxable               bool           `json:"shipping_taxable" gorm:"default:true"`
 	BillingAddress                string         `json:"billing_address" gorm:"type:text"`
 	ShippingAddress               string         `json:"shipping_address" gorm:"type:text"`
 	Status                        string         `json:"status" gorm:"size:20"` // DRAFT, PENDING, CONFIRMED, CANCELLED
@@ -229,7 +229,7 @@ type SaleCreateRequest struct {
 	ReceivableAccountID *uint                        `json:"receivable_account_id"`
 	ShippingMethod      string                       `json:"shipping_method"`
 	ShippingCost        float64                      `json:"shipping_cost"`
-	ShippingTaxable     bool                         `json:"shipping_taxable"`
+	ShippingTaxable     *bool                        `json:"shipping_taxable"`
 	BillingAddress      string                       `json:"billing_address"`
 	ShippingAddress     string                       `json:"shipping_address"`
 	Notes               string                       `json:"notes"`

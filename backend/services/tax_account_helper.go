@@ -309,6 +309,21 @@ func (h *TaxAccountHelper) GetSalesOutputVATAccount(tx *gorm.DB) (*models.Accoun
 	return h.getFirstAvailableValidSalesOutputVATAccount(tx, "2103", "2102-001")
 }
 
+// GetSalesShippingRevenueAccount returns the configured shipping revenue
+// account. The dedicated 4101-010 account is the only automatic fallback;
+// 4102 is reserved for sales returns and discounts.
+func (h *TaxAccountHelper) GetSalesShippingRevenueAccount(tx *gorm.DB) (*models.Account, error) {
+	settings, err := h.loadFreshSettings(tx)
+	if err == nil && settings.SalesShippingRevenueAccountID != nil && *settings.SalesShippingRevenueAccountID > 0 {
+		account, loadErr := h.loadConfiguredAccount(tx, *settings.SalesShippingRevenueAccountID)
+		if loadErr == nil && strings.EqualFold(strings.TrimSpace(account.Type), models.AccountTypeRevenue) && !account.IsHeader && account.IsActive {
+			return account, nil
+		}
+	}
+
+	return h.getAccountByCode(tx, "4101-010")
+}
+
 // getAccountByCode is a helper to fetch account by code.
 func (h *TaxAccountHelper) getAccountByCode(tx *gorm.DB, code string) (*models.Account, error) {
 	dbToUse := h.db

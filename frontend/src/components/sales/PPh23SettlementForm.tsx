@@ -68,7 +68,9 @@ const PPh23SettlementForm: React.FC<PPh23SettlementFormProps> = ({
   const isInvoiceSettled = (sale?.outstanding_amount || 0) <= 0.005;
   const referenceNumber = sale?.invoice_number || sale?.code || "-";
   const estimatedNetInvoiceTotal = sale
-    ? (sale.taxable_amount || 0) +
+    ? (sale.net_before_tax ||
+        (sale.taxable_amount || 0) -
+          (sale.shipping_taxable ? sale.shipping_cost || 0 : 0)) +
       (sale.ppn || sale.ppn_amount || 0) +
       (sale.other_tax_additions || 0) +
       (sale.shipping_cost || 0) -

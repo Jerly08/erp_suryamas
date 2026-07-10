@@ -46,6 +46,7 @@ export interface Sale {
   discount_amount: number;
   discount: number; // Legacy field for compatibility
   taxable_amount: number;
+  net_before_tax?: number;
   ppn: number;
   ppn_percent: number;
   pph: number;
@@ -79,6 +80,7 @@ export interface Sale {
   receivable_account_id?: number;
   shipping_method?: string;
   shipping_cost: number;
+  shipping_taxable: boolean;
   billing_address?: string;
   shipping_address?: string;
   notes?: string;
@@ -247,6 +249,7 @@ export interface SaleCreateRequest {
   receivable_account_id?: number;
   shipping_method?: string;
   shipping_cost?: number;
+  shipping_taxable?: boolean;
   billing_address?: string;
   shipping_address?: string;
   notes?: string;
@@ -296,6 +299,7 @@ export interface SaleUpdateRequest {
   receivable_account_id?: number;
   shipping_method?: string;
   shipping_cost?: number;
+  shipping_taxable?: boolean;
   billing_address?: string;
   shipping_address?: string;
   notes?: string;

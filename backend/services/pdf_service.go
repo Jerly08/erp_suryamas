@@ -109,6 +109,9 @@ func (p *PDFService) buildSalePDFSummary(sale *models.Sale, subtotal float64) sa
 	taxableAmount := sale.TaxableAmount
 	if isEffectivelyZero(taxableAmount) {
 		taxableAmount = subtotal - discountAmount
+		if sale.ShippingTaxable {
+			taxableAmount += sale.ShippingCost
+		}
 	}
 
 	ppnRate := sale.PPNRate
@@ -135,7 +138,11 @@ func (p *PDFService) buildSalePDFSummary(sale *models.Sale, subtotal float64) sa
 	}
 
 	if isEffectivelyZero(summary.TotalAmount) {
-		summary.TotalAmount = taxableAmount +
+		netBeforeTax := sale.NetBeforeTax
+		if isEffectivelyZero(netBeforeTax) {
+			netBeforeTax = subtotal - discountAmount
+		}
+		summary.TotalAmount = netBeforeTax +
 			summary.PPNAmount +
 			summary.OtherTaxAdditions +
 			summary.ShippingCost -
@@ -1265,6 +1272,30 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 		currentY += 7
 	}
 
+	// Shipping is shown before DPP and PPN because taxable shipping contributes
+	// to the VAT base rather than being appended after tax.
+	if summary.ShippingCost > 0 {
+		pdf.SetFont("Arial", "B", 9)
+		pdf.SetTextColor(0, 0, 0)
+		pdf.SetXY(lm+summaryX, currentY)
+		pdf.Cell(45, 6, tr.ShippingCost+":")
+		pdf.SetFont("Arial", "", 9)
+		pdf.SetTextColor(40, 167, 69)
+		pdf.CellFormat(40, 6, "+ "+p.formatRupiah(summary.ShippingCost), "", 0, "R", false, 0, "")
+		currentY += 7
+	}
+
+	if summary.PPNAmount > 0 {
+		pdf.SetFont("Arial", "B", 9)
+		pdf.SetTextColor(0, 0, 0)
+		pdf.SetXY(lm+summaryX, currentY)
+		pdf.Cell(45, 6, tr.TaxableAmount+":")
+		pdf.SetFont("Arial", "", 9)
+		pdf.SetTextColor(102, 102, 102)
+		pdf.CellFormat(40, 6, p.formatRupiah(summary.TaxableAmount), "", 0, "R", false, 0, "")
+		currentY += 7
+	}
+
 	// PPN (only show if > 0)
 	if summary.PPNAmount > 0 {
 		pdf.SetFont("Arial", "B", 9)
@@ -1322,18 +1353,6 @@ func (p *PDFService) GenerateInvoicePDFWithLanguage(invoice interface{}, lang st
 		pdf.SetFont("Arial", "", 9)
 		pdf.SetTextColor(220, 53, 69) // Red for deduction
 		pdf.CellFormat(40, 6, "- "+p.formatRupiah(summary.OtherTaxDeductions), "", 0, "R", false, 0, "")
-		currentY += 7
-	}
-
-	// Shipping Cost (only show if > 0)
-	if summary.ShippingCost > 0 {
-		pdf.SetFont("Arial", "B", 9)
-		pdf.SetTextColor(0, 0, 0)
-		pdf.SetXY(lm+summaryX, currentY)
-		pdf.Cell(45, 6, tr.ShippingCost+":")
-		pdf.SetFont("Arial", "", 9)
-		pdf.SetTextColor(40, 167, 69) // Green for addition
-		pdf.CellFormat(40, 6, "+ "+p.formatRupiah(summary.ShippingCost), "", 0, "R", false, 0, "")
 		currentY += 7
 	}
 
@@ -1662,8 +1681,19 @@ func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, do
 		pdf.Ln(6)
 	}
 
+	if summary.ShippingCost > 0 {
+		pdf.Cell(120, 6, "")
+		pdf.Cell(25, 6, tr.Shipping+":")
+		pdf.Cell(45, 6, p.formatRupiah(summary.ShippingCost))
+		pdf.Ln(6)
+	}
+
 	// Taxes
 	if summary.PPNAmount > 0 {
+		pdf.Cell(120, 6, "")
+		pdf.Cell(25, 6, tr.TaxableAmount+":")
+		pdf.Cell(45, 6, p.formatRupiah(summary.TaxableAmount))
+		pdf.Ln(6)
 		pdf.Cell(120, 6, "")
 		pdf.Cell(25, 6, fmt.Sprintf("%s (%.1f%%):", tr.PPN, summary.PPNRate))
 		pdf.Cell(45, 6, p.formatRupiah(summary.PPNAmount))
@@ -1674,14 +1704,6 @@ func (p *PDFService) GenerateInvoicePDFWithTypeAndLanguage(sale *models.Sale, do
 		pdf.Cell(120, 6, "")
 		pdf.Cell(25, 6, fmt.Sprintf("%s (%.1f%%):", tr.PPh, summary.PPhPercent))
 		pdf.Cell(45, 6, "-"+p.formatRupiah(summary.PPhAmount))
-		pdf.Ln(6)
-	}
-
-	// Shipping
-	if summary.ShippingCost > 0 {
-		pdf.Cell(120, 6, "")
-		pdf.Cell(25, 6, tr.Shipping+":")
-		pdf.Cell(45, 6, p.formatRupiah(summary.ShippingCost))
 		pdf.Ln(6)
 	}
 

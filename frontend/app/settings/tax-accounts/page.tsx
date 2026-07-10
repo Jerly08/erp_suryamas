@@ -84,6 +84,7 @@ interface TaxAccountSettings {
   sales_cash_account: AccountOption;
   sales_bank_account: AccountOption;
   sales_revenue_account: AccountOption;
+  sales_shipping_revenue_account?: AccountOption;
   sales_output_vat_account: AccountOption;
 
   // Purchase accounts
@@ -299,6 +300,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           sales_cash_account: parseAccount(settingsData.sales_cash_account),
           sales_bank_account: parseAccount(settingsData.sales_bank_account),
           sales_revenue_account: parseAccount(settingsData.sales_revenue_account),
+          sales_shipping_revenue_account: parseAccount(settingsData.sales_shipping_revenue_account),
           sales_output_vat_account: parseAccount(settingsData.sales_output_vat_account),
           purchase_payable_account: parseAccount(settingsData.purchase_payable_account),
           purchase_cash_account: parseAccount(settingsData.purchase_cash_account),
@@ -317,6 +319,7 @@ const TaxAccountSettingsPage: React.FC = () => {
           sales_cash_account_id: parseAccount(settingsData.sales_cash_account)?.id,
           sales_bank_account_id: parseAccount(settingsData.sales_bank_account)?.id,
           sales_revenue_account_id: parseAccount(settingsData.sales_revenue_account)?.id,
+          sales_shipping_revenue_account_id: parseAccount(settingsData.sales_shipping_revenue_account)?.id,
           sales_output_vat_account_id: parseAccount(settingsData.sales_output_vat_account)?.id,
 
           // Purchase account IDs
@@ -434,6 +437,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         sales_cash_account_id: formData.sales_cash_account_id || settings?.sales_cash_account?.id,
         sales_bank_account_id: formData.sales_bank_account_id || settings?.sales_bank_account?.id,
         sales_revenue_account_id: formData.sales_revenue_account_id || settings?.sales_revenue_account?.id,
+        sales_shipping_revenue_account_id: formData.sales_shipping_revenue_account_id || settings?.sales_shipping_revenue_account?.id || null,
         sales_output_vat_account_id: formData.sales_output_vat_account_id || settings?.sales_output_vat_account?.id,
 
         // Purchase accounts (preserve existing values from settings)
@@ -513,6 +517,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         sales_cash_account: parseAccount(settings.sales_cash_account),
         sales_bank_account: parseAccount(settings.sales_bank_account),
         sales_revenue_account: parseAccount(settings.sales_revenue_account),
+        sales_shipping_revenue_account: parseAccount(settings.sales_shipping_revenue_account),
         sales_output_vat_account: parseAccount(settings.sales_output_vat_account),
         purchase_payable_account: parseAccount(settings.purchase_payable_account),
         purchase_cash_account: parseAccount(settings.purchase_cash_account),
@@ -531,6 +536,7 @@ const TaxAccountSettingsPage: React.FC = () => {
         sales_cash_account_id: parseAccount(settings.sales_cash_account)?.id,
         sales_bank_account_id: parseAccount(settings.sales_bank_account)?.id,
         sales_revenue_account_id: parseAccount(settings.sales_revenue_account)?.id,
+        sales_shipping_revenue_account_id: parseAccount(settings.sales_shipping_revenue_account)?.id,
         sales_output_vat_account_id: parseAccount(settings.sales_output_vat_account)?.id,
 
         // Purchase account IDs
@@ -872,6 +878,30 @@ const TaxAccountSettingsPage: React.FC = () => {
                     t('settings.taxAccounts.descriptions.vatOutput'),
                     t('settings.taxAccounts.tooltips.vat'),
                     ['2102-001', '2102']
+                  )}
+                </SimpleGrid>
+              </CardBody>
+            </Card>
+
+            <Card mb={6} bg={cardBg} border="1px" borderColor={cardBorderColor} boxShadow="md">
+              <CardHeader>
+                <HStack spacing={3}>
+                  <Icon as={FiDollarSign} boxSize={5} color={blueColor} />
+                  <Heading size="md">Akun Pendapatan Pengiriman</Heading>
+                  <Badge colorScheme="green" size="sm">{t('settings.taxAccounts.status.configurable')}</Badge>
+                </HStack>
+              </CardHeader>
+              <CardBody>
+                <SimpleGrid columns={[1, 1, 2]} spacing={6}>
+                  {renderAccountSelect(
+                    'sales_shipping_revenue',
+                    'Pendapatan Ongkir',
+                    false,
+                    ['REVENUE'],
+                    ['OPERATING_REVENUE', 'SALES_REVENUE'],
+                    'Dipakai untuk ongkir yang ditagihkan kembali kepada customer.',
+                    'Pilih akun pendapatan detail. Jangan gunakan 4102 karena akun tersebut untuk retur dan potongan penjualan.',
+                    ['4101-010']
                   )}
                 </SimpleGrid>
               </CardBody>

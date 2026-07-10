@@ -171,8 +171,26 @@ func calculateSaleNetTotalWithCurrentTaxes(sale *models.Sale) float64 {
 		return 0
 	}
 
+	netBeforeTax := sale.NetBeforeTax
+	if netBeforeTax == 0 {
+		netBeforeTax = sale.TaxableAmount
+		if sale.ShippingTaxable {
+			netBeforeTax -= sale.ShippingCost
+		}
+	}
 	totalTaxDeductions := sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
-	return roundScheduleMoney(sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - totalTaxDeductions)
+	return roundScheduleMoney(netBeforeTax + sale.ShippingCost + sale.PPN + sale.OtherTaxAdditions - totalTaxDeductions)
+}
+
+func calculateSalePPhTaxBase(sale *models.Sale) float64 {
+	if sale == nil {
+		return 0
+	}
+	base := sale.TaxableAmount
+	if sale.ShippingTaxable {
+		base -= sale.ShippingCost
+	}
+	return math.Max(0, roundScheduleMoney(base))
 }
 
 func applySalePPh23OutstandingReduction(sale *models.Sale, requestedAmount float64) (float64, error) {
@@ -270,12 +288,13 @@ func deriveLateSalePPh23Values(sale *models.Sale, request models.SaleLatePPh23Re
 		if request.Rate == nil || *request.Rate <= 0 {
 			return 0, 0, fmt.Errorf("nominal atau tarif PPh23 wajib diisi")
 		}
-		amount = roundScheduleMoney(sale.TaxableAmount * (*request.Rate / 100))
+		amount = roundScheduleMoney(calculateSalePPhTaxBase(sale) * (*request.Rate / 100))
 	}
 	if amount <= 0 {
 		return 0, 0, fmt.Errorf("nominal PPh23 harus lebih besar dari 0")
 	}
-	if sale.TaxableAmount > 0 && amount-sale.TaxableAmount > 0.005 {
+	pphTaxBase := calculateSalePPhTaxBase(sale)
+	if pphTaxBase > 0 && amount-pphTaxBase > 0.005 {
 		return 0, 0, fmt.Errorf("nominal PPh23 tidak boleh melebihi nilai dasar pengenaan pajak")
 	}
 
@@ -285,8 +304,8 @@ func deriveLateSalePPh23Values(sale *models.Sale, request models.SaleLatePPh23Re
 		if rate <= 0 {
 			return 0, 0, fmt.Errorf("tarif PPh23 harus lebih besar dari 0")
 		}
-	} else if sale.TaxableAmount > 0 {
-		rate = roundSalePPh23Rate((amount / sale.TaxableAmount) * 100)
+	} else if pphTaxBase > 0 {
+		rate = roundSalePPh23Rate((amount / pphTaxBase) * 100)
 	}
 
 	return amount, rate, nil
@@ -639,11 +658,12 @@ func (s *SalesServiceV2) createSalePPh23PaymentCorrection(
 	}
 
 	if cashBank.AccountID > 0 {
-		if err := tx.Exec(
-			"UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
-			cashBank.EffectiveBookBalanceIDR(),
-			cashBank.AccountID,
-		).Error; err != nil {
+		if err := tx.Model(&models.Account{}).
+			Where("id = ? AND deleted_at IS NULL", cashBank.AccountID).
+			Updates(map[string]interface{}{
+				"balance":    cashBank.EffectiveBookBalanceIDR(),
+				"updated_at": time.Now(),
+			}).Error; err != nil {
 			return fmt.Errorf("failed to sync linked GL cash/bank account after PPh23 correction: %w", err)
 		}
 	}
@@ -875,7 +895,7 @@ func (s *SalesServiceV2) AddLatePPh23(saleID uint, request models.SaleLatePPh23R
 	sale.TotalTaxDeductions = sale.PPh + sale.PPh21Amount + sale.PPh23Amount + sale.OtherTaxDeductions
 	sale.TotalTax = sale.PPN + sale.TotalTaxAdditions - sale.TotalTaxDeductions
 	sale.Tax = sale.TotalTax
-	sale.TotalAmount = sale.TaxableAmount + sale.PPN + sale.OtherTaxAdditions + sale.ShippingCost - sale.TotalTaxDeductions
+	sale.TotalAmount = calculateSaleNetTotalWithCurrentTaxes(&sale)
 	sale.OutstandingAmount = roundScheduleMoney(sale.TotalAmount - sale.PaidAmount)
 	if sale.OutstandingAmount <= 0.005 {
 		sale.OutstandingAmount = 0

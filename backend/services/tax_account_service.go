@@ -106,6 +106,7 @@ func (s *TaxAccountService) preloadTaxAccountRelations(db *gorm.DB) *gorm.DB {
 		Preload("SalesCashAccount").
 		Preload("SalesBankAccount").
 		Preload("SalesRevenueAccount").
+		Preload("SalesShippingRevenueAccount").
 		Preload("SalesOutputVATAccount").
 		Preload("PurchasePayableAccount").
 		Preload("PurchaseCashAccount").
@@ -237,6 +238,15 @@ func (s *TaxAccountService) requiredAccountRoles(settings *models.TaxAccountSett
 
 func (s *TaxAccountService) optionalAccountRoles(settings *models.TaxAccountSettings) []taxAccountRole {
 	roles := []taxAccountRole{}
+	if settings.SalesShippingRevenueAccountID != nil && *settings.SalesShippingRevenueAccountID > 0 {
+		roles = append(roles, taxAccountRole{
+			FieldName:    "sales_shipping_revenue",
+			ColumnName:   "sales_shipping_revenue_account_id",
+			Label:        "Sales Shipping Revenue",
+			AccountID:    *settings.SalesShippingRevenueAccountID,
+			AllowedTypes: []string{models.AccountTypeRevenue},
+		})
+	}
 	if settings.WithholdingTax21AccountID != nil && *settings.WithholdingTax21AccountID > 0 {
 		roles = append(roles, taxAccountRole{
 			FieldName:    "withholding_tax21",
@@ -458,26 +468,27 @@ func (s *TaxAccountService) CreateSettings(req *models.TaxAccountSettingsCreateR
 
 	// Create new settings
 	settings := &models.TaxAccountSettings{
-		SalesReceivableAccountID:  req.SalesReceivableAccountID,
-		SalesCashAccountID:        req.SalesCashAccountID,
-		SalesBankAccountID:        req.SalesBankAccountID,
-		SalesRevenueAccountID:     req.SalesRevenueAccountID,
-		SalesOutputVATAccountID:   req.SalesOutputVATAccountID,
-		PurchasePayableAccountID:  req.PurchasePayableAccountID,
-		PurchaseCashAccountID:     req.PurchaseCashAccountID,
-		PurchaseBankAccountID:     req.PurchaseBankAccountID,
-		PurchaseInputVATAccountID: req.PurchaseInputVATAccountID,
-		PurchaseExpenseAccountID:  req.PurchaseExpenseAccountID,
-		WithholdingTax21AccountID: req.WithholdingTax21AccountID,
-		WithholdingTax23AccountID: req.WithholdingTax23AccountID,
-		WithholdingTax25AccountID: req.WithholdingTax25AccountID,
-		TaxPayableAccountID:       req.TaxPayableAccountID,
-		InventoryAccountID:        req.InventoryAccountID,
-		COGSAccountID:             req.COGSAccountID,
-		IsActive:                  true,
-		ApplyToAllCompanies:       req.ApplyToAllCompanies != nil && *req.ApplyToAllCompanies,
-		UpdatedBy:                 userID,
-		Notes:                     req.Notes,
+		SalesReceivableAccountID:      req.SalesReceivableAccountID,
+		SalesCashAccountID:            req.SalesCashAccountID,
+		SalesBankAccountID:            req.SalesBankAccountID,
+		SalesRevenueAccountID:         req.SalesRevenueAccountID,
+		SalesShippingRevenueAccountID: req.SalesShippingRevenueAccountID,
+		SalesOutputVATAccountID:       req.SalesOutputVATAccountID,
+		PurchasePayableAccountID:      req.PurchasePayableAccountID,
+		PurchaseCashAccountID:         req.PurchaseCashAccountID,
+		PurchaseBankAccountID:         req.PurchaseBankAccountID,
+		PurchaseInputVATAccountID:     req.PurchaseInputVATAccountID,
+		PurchaseExpenseAccountID:      req.PurchaseExpenseAccountID,
+		WithholdingTax21AccountID:     req.WithholdingTax21AccountID,
+		WithholdingTax23AccountID:     req.WithholdingTax23AccountID,
+		WithholdingTax25AccountID:     req.WithholdingTax25AccountID,
+		TaxPayableAccountID:           req.TaxPayableAccountID,
+		InventoryAccountID:            req.InventoryAccountID,
+		COGSAccountID:                 req.COGSAccountID,
+		IsActive:                      true,
+		ApplyToAllCompanies:           req.ApplyToAllCompanies != nil && *req.ApplyToAllCompanies,
+		UpdatedBy:                     userID,
+		Notes:                         req.Notes,
 	}
 
 	// Validate settings
@@ -509,6 +520,7 @@ func (s *TaxAccountService) CreateSettings(req *models.TaxAccountSettingsCreateR
 		Preload("SalesCashAccount").
 		Preload("SalesBankAccount").
 		Preload("SalesRevenueAccount").
+		Preload("SalesShippingRevenueAccount").
 		Preload("SalesOutputVATAccount").
 		Preload("PurchasePayableAccount").
 		Preload("PurchaseCashAccount").
@@ -546,6 +558,9 @@ func (s *TaxAccountService) UpdateSettings(id uint, req *models.TaxAccountSettin
 	}
 	if req.SalesRevenueAccountID != nil {
 		settings.SalesRevenueAccountID = *req.SalesRevenueAccountID
+	}
+	if req.SalesShippingRevenueAccountID != nil {
+		settings.SalesShippingRevenueAccountID = req.SalesShippingRevenueAccountID
 	}
 	if req.SalesOutputVATAccountID != nil {
 		settings.SalesOutputVATAccountID = *req.SalesOutputVATAccountID
@@ -617,6 +632,7 @@ func (s *TaxAccountService) UpdateSettings(id uint, req *models.TaxAccountSettin
 		Preload("SalesCashAccount").
 		Preload("SalesBankAccount").
 		Preload("SalesRevenueAccount").
+		Preload("SalesShippingRevenueAccount").
 		Preload("SalesOutputVATAccount").
 		Preload("PurchasePayableAccount").
 		Preload("PurchaseCashAccount").
@@ -653,6 +669,9 @@ func (s *TaxAccountService) validateAccounts(req *models.TaxAccountSettingsCreat
 	// Add optional account IDs if provided
 	if req.WithholdingTax21AccountID != nil {
 		accountIDs = append(accountIDs, *req.WithholdingTax21AccountID)
+	}
+	if req.SalesShippingRevenueAccountID != nil {
+		accountIDs = append(accountIDs, *req.SalesShippingRevenueAccountID)
 	}
 	if req.WithholdingTax23AccountID != nil {
 		accountIDs = append(accountIDs, *req.WithholdingTax23AccountID)
@@ -714,6 +733,11 @@ func (s *TaxAccountService) GetAccountID(accountType string) (uint, error) {
 		return settings.SalesBankAccountID, nil
 	case "sales_revenue":
 		return settings.SalesRevenueAccountID, nil
+	case "sales_shipping_revenue":
+		if settings.SalesShippingRevenueAccountID != nil {
+			return *settings.SalesShippingRevenueAccountID, nil
+		}
+		return 0, fmt.Errorf("sales shipping revenue account not configured")
 	case "sales_output_vat":
 		return settings.SalesOutputVATAccountID, nil
 
@@ -793,6 +817,7 @@ func (s *TaxAccountService) GetAllSettings() ([]models.TaxAccountSettings, error
 		Preload("SalesCashAccount").
 		Preload("SalesBankAccount").
 		Preload("SalesRevenueAccount").
+		Preload("SalesShippingRevenueAccount").
 		Preload("SalesOutputVATAccount").
 		Preload("PurchasePayableAccount").
 		Preload("PurchaseCashAccount").

@@ -159,7 +159,7 @@ const SalesSummaryModal: React.FC<SalesSummaryModalProps> = ({
       : 0;
     
     // Calculate average order value
-    const averageOrderValue = totalOrders > 0 ? (data.total_revenue || data.total_sales || 0) / totalOrders : 0;
+    const averageOrderValue = totalOrders > 0 ? (data.total_sales || 0) / totalOrders : 0;
     
     return (
       <Grid templateColumns="repeat(auto-fit, minmax(240px, 1fr))" gap={4} mb={6}>
@@ -179,6 +179,78 @@ const SalesSummaryModal: React.FC<SalesSummaryModalProps> = ({
             </CardBody>
           </Card>
         </GridItem>
+
+        <GridItem>
+          <Card size="sm">
+            <CardBody>
+              <Stat>
+                <StatLabel>{t('reports.modal.totalInvoiceValue')}</StatLabel>
+                <StatNumber color="blue.600">
+                  {formatCurrency(data.total_sales || 0)}
+                </StatNumber>
+                <StatHelpText>
+                  <Icon as={FiFileText} />
+                  {t('reports.modal.invoiceIncludingTax')}
+                </StatHelpText>
+              </Stat>
+            </CardBody>
+          </Card>
+        </GridItem>
+
+        {(data.total_shipping_revenue || 0) > 0 && (
+          <GridItem>
+            <Card size="sm">
+              <CardBody>
+                <Stat>
+                  <StatLabel>{t('reports.modal.shippingRevenue')}</StatLabel>
+                  <StatNumber color="teal.600">
+                    {formatCurrency(data.total_shipping_revenue || 0)}
+                  </StatNumber>
+                  <StatHelpText>
+                    <Icon as={FiShoppingCart} />
+                    {t('reports.modal.includedInRevenue')}
+                  </StatHelpText>
+                </Stat>
+              </CardBody>
+            </Card>
+          </GridItem>
+        )}
+
+        <GridItem>
+          <Card size="sm">
+            <CardBody>
+              <Stat>
+                <StatLabel>{t('reports.modal.taxableBase')}</StatLabel>
+                <StatNumber color="purple.600">
+                  {formatCurrency(data.total_taxable_base || 0)}
+                </StatNumber>
+                <StatHelpText>
+                  <Icon as={FiPieChart} />
+                  {t('reports.modal.ppnCalculationBase')}
+                </StatHelpText>
+              </Stat>
+            </CardBody>
+          </Card>
+        </GridItem>
+
+        {(data.total_tax || 0) > 0 && (
+          <GridItem>
+            <Card size="sm">
+              <CardBody>
+                <Stat>
+                  <StatLabel>{t('reports.modal.outputVat')}</StatLabel>
+                  <StatNumber color="orange.600">
+                    {formatCurrency(data.total_tax || 0)}
+                  </StatNumber>
+                  <StatHelpText>
+                    <Icon as={FiDollarSign} />
+                    {t('reports.modal.taxCollected')}
+                  </StatHelpText>
+                </Stat>
+              </CardBody>
+            </Card>
+          </GridItem>
+        )}
         
         <GridItem>
           <Card size="sm">
@@ -323,7 +395,7 @@ const SalesSummaryModal: React.FC<SalesSummaryModalProps> = ({
                         {formatCurrency(customer.total_sales)}
                       </Text>
             <Text fontSize="sm" color={previewPeriodTextColor}>
-                        {((customer.total_sales / (data.total_revenue || data.total_sales || 1)) * 100).toFixed(1)}% of total
+                        {((customer.total_sales / (data.total_sales || 1)) * 100).toFixed(1)}% of total
                       </Text>
                       {customer.transaction_count && (
                         <Text fontSize="xs" color="purple.500">
@@ -619,7 +691,7 @@ const SalesSummaryModal: React.FC<SalesSummaryModalProps> = ({
                               {formatCurrency(customer.total_sales)}
                             </Text>
                             <Text fontSize="sm" color={secondaryTextColor}>
-                              {((customer.total_sales / (data.total_revenue || data.total_sales || 1)) * 100).toFixed(1)}% {t('reports.modal.ofTotal')}
+                              {((customer.total_sales / (data.total_sales || 1)) * 100).toFixed(1)}% {t('reports.modal.ofTotal')}
                             </Text>
                             {customer.transaction_count && (
                               <Text fontSize="xs" color="purple.600">
