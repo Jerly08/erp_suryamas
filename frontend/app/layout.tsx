@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ClientProviders from './ClientProviders';
-import { DEFAULT_APP_NAME } from '@/config/branding';
+import { DEFAULT_APP_NAME, DISABLED_BROWSER_ICON_PATH } from '@/config/branding';
 
 export const metadata: Metadata = {
   title: DEFAULT_APP_NAME,
@@ -17,9 +17,8 @@ export const metadata: Metadata = {
     telephone: false,
   },
   icons: {
-    icon: [{ url: "/api/v1/branding/icon", sizes: "any" }],
-    shortcut: [{ url: "/api/v1/branding/icon", sizes: "any" }],
-    apple: [{ url: "/api/v1/branding/icon", sizes: "any" }],
+    icon: [{ url: DISABLED_BROWSER_ICON_PATH, type: "image/svg+xml" }],
+    shortcut: [{ url: DISABLED_BROWSER_ICON_PATH, type: "image/svg+xml" }],
   },
 };
 

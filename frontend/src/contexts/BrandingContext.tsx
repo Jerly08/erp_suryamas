@@ -12,6 +12,7 @@ import { usePathname } from 'next/navigation';
 import { API_ENDPOINTS } from '@/config/api';
 import {
   DEFAULT_APP_NAME,
+  DISABLED_BROWSER_ICON_PATH,
   DEFAULT_ICON_PATH,
   DEFAULT_LOGO_PATH,
   DEFAULT_LOGO_SCALE,
@@ -116,7 +117,6 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const iconDefinitions = [
       { rel: 'icon', sizes: 'any' },
       { rel: 'shortcut icon', sizes: 'any' },
-      { rel: 'apple-touch-icon', sizes: '180x180' },
     ];
 
     document.title = branding.companyName;
@@ -141,11 +141,9 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const link = document.createElement('link');
       link.setAttribute('data-branding-icon', rel);
       link.rel = rel;
-      link.href = branding.iconUrl;
+      link.href = DISABLED_BROWSER_ICON_PATH;
       link.sizes = sizes;
-      if (branding.iconUrl.toLowerCase().includes('.png')) {
-        link.type = 'image/png';
-      }
+      link.type = 'image/svg+xml';
       document.head.appendChild(link);
     });
 
@@ -153,7 +151,7 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (manifest && branding.updatedAt) {
       manifest.href = appendVersion(API_ENDPOINTS.BRANDING_MANIFEST, branding.updatedAt);
     }
-  }, [branding.companyName, branding.iconUrl, branding.updatedAt, pathname]);
+  }, [branding.companyName, branding.updatedAt, pathname]);
 
   const value = useMemo<BrandingContextValue>(
     () => ({

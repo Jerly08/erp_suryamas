@@ -46,7 +46,12 @@ const nextConfig: NextConfig = {
 		return [
 			{
 				source: '/favicon.ico',
-				destination: '/api/v1/branding/icon',
+				destination: '/favicon.svg?v=no-avery',
+				permanent: false,
+			},
+			{
+				source: '/avery-icon.png',
+				destination: '/favicon.svg?v=no-avery',
 				permanent: false,
 			},
 		];
