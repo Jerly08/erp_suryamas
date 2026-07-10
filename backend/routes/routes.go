@@ -320,13 +320,15 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 	{
 		// 🔐 Auth routes (minimal public access)
 		auth := v1.Group("/auth")
-		auth.Use(middleware.AuthRateLimit())         // Apply auth rate limiting
 		auth.Use(enhancedSecurity.SecurityHeaders()) // Extra security for auth endpoints
 		{
-			auth.POST("/login", authController.Login)
+			// Only credential-entry endpoints consume the shared login-attempt quota.
+			// Session validation and refresh traffic must not lock out office users
+			// that share the same public IP address.
+			auth.POST("/login", middleware.AuthRateLimit(), authController.Login)
 			// 🔒 PRODUCTION: Disable register endpoint in production
 			if isDevelopmentMode() || os.Getenv("ALLOW_REGISTRATION") == "true" {
-				auth.POST("/register", authController.Register)
+				auth.POST("/register", middleware.AuthRateLimit(), authController.Register)
 			}
 			auth.POST("/refresh", authController.RefreshToken)
 			auth.POST("/logout", authController.Logout)
