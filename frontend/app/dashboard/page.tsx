@@ -42,7 +42,7 @@ const AccountingDashboard = () => (
 );
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
   const [redirecting, setRedirecting] = useState(false);
 
@@ -62,10 +62,11 @@ export default function DashboardPage() {
 
   // Redirect to login if not authenticated
   useEffect(() => {
-    if (!user) {
-      router.push("/login");
+    if (!isAuthLoading && !user) {
+      setRedirecting(true);
+      router.replace("/login");
     }
-  }, [user, router]);
+  }, [isAuthLoading, user, router]);
 
   // Handle unauthorized role redirect
   useEffect(() => {
@@ -90,7 +91,7 @@ export default function DashboardPage() {
   }, [user, router]);
 
   const isLoading =
-    redirecting || (roleNeedsAnalytics ? analyticsLoading : false);
+    isAuthLoading || redirecting || (roleNeedsAnalytics ? analyticsLoading : false);
 
   const role = normalizeRole(user?.role);
   const shouldShowCOAApprovalQueue =
