@@ -20,8 +20,8 @@ ALTER TABLE payroll_items
 
 UPDATE payroll_items
 SET
-  bpjs_tk_jht_employee = COALESCE(NULLIF(bpjs_tk_jht_employee, 0), COALESCE(bpjs_tk_jht, 0)),
-  bpjs_tk_jp_employee = COALESCE(NULLIF(bpjs_tk_jp_employee, 0), COALESCE(bpjs_tk_jp, 0)),
+  bpjs_tk_jht_employee = COALESCE(NULLIF(bpjs_tk_jht_employee, 0), COALESCE(bpjstkjht, 0)),
+  bpjs_tk_jp_employee = COALESCE(NULLIF(bpjs_tk_jp_employee, 0), COALESCE(bpjstkjp, 0)),
   bpjs_kesehatan_employee = COALESCE(NULLIF(bpjs_kesehatan_employee, 0), COALESCE(bpjs_kesehatan, 0)),
   bpjs_tk_jht_employer = COALESCE(bpjs_tk_jht_employer, 0),
   bpjs_tk_jp_employer = COALESCE(bpjs_tk_jp_employer, 0),
