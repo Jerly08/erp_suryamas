@@ -31,6 +31,9 @@
 	@middlewareSubrequest header x-middleware-subrequest *
 	respond @middlewareSubrequest "Forbidden" 403
 
+	@sensitivePaths path /.env* /.git* /wp-admin* /wp-login.php /xmlrpc.php /phpmyadmin* /vendor* /composer.* /server-status
+	respond @sensitivePaths "Not Found" 404
+
 	@api path /api/*
 	reverse_proxy @api backend:8080
 

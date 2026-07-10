@@ -3,6 +3,7 @@ services:
     image: caddy:2-alpine
     container_name: erp_proxy
     restart: unless-stopped
+    read_only: true
     init: true
     depends_on:
       frontend:
@@ -29,6 +30,8 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+    tmpfs:
+      - /tmp:noexec,nosuid,nodev,size=64m
     logging:
       driver: json-file
       options:
@@ -86,6 +89,7 @@ services:
     image: ${BACKEND_IMAGE:-ghcr.io/jerly08/erp_akuntansi-backend}:${IMAGE_TAG:-production}
     container_name: erp_backend
     restart: unless-stopped
+    read_only: true
     init: true
     depends_on:
       db:
@@ -141,6 +145,7 @@ services:
     image: ${FRONTEND_IMAGE:-ghcr.io/jerly08/erp_akuntansi-frontend}:${IMAGE_TAG:-production}
     container_name: erp_frontend
     restart: unless-stopped
+    read_only: true
     init: true
     depends_on:
       backend:
