@@ -77,7 +77,7 @@ const LoginContent = () => {
   
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/dashboard');
+      router.replace('/dashboard');
     }
   }, [isAuthenticated, router]);
 
@@ -107,7 +107,6 @@ const LoginContent = () => {
         isClosable: true,
       });
       
-      router.push('/dashboard');
     } catch (err) {
       // Use the actual error message from the caught exception
       const errorMessage = err instanceof Error ? err.message : 'Invalid email or password';
