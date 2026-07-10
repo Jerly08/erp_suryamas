@@ -103,24 +103,45 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [refreshBranding]);
 
   useEffect(() => {
-    const iconDefinitions = ['icon', 'shortcut icon', 'apple-touch-icon'];
+    const iconDefinitions = [
+      { rel: 'icon', sizes: 'any' },
+      { rel: 'shortcut icon', sizes: 'any' },
+      { rel: 'apple-touch-icon', sizes: '180x180' },
+    ];
 
     document.title = branding.companyName;
 
-    iconDefinitions.forEach((rel) => {
-      const selector = `link[data-branding-icon="${rel}"]`;
-      let link = document.head.querySelector<HTMLLinkElement>(selector);
+    document.head
+      .querySelectorAll<HTMLLinkElement>(
+        [
+          'link[rel~="icon"]',
+          'link[rel="shortcut icon"]',
+          'link[rel="apple-touch-icon"]',
+          'link[data-branding-icon]',
+          'link[href="/favicon.ico"]',
+          'link[href^="/api/v1/branding/icon"]',
+          'link[href^="/avery-icon.png"]',
+        ].join(','),
+      )
+      .forEach((link) => link.remove());
 
-      if (!link) {
-        link = document.createElement('link');
-        link.setAttribute('data-branding-icon', rel);
-        document.head.appendChild(link);
-      }
-
+    iconDefinitions.forEach(({ rel, sizes }) => {
+      const link = document.createElement('link');
+      link.setAttribute('data-branding-icon', rel);
       link.rel = rel;
       link.href = branding.iconUrl;
+      link.sizes = sizes;
+      if (branding.iconUrl.toLowerCase().includes('.png')) {
+        link.type = 'image/png';
+      }
+      document.head.appendChild(link);
     });
-  }, [branding.companyName, branding.iconUrl, pathname]);
+
+    const manifest = document.head.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    if (manifest && branding.updatedAt) {
+      manifest.href = appendVersion(API_ENDPOINTS.BRANDING_MANIFEST, branding.updatedAt);
+    }
+  }, [branding.companyName, branding.iconUrl, branding.updatedAt, pathname]);
 
   const value = useMemo<BrandingContextValue>(
     () => ({
