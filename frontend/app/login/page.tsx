@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/contexts/BrandingContext';
@@ -44,7 +44,7 @@ const LoginContent = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
   const { companyName, logoUrl, logoScale, poweredByText } = useBranding();
   const router = useRouter();
   const toast = useToast();
@@ -75,11 +75,20 @@ const LoginContent = () => {
   const errorAlertBg = useColorModeValue('red.50', 'red.900');
   const errorAlertBorderColor = useColorModeValue('red.200', 'red.700');
   
-  useEffect(() => {
-    if (isAuthenticated) {
-      router.replace('/dashboard');
+  const redirectToDashboard = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.location.replace('/dashboard');
+      return;
     }
-  }, [isAuthenticated, router]);
+
+    router.replace('/dashboard');
+  }, [router]);
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      redirectToDashboard();
+    }
+  }, [isAuthenticated, isLoading, redirectToDashboard]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,6 +115,8 @@ const LoginContent = () => {
         duration: 3000,
         isClosable: true,
       });
+
+      redirectToDashboard();
       
     } catch (err) {
       // Use the actual error message from the caught exception
