@@ -63,6 +63,16 @@ const appendVersion = (url: string, version?: string): string => {
   return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
 };
 
+const setNamedMetaContent = (name: string, content: string) => {
+  let meta = document.head.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = name;
+    document.head.appendChild(meta);
+  }
+  meta.content = content;
+};
+
 export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [branding, setBranding] = useState<BrandingState>(defaultBranding);
   const pathname = usePathname();
@@ -110,6 +120,8 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     ];
 
     document.title = branding.companyName;
+    setNamedMetaContent('application-name', branding.companyName);
+    setNamedMetaContent('apple-mobile-web-app-title', branding.companyName);
 
     document.head
       .querySelectorAll<HTMLLinkElement>(
