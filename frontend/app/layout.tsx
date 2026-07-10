@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ClientProviders from './ClientProviders';
-import { DEFAULT_APP_NAME, DISABLED_BROWSER_ICON_PATH } from '@/config/branding';
+import { DEFAULT_APP_NAME, HEAD_APPLE_TOUCH_ICON_PATH, HEAD_ICON_PATH } from '@/config/branding';
 
 export const metadata: Metadata = {
   title: DEFAULT_APP_NAME,
@@ -15,10 +15,6 @@ export const metadata: Metadata = {
   },
   formatDetection: {
     telephone: false,
-  },
-  icons: {
-    icon: [{ url: DISABLED_BROWSER_ICON_PATH, type: "image/svg+xml" }],
-    shortcut: [{ url: DISABLED_BROWSER_ICON_PATH, type: "image/svg+xml" }],
   },
 };
 
@@ -37,6 +33,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <link rel="icon" href={HEAD_ICON_PATH} sizes="192x192" type="image/png" />
+        <link rel="shortcut icon" href={HEAD_ICON_PATH} sizes="192x192" type="image/png" />
+        <link rel="apple-touch-icon" href={HEAD_APPLE_TOUCH_ICON_PATH} sizes="180x180" type="image/png" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

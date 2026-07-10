@@ -1,8 +1,13 @@
 package controllers
 
 import (
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -10,6 +15,9 @@ import (
 	"app-sistem-akuntansi/services"
 
 	"github.com/gin-gonic/gin"
+
+	_ "image/gif"
+	_ "image/jpeg"
 )
 
 type SettingsController struct {
@@ -102,10 +110,104 @@ func (sc *SettingsController) GetPublicBranding(c *gin.Context) {
 	})
 }
 
-// GetPublicBrandingIcon intentionally serves a blank browser favicon.
+const fallbackBrowserIconPath = "/favicon.svg?v=no-branding"
+const fallbackBrandingLogoPath = "/branding-logo-placeholder.svg?v=no-branding"
+
+// GetPublicBrandingIcon redirects a stable browser/PWA icon URL to the uploaded company icon.
 func (sc *SettingsController) GetPublicBrandingIcon(c *gin.Context) {
+	settings, err := sc.settingsService.GetSettings()
+	if err != nil {
+		c.Header("Cache-Control", "no-store, max-age=0")
+		c.Redirect(http.StatusTemporaryRedirect, fallbackBrowserIconPath)
+		return
+	}
+
+	iconPath := strings.TrimSpace(settings.CompanyIcon)
+	if !strings.HasPrefix(iconPath, "/uploads/company/") {
+		iconPath = fallbackBrowserIconPath
+	}
+
+	if size := parseBrandingIconSize(c.Query("size")); size > 0 && strings.HasPrefix(iconPath, "/uploads/company/") {
+		if sc.writeSquareBrandingIcon(c, iconPath, size) {
+			return
+		}
+	}
+
 	c.Header("Cache-Control", "no-store, max-age=0")
-	c.Redirect(http.StatusTemporaryRedirect, "/favicon.svg?v=no-avery")
+	c.Redirect(http.StatusTemporaryRedirect, iconPath)
+}
+
+func parseBrandingIconSize(raw string) int {
+	switch strings.TrimSpace(raw) {
+	case "180":
+		return 180
+	case "192":
+		return 192
+	case "512":
+		return 512
+	default:
+		return 0
+	}
+}
+
+func (sc *SettingsController) writeSquareBrandingIcon(c *gin.Context, iconPath string, size int) bool {
+	localPath := filepath.Clean(strings.TrimPrefix(iconPath, "/"))
+	uploadsPrefix := filepath.Join("uploads", "company") + string(os.PathSeparator)
+	if !strings.HasPrefix(localPath, uploadsPrefix) {
+		return false
+	}
+
+	file, err := os.Open(localPath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	src, _, err := image.Decode(file)
+	if err != nil {
+		return false
+	}
+
+	bounds := src.Bounds()
+	srcWidth := bounds.Dx()
+	srcHeight := bounds.Dy()
+	if srcWidth <= 0 || srcHeight <= 0 {
+		return false
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, size, size))
+	transparent := image.NewUniform(color.RGBA{0, 0, 0, 0})
+	draw.Draw(dst, dst.Bounds(), transparent, image.Point{}, draw.Src)
+
+	scaleX := float64(size) / float64(srcWidth)
+	scaleY := float64(size) / float64(srcHeight)
+	scale := scaleX
+	if scaleY < scale {
+		scale = scaleY
+	}
+
+	scaledWidth := int(float64(srcWidth)*scale + 0.5)
+	scaledHeight := int(float64(srcHeight)*scale + 0.5)
+	if scaledWidth < 1 {
+		scaledWidth = 1
+	}
+	if scaledHeight < 1 {
+		scaledHeight = 1
+	}
+
+	offsetX := (size - scaledWidth) / 2
+	offsetY := (size - scaledHeight) / 2
+	for y := 0; y < scaledHeight; y++ {
+		sourceY := bounds.Min.Y + (y*srcHeight)/scaledHeight
+		for x := 0; x < scaledWidth; x++ {
+			sourceX := bounds.Min.X + (x*srcWidth)/scaledWidth
+			dst.Set(offsetX+x, offsetY+y, src.At(sourceX, sourceY))
+		}
+	}
+
+	c.Header("Cache-Control", "no-store, max-age=0")
+	c.Header("Content-Type", "image/png")
+	return png.Encode(c.Writer, dst) == nil
 }
 
 // GetPublicBrandingLogo redirects a stable loading-screen URL to the current uploaded logo.
@@ -118,7 +220,7 @@ func (sc *SettingsController) GetPublicBrandingLogo(c *gin.Context) {
 
 	logoPath := strings.TrimSpace(settings.CompanyLogo)
 	if !strings.HasPrefix(logoPath, "/uploads/company/") {
-		logoPath = "/logo_avery.png"
+		logoPath = fallbackBrandingLogoPath
 	}
 
 	c.Header("Cache-Control", "no-store, max-age=0")
@@ -138,6 +240,42 @@ func (sc *SettingsController) GetPublicBrandingManifest(c *gin.Context) {
 		companyName = "Finance Management"
 	}
 
+	iconPath := strings.TrimSpace(settings.CompanyIcon)
+	hasUploadedIcon := strings.HasPrefix(iconPath, "/uploads/company/")
+	iconVersion := strconv.FormatInt(settings.UpdatedAt.UnixNano(), 10)
+	manifestIconURL := func(size int) string {
+		return "/api/v1/branding/icon?size=" + strconv.Itoa(size) + "&source=manifest&v=" + iconVersion
+	}
+	manifestIcons := []gin.H{
+		{
+			"src":     manifestIconURL(192),
+			"sizes":   "192x192",
+			"type":    "image/png",
+			"purpose": "any",
+		},
+		{
+			"src":     manifestIconURL(512),
+			"sizes":   "512x512",
+			"type":    "image/png",
+			"purpose": "any",
+		},
+		{
+			"src":     manifestIconURL(512),
+			"sizes":   "any",
+			"type":    "image/png",
+			"purpose": "any maskable",
+		},
+	}
+	if !hasUploadedIcon {
+		manifestIcons = []gin.H{
+			{
+				"src":   fallbackBrowserIconPath,
+				"sizes": "32x32",
+				"type":  "image/svg+xml",
+			},
+		}
+	}
+
 	c.Header("Cache-Control", "no-store, max-age=0")
 	c.Header("Content-Type", "application/manifest+json")
 	c.JSON(http.StatusOK, gin.H{
@@ -150,13 +288,7 @@ func (sc *SettingsController) GetPublicBrandingManifest(c *gin.Context) {
 		"orientation":      "portrait-primary",
 		"background_color": "#f8f9fa",
 		"theme_color":      "#2196F3",
-		"icons": []gin.H{
-			{
-				"src":   "/favicon.svg?v=no-avery",
-				"sizes": "32x32",
-				"type":  "image/svg+xml",
-			},
-		},
+		"icons":            manifestIcons,
 	})
 }
 

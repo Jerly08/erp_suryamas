@@ -45,16 +45,6 @@ const nextConfig: NextConfig = {
 	async redirects() {
 		return [
 			{
-				source: '/favicon.ico',
-				destination: '/favicon.svg?v=no-avery',
-				permanent: false,
-			},
-			{
-				source: '/avery-icon.png',
-				destination: '/favicon.svg?v=no-avery',
-				permanent: false,
-			},
-			{
 				source: '/manifest.webmanifest',
 				destination: '/api/v1/branding/manifest.webmanifest',
 				permanent: false,

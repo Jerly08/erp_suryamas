@@ -1,19 +1,19 @@
 package services
 
 import (
+	"app-sistem-akuntansi/config"
+	"app-sistem-akuntansi/database"
+	"app-sistem-akuntansi/models"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"log"
 	"math"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
-	"app-sistem-akuntansi/config"
-	"app-sistem-akuntansi/database"
-	"app-sistem-akuntansi/models"
-	"gorm.io/gorm"
 )
 
 type SettingsService struct {
@@ -41,7 +41,7 @@ func (s *SettingsService) InitializeCOA(companyType string, userID uint) error {
 	if err := s.db.Model(&settings).Updates(updates).Error; err != nil {
 		return fmt.Errorf("failed to update company type: %v", err)
 	}
-	
+
 	// Invalidate cache
 	settingsCacheMutex.Lock()
 	settingsCache = nil
@@ -56,7 +56,6 @@ func (s *SettingsService) InitializeCOA(companyType string, userID uint) error {
 	return nil
 }
 
-
 // Simple in-memory cache for settings (process-local)
 var (
 	settingsCache      *models.Settings
@@ -64,6 +63,14 @@ var (
 	settingsCacheMutex sync.RWMutex
 	settingsCacheTTL   = 5 * time.Minute
 )
+
+// ClearSettingsCache invalidates the process-local settings cache.
+func ClearSettingsCache() {
+	settingsCacheMutex.Lock()
+	settingsCache = nil
+	settingsCacheAt = time.Time{}
+	settingsCacheMutex.Unlock()
+}
 
 // NewSettingsService creates a new instance of SettingsService
 func NewSettingsService(db *gorm.DB) *SettingsService {
@@ -246,45 +253,62 @@ func (s *SettingsService) createDefaultSettings() models.Settings {
 	journalPrefix := "JE"
 	requireApproval := false
 	if cfg != nil {
-		if cfg.JournalSettings.CodePrefix != "" { journalPrefix = cfg.JournalSettings.CodePrefix }
+		if cfg.JournalSettings.CodePrefix != "" {
+			journalPrefix = cfg.JournalSettings.CodePrefix
+		}
 		requireApproval = cfg.JournalSettings.RequireApproval
 	}
 	return models.Settings{
-		CompanyName:        "PT. Sistem Akuntansi Indonesia",
-		CompanyAddress:     "Jl. Sudirman Kav. 45-46, Jakarta Pusat 10210, Indonesia",
-		CompanyPhone:       "+62-21-5551234",
-		CompanyEmail:       "info@sistemakuntansi.co.id",
-		CompanyLogoScale:   100,
-		Currency:           ifThen(cfg != nil && cfg.CurrencySettings.BaseCurrency != "", cfg.CurrencySettings.BaseCurrency, "IDR"),
-		DateFormat:         "DD/MM/YYYY",
-		FiscalYearStart:    "January 1",
-		Language:           "id",
-		Timezone:           "Asia/Jakarta",
-		ThousandSeparator:  ".",
-		DecimalSeparator:   ",",
-		DecimalPlaces:      ifThenInt(cfg != nil && cfg.CurrencySettings.DecimalPlaces != 0, cfg.CurrencySettings.DecimalPlaces, 2),
-		DefaultTaxRate:     ifThenFloat(cfg != nil && cfg.TaxRates.DefaultPPN != 0, cfg.TaxRates.DefaultPPN, 11.0),
-		InvoicePrefix:      "INV",
-		SalesPrefix:        "SOA",
-		QuotePrefix:        "QT",
-		PurchasePrefix:     "PO",
+		CompanyName:             "PT. Sistem Akuntansi Indonesia",
+		CompanyAddress:          "Jl. Sudirman Kav. 45-46, Jakarta Pusat 10210, Indonesia",
+		CompanyPhone:            "+62-21-5551234",
+		CompanyEmail:            "info@sistemakuntansi.co.id",
+		CompanyLogoScale:        100,
+		Currency:                ifThen(cfg != nil && cfg.CurrencySettings.BaseCurrency != "", cfg.CurrencySettings.BaseCurrency, "IDR"),
+		DateFormat:              "DD/MM/YYYY",
+		FiscalYearStart:         "January 1",
+		Language:                "id",
+		Timezone:                "Asia/Jakarta",
+		ThousandSeparator:       ".",
+		DecimalSeparator:        ",",
+		DecimalPlaces:           ifThenInt(cfg != nil && cfg.CurrencySettings.DecimalPlaces != 0, cfg.CurrencySettings.DecimalPlaces, 2),
+		DefaultTaxRate:          ifThenFloat(cfg != nil && cfg.TaxRates.DefaultPPN != 0, cfg.TaxRates.DefaultPPN, 11.0),
+		InvoicePrefix:           "INV",
+		SalesPrefix:             "SOA",
+		QuotePrefix:             "QT",
+		PurchasePrefix:          "PO",
 		PaymentReceivablePrefix: "RCV",
 		PaymentPayablePrefix:    "PAY",
-		JournalPrefix:          journalPrefix,
-		JournalNextNumber:      1,
-		RequireJournalApproval: requireApproval,
+		JournalPrefix:           journalPrefix,
+		JournalNextNumber:       1,
+		RequireJournalApproval:  requireApproval,
 	}
 }
 
 // Utility inline helpers for default selection
-func ifThen(cond bool, a string, b string) string { if cond { return a }; return b }
-func ifThenInt(cond bool, a int, b int) int { if cond { return a }; return b }
-func ifThenFloat(cond bool, a float64, b float64) float64 { if cond { return a }; return b }
+func ifThen(cond bool, a string, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}
+func ifThenInt(cond bool, a int, b int) int {
+	if cond {
+		return a
+	}
+	return b
+}
+func ifThenFloat(cond bool, a float64, b float64) float64 {
+	if cond {
+		return a
+	}
+	return b
+}
 
 // GetNextInvoiceNumber gets and increments the next invoice number
 func (s *SettingsService) GetNextInvoiceNumber() (string, error) {
 	var settings models.Settings
-	
+
 	// Start transaction
 	tx := s.db.Begin()
 	defer func() {
@@ -292,121 +316,121 @@ func (s *SettingsService) GetNextInvoiceNumber() (string, error) {
 			tx.Rollback()
 		}
 	}()
-	
+
 	// Lock the settings row for update
 	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	// Get current number and format
 	invoiceNumber := formatInvoiceNumber(settings.InvoicePrefix, settings.InvoiceNextNumber)
-	
+
 	// Increment the number
 	settings.InvoiceNextNumber++
 	if err := tx.Save(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return "", err
 	}
-	
+
 	return invoiceNumber, nil
 }
 
 // GetNextQuoteNumber gets and increments the next quote number
 func (s *SettingsService) GetNextQuoteNumber() (string, error) {
 	var settings models.Settings
-	
+
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
 		}
 	}()
-	
+
 	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	quoteNumber := formatInvoiceNumber(settings.QuotePrefix, settings.QuoteNextNumber)
 	settings.QuoteNextNumber++
-	
+
 	if err := tx.Save(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	if err := tx.Commit().Error; err != nil {
 		return "", err
 	}
-	
+
 	return quoteNumber, nil
 }
 
 // GetNextSalesNumber gets and increments the next sales number
 func (s *SettingsService) GetNextSalesNumber() (string, error) {
 	var settings models.Settings
-	
+
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
 		}
 	}()
-	
+
 	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	salesNumber := formatInvoiceNumber(settings.SalesPrefix, settings.SalesNextNumber)
 	settings.SalesNextNumber++
-	
+
 	if err := tx.Save(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	if err := tx.Commit().Error; err != nil {
 		return "", err
 	}
-	
+
 	return salesNumber, nil
 }
 
 // GetNextPurchaseNumber gets and increments the next purchase order number
 func (s *SettingsService) GetNextPurchaseNumber() (string, error) {
 	var settings models.Settings
-	
+
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
 		}
 	}()
-	
+
 	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	purchaseNumber := formatInvoiceNumber(settings.PurchasePrefix, settings.PurchaseNextNumber)
 	settings.PurchaseNextNumber++
-	
+
 	if err := tx.Save(&settings).Error; err != nil {
 		tx.Rollback()
 		return "", err
 	}
-	
+
 	if err := tx.Commit().Error; err != nil {
 		return "", err
 	}
-	
+
 	return purchaseNumber, nil
 }
 
@@ -417,7 +441,7 @@ func isValidEmail(email string) bool {
 	if len(email) < 3 || len(email) > 254 {
 		return false
 	}
-	
+
 	atIndex := -1
 	for i, char := range email {
 		if char == '@' {
@@ -427,11 +451,11 @@ func isValidEmail(email string) bool {
 			atIndex = i
 		}
 	}
-	
+
 	if atIndex <= 0 || atIndex >= len(email)-1 {
 		return false
 	}
-	
+
 	return true
 }
 
@@ -449,7 +473,7 @@ func formatNumberWithPadding(number int, padding int) string {
 // ResetToDefaults resets all settings to default values
 func (s *SettingsService) ResetToDefaults(userID uint) error {
 	var settings models.Settings
-	
+
 	// Get existing settings or create if not exists
 	err := s.db.First(&settings).Error
 	if err != nil {
@@ -464,10 +488,10 @@ func (s *SettingsService) ResetToDefaults(userID uint) error {
 		log.Printf("Error fetching settings: %v", err)
 		return err
 	}
-	
+
 	// Reset to default values
 	defaultSettings := s.createDefaultSettings()
-	
+
 	// Keep the ID and preserve existing next numbers to avoid conflicts
 	defaultSettings.ID = settings.ID
 	defaultSettings.CreatedAt = settings.CreatedAt
@@ -476,15 +500,15 @@ func (s *SettingsService) ResetToDefaults(userID uint) error {
 	defaultSettings.QuoteNextNumber = settings.QuoteNextNumber
 	defaultSettings.PurchaseNextNumber = settings.PurchaseNextNumber
 	defaultSettings.UpdatedBy = userID
-	
+
 	// Save the reset settings
 	if err := s.db.Save(&defaultSettings).Error; err != nil {
 		log.Printf("Error resetting settings to defaults: %v", err)
 		return err
 	}
-	
+
 	log.Printf("Settings reset to defaults by user %d", userID)
-return nil
+	return nil
 }
 
 // GetNextJournalNumberTx generates next journal number within a transaction (safe sequence)
@@ -509,7 +533,7 @@ func (s *SettingsService) GetNextJournalNumberTx(tx *gorm.DB) (string, error) {
 func (s *SettingsService) normalizeFiscalYearStart(input string) string {
 	in := strings.TrimSpace(strings.ToLower(input))
 	// Accept formats: "mm/dd/yyyy", "mm/dd", "dd/mm/yyyy", month name + day
-	months := []string{"january","february","march","april","may","june","july","august","september","october","november","december"}
+	months := []string{"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"}
 	for _, m := range months {
 		if strings.Contains(in, m) {
 			// e.g., "january 1" -> capitalize
@@ -610,7 +634,9 @@ func extractDay(s string) string {
 func toInt(s string) int {
 	var n int
 	for _, r := range s {
-		if r < '0' || r > '9' { return -1 }
+		if r < '0' || r > '9' {
+			return -1
+		}
 		n = n*10 + int(r-'0')
 	}
 	return n
@@ -619,13 +645,13 @@ func toInt(s string) int {
 // GetValidationRules returns validation rules for settings
 func (s *SettingsService) GetValidationRules() map[string]interface{} {
 	return map[string]interface{}{
-		"date_formats":     []string{"DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "DD-MM-YYYY"},
-		"currencies":       []string{"IDR", "USD", "EUR", "SGD", "MYR"},
-		"languages":        []string{"id", "en"},
-		"tax_rate_range":   map[string]float64{"min": 0, "max": 100},
+		"date_formats":         []string{"DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD", "DD-MM-YYYY"},
+		"currencies":           []string{"IDR", "USD", "EUR", "SGD", "MYR"},
+		"languages":            []string{"id", "en"},
+		"tax_rate_range":       map[string]float64{"min": 0, "max": 100},
 		"decimal_places_range": map[string]int{"min": 0, "max": 4},
-		"prefix_max_length": 10,
-		"min_next_number":  1,
+		"prefix_max_length":    10,
+		"min_next_number":      1,
 	}
 }
 
@@ -694,21 +720,21 @@ func (s *SettingsService) GetSettingsHistory(filter models.SettingsHistoryFilter
 // captureCurrentValues captures current values of fields that will be updated
 func (s *SettingsService) captureCurrentValues(settings *models.Settings, updates map[string]interface{}) map[string]interface{} {
 	oldValues := make(map[string]interface{})
-	
+
 	v := reflect.ValueOf(*settings)
 	t := reflect.TypeOf(*settings)
-	
+
 	for key := range updates {
 		// Skip meta fields
 		if key == "updated_by" || key == "updated_at" {
 			continue
 		}
-		
+
 		// Find field in struct
 		for i := 0; i < v.NumField(); i++ {
 			field := t.Field(i)
 			jsonTag := field.Tag.Get("json")
-			
+
 			// Parse json tag to get field name
 			fieldName := jsonTag
 			if commaIdx := len(jsonTag); commaIdx > 0 {
@@ -721,14 +747,14 @@ func (s *SettingsService) captureCurrentValues(settings *models.Settings, update
 					}
 				}
 			}
-			
+
 			if fieldName == key {
 				oldValues[key] = v.Field(i).Interface()
 				break
 			}
 		}
 	}
-	
+
 	return oldValues
 }
 
@@ -739,18 +765,18 @@ func (s *SettingsService) logSettingsChanges(settingsID uint, oldValues, newValu
 		if field == "updated_by" || field == "updated_at" {
 			continue
 		}
-		
+
 		oldValue := oldValues[field]
-		
+
 		// Skip if values are the same
 		if reflect.DeepEqual(oldValue, newValue) {
 			continue
 		}
-		
+
 		// Convert values to JSON strings
 		oldValueJSON, _ := json.Marshal(oldValue)
 		newValueJSON, _ := json.Marshal(newValue)
-		
+
 		// Create history record
 		history := models.SettingsHistory{
 			SettingsID: settingsID,
@@ -760,7 +786,7 @@ func (s *SettingsService) logSettingsChanges(settingsID uint, oldValues, newValu
 			Action:     action,
 			ChangedBy:  userID,
 		}
-		
+
 		// Save history record
 		if err := s.db.Create(&history).Error; err != nil {
 			log.Printf("Error logging settings change for field %s: %v", field, err)

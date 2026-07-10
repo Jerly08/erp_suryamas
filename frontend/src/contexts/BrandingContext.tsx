@@ -8,12 +8,12 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { usePathname } from 'next/navigation';
 import { API_ENDPOINTS } from '@/config/api';
 import {
+  APPLE_TOUCH_ICON_PATH,
   DEFAULT_APP_NAME,
-  DISABLED_BROWSER_ICON_PATH,
   DEFAULT_ICON_PATH,
+  FALLBACK_ICON_PATH,
   DEFAULT_LOGO_PATH,
   DEFAULT_LOGO_SCALE,
   POWERED_BY_TEXT,
@@ -74,9 +74,18 @@ const setNamedMetaContent = (name: string, content: string) => {
   meta.content = content;
 };
 
+const getIconType = (url: string): string | undefined => {
+  const cleanPath = url.split('?')[0].toLowerCase();
+  if (cleanPath === '/api/v1/branding/icon') return 'image/png';
+  if (cleanPath.endsWith('.svg')) return 'image/svg+xml';
+  if (cleanPath.endsWith('.png')) return 'image/png';
+  if (cleanPath.endsWith('.jpg') || cleanPath.endsWith('.jpeg')) return 'image/jpeg';
+  if (cleanPath.endsWith('.webp')) return 'image/webp';
+  return undefined;
+};
+
 export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [branding, setBranding] = useState<BrandingState>(defaultBranding);
-  const pathname = usePathname();
 
   const refreshBranding = useCallback(async () => {
     try {
@@ -95,7 +104,7 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       const version = data.updated_at || '';
       const logoUrl = getImageUrl(data.company_logo) || DEFAULT_LOGO_PATH;
-      const iconUrl = getImageUrl(data.company_icon) || DEFAULT_ICON_PATH;
+      const iconUrl = data.company_icon?.trim() ? DEFAULT_ICON_PATH : FALLBACK_ICON_PATH;
 
       setBranding({
         companyName: data.company_name?.trim() || DEFAULT_APP_NAME,
@@ -114,44 +123,52 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [refreshBranding]);
 
   useEffect(() => {
+    const iconHref = branding.iconUrl || FALLBACK_ICON_PATH;
+    const appleIconHref = appendVersion(APPLE_TOUCH_ICON_PATH, branding.updatedAt);
+    const iconType = getIconType(iconHref);
     const iconDefinitions = [
-      { rel: 'icon', sizes: 'any' },
-      { rel: 'shortcut icon', sizes: 'any' },
+      { key: 'favicon', rel: 'icon', sizes: '192x192', href: iconHref },
+      { key: 'shortcut', rel: 'shortcut icon', sizes: '192x192', href: iconHref },
+      { key: 'apple-touch', rel: 'apple-touch-icon', sizes: '180x180', href: appleIconHref },
     ];
 
     document.title = branding.companyName;
     setNamedMetaContent('application-name', branding.companyName);
     setNamedMetaContent('apple-mobile-web-app-title', branding.companyName);
 
-    document.head
-      .querySelectorAll<HTMLLinkElement>(
-        [
-          'link[rel~="icon"]',
-          'link[rel="shortcut icon"]',
-          'link[rel="apple-touch-icon"]',
-          'link[data-branding-icon]',
-          'link[href="/favicon.ico"]',
-          'link[href^="/api/v1/branding/icon"]',
-          'link[href^="/avery-icon.png"]',
-        ].join(','),
-      )
-      .forEach((link) => link.remove());
+    iconDefinitions.forEach(({ key, rel, sizes, href }) => {
+      let link = document.head.querySelector<HTMLLinkElement>(`link[data-branding-icon="${key}"]`);
+      if (!link) {
+        link = document.createElement('link');
+        link.setAttribute('data-branding-icon', key);
+        document.head.appendChild(link);
+      }
 
-    iconDefinitions.forEach(({ rel, sizes }) => {
-      const link = document.createElement('link');
-      link.setAttribute('data-branding-icon', rel);
       link.rel = rel;
-      link.href = DISABLED_BROWSER_ICON_PATH;
+      link.href = href;
       link.sizes = sizes;
-      link.type = 'image/svg+xml';
-      document.head.appendChild(link);
+      if (iconType) {
+        link.type = iconType;
+      } else {
+        link.removeAttribute('type');
+      }
     });
 
     const manifest = document.head.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     if (manifest && branding.updatedAt) {
       manifest.href = appendVersion(API_ENDPOINTS.BRANDING_MANIFEST, branding.updatedAt);
     }
-  }, [branding.companyName, branding.updatedAt, pathname]);
+
+    return () => {
+      document.head
+        .querySelectorAll<HTMLLinkElement>('link[data-branding-icon]')
+        .forEach((link) => {
+          if (link.parentNode) {
+            link.parentNode.removeChild(link);
+          }
+        });
+    };
+  }, [branding.companyName, branding.iconUrl, branding.updatedAt]);
 
   const value = useMemo<BrandingContextValue>(
     () => ({
