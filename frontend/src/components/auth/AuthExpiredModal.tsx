@@ -49,16 +49,14 @@ const AuthExpiredModal: React.FC<AuthExpiredModalProps> = ({
     console.log('AuthExpiredModal - isOpen changed:', isOpen);
   }, [isOpen]);
   
-  // Auto-cleanup localStorage when modal opens
+  // Remove legacy browser tokens without marking an explicit logout. A stale
+  // response from another tab must not invalidate a newly-created cookie session.
   React.useEffect(() => {
     if (isOpen && typeof window !== 'undefined') {
-      // Clear any potentially corrupted auth data
       window.localStorage.removeItem('token');
       window.localStorage.removeItem('refreshToken');
       window.localStorage.removeItem('user');
-      // Set logout timestamp to prevent auto-login
-      window.localStorage.setItem('lastLogoutTime', Date.now().toString());
-      console.log('AuthExpiredModal - Cleared localStorage and set logout timestamp');
+      console.log('AuthExpiredModal - Cleared legacy localStorage auth data');
     }
   }, [isOpen]);
   

@@ -90,7 +90,7 @@ const STOCK_NOTIFICATION_TYPES = [
 
 const UnifiedNotifications: React.FC = () => {
   const { t, language } = useTranslation();
-  const { user, token, isLoading, logout } = useAuth();
+  const { user, token, isLoading } = useAuth();
   const router = useRouter();
   const toast = useToast();
   const [approvalNotifications, setApprovalNotifications] = useState<NotificationItem[]>([]);
@@ -439,7 +439,9 @@ const UnifiedNotifications: React.FC = () => {
 
   const handleAuthExpiredLoginRedirect = () => {
     setIsAuthExpiredOpen(false);
-    logout();
+    // Do not call backend logout here. This modal can originate from a stale
+    // request in another tab after a fresh login has already created a new session.
+    window.location.replace('/login');
   };
 
   const formatDate = (dateString: string) => {
