@@ -188,6 +188,19 @@ interface FormData {
   }>;
 }
 
+type ShippingTreatment = "buyer_taxable" | "buyer_non_taxable" | "buyer_direct";
+
+const resolveShippingTreatment = (
+  shippingCost: number,
+  shippingTaxable: boolean,
+): ShippingTreatment => {
+  if ((Number(shippingCost) || 0) <= 0 && !shippingTaxable) {
+    return "buyer_direct";
+  }
+
+  return shippingTaxable ? "buyer_taxable" : "buyer_non_taxable";
+};
+
 const SalesForm: React.FC<SalesFormProps> = ({
   isOpen,
   onClose,
@@ -380,6 +393,8 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const [discountType, setDiscountType] = useState<"percentage" | "amount">(
     "percentage",
   );
+  const [shippingTreatment, setShippingTreatment] =
+    useState<ShippingTreatment>("buyer_taxable");
   const shouldHideForm = !loadingSalesPermissions && !hasPermission && !!user;
 
   const resolveRevenueAccountId = (item: FormData["items"][number]) =>
@@ -989,6 +1004,12 @@ const SalesForm: React.FC<SalesFormProps> = ({
             ],
     };
 
+    setShippingTreatment(
+      resolveShippingTreatment(
+        formValues.shipping_cost,
+        formValues.shipping_taxable,
+      ),
+    );
     reset(formValues);
 
     console.log("✅ Form populated successfully");
@@ -1015,6 +1036,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       payment_method_type: "CREDIT" as "CASH" | "BANK" | "CREDIT",
       receivable_account_id: undefined,
       shipping_cost: 0,
+      shipping_taxable: true,
       items: [
         {
           product_id: 0,
@@ -1029,6 +1051,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
         },
       ],
     });
+    setShippingTreatment("buyer_taxable");
   };
 
   const handleProductChange = async (index: number, productId: number) => {
@@ -1220,6 +1243,21 @@ const SalesForm: React.FC<SalesFormProps> = ({
       shippingCost: watchShippingCost,
       shippingTaxable: watchShippingTaxable,
     }).totalAmount;
+  };
+
+  const handleShippingTreatmentChange = (treatment: ShippingTreatment) => {
+    setShippingTreatment(treatment);
+    setValue("shipping_taxable", treatment === "buyer_taxable", {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+
+    if (treatment === "buyer_direct") {
+      setValue("shipping_cost", 0, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    }
   };
 
   const getPaymentSchedulePercentageTotal = () => {
@@ -2906,7 +2944,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                         >
                           ➕ {t("sales.form.otherTaxAdditions")}
                         </Text>
-                        <HStack w="full" spacing={4}>
+                        <SimpleGrid w="full" columns={{ base: 1, xl: 3 }} spacing={4}>
                           <FormControl>
                             <FormLabel fontSize="sm">
                               {t("sales.form.ppnRate")}
@@ -2968,29 +3006,99 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               min={0}
                               showLabel={false}
                               size="sm"
-                              isDisabled={isInvoiced}
+                              isDisabled={
+                                isInvoiced || shippingTreatment === "buyer_direct"
+                              }
                             />
                             <FormHelperText fontSize="xs">
-                              {t("sales.tooltips.shippingCost")}
+                              {shippingTreatment === "buyer_direct"
+                                ? t("sales.tooltips.shippingDirectNoInvoice")
+                                : t("sales.tooltips.shippingCost")}
                             </FormHelperText>
-                            <Flex mt={2} align="center" justify="space-between">
-                              <Text fontSize="xs" color={textColor}>
-                                {t("sales.form.shippingTaxable")}
-                              </Text>
-                              <Switch
-                                size="sm"
-                                colorScheme="blue"
-                                isChecked={watchShippingTaxable}
-                                onChange={(event) =>
-                                  setValue("shipping_taxable", event.target.checked, {
-                                    shouldDirty: true,
-                                  })
-                                }
-                                isDisabled={isInvoiced}
-                              />
-                            </Flex>
+                            <Box mt={3}>
+                              <HStack spacing={2} mb={2} align="center">
+                                <Text fontSize="xs" fontWeight="medium" color={textColor}>
+                                  {t("sales.form.shippingTreatment")}
+                                </Text>
+                                <Tooltip
+                                  label={t("sales.tooltips.shippingTreatment")}
+                                  hasArrow
+                                  placement="top"
+                                >
+                                  <Box
+                                    as="span"
+                                    display="inline-flex"
+                                    alignItems="center"
+                                    justifyContent="center"
+                                    w="18px"
+                                    h="18px"
+                                    borderRadius="full"
+                                    bg={readOnlyBg}
+                                    color={textColor}
+                                    fontSize="xs"
+                                    cursor="help"
+                                  >
+                                    ?
+                                  </Box>
+                                </Tooltip>
+                              </HStack>
+                              <SimpleGrid columns={{ base: 1, md: 3, xl: 1 }} spacing={2}>
+                                {[
+                                  {
+                                    value: "buyer_taxable" as ShippingTreatment,
+                                    label: t("sales.form.shippingTreatmentTaxable"),
+                                    helper: t("sales.form.shippingTreatmentTaxableDesc"),
+                                    colorScheme: "green",
+                                  },
+                                  {
+                                    value: "buyer_non_taxable" as ShippingTreatment,
+                                    label: t("sales.form.shippingTreatmentNonTaxable"),
+                                    helper: t("sales.form.shippingTreatmentNonTaxableDesc"),
+                                    colorScheme: "orange",
+                                  },
+                                  {
+                                    value: "buyer_direct" as ShippingTreatment,
+                                    label: t("sales.form.shippingTreatmentDirect"),
+                                    helper: t("sales.form.shippingTreatmentDirectDesc"),
+                                    colorScheme: "gray",
+                                  },
+                                ].map((option) => {
+                                  const isActive =
+                                    shippingTreatment === option.value;
+
+                                  return (
+                                    <Button
+                                      key={option.value}
+                                      type="button"
+                                      size="sm"
+                                      h="auto"
+                                      minH="58px"
+                                      p={2}
+                                      justifyContent="flex-start"
+                                      textAlign="left"
+                                      whiteSpace="normal"
+                                      variant={isActive ? "solid" : "outline"}
+                                      colorScheme={option.colorScheme}
+                                      isDisabled={isInvoiced}
+                                      onClick={() =>
+                                        handleShippingTreatmentChange(option.value)
+                                      }
+                                    >
+                                      <VStack spacing={0.5} align="stretch">
+                                        <Text fontSize="xs" fontWeight="semibold">
+                                          {option.label}
+                                        </Text>
+                                        <Text fontSize="2xs" fontWeight="normal">
+                                          {option.helper}
+                                        </Text>
+                                      </VStack>
+                                    </Button>
+                                  );
+                                })}
+                              </SimpleGrid>
+                            </Box>
                           </FormControl>
-                        </HStack>
+                        </SimpleGrid>
                       </Box>
 
                       <Divider />
@@ -3136,6 +3244,18 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               const otherDeductions =
                                 watchOtherTaxDeductions || 0;
                               const finalTotal = amounts.totalAmount;
+                              const shippingStatusLabel =
+                                shippingTreatment === "buyer_taxable"
+                                  ? t("sales.form.shippingIncludedInDpp")
+                                  : shippingTreatment === "buyer_non_taxable"
+                                    ? t("sales.form.shippingExcludedFromDpp")
+                                    : t("sales.form.shippingDirectInSummary");
+                              const shippingStatusColorScheme =
+                                shippingTreatment === "buyer_taxable"
+                                  ? "green"
+                                  : shippingTreatment === "buyer_non_taxable"
+                                    ? "orange"
+                                    : "gray";
 
                               return (
                                 <VStack spacing={2} fontSize="xs">
@@ -3178,6 +3298,26 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                           watchShippingCost,
                                         )}
                                       </Text>
+                                    </HStack>
+                                  )}
+                                  {(watchShippingCost > 0 ||
+                                    shippingTreatment !== "buyer_taxable") && (
+                                    <HStack
+                                      justify="space-between"
+                                      w="full"
+                                      align="flex-start"
+                                      gap={3}
+                                    >
+                                      <Text color={textColor}>
+                                        {t("sales.form.shippingDppStatus")}:
+                                      </Text>
+                                      <Badge
+                                        colorScheme={shippingStatusColorScheme}
+                                        whiteSpace="normal"
+                                        textAlign="right"
+                                      >
+                                        {shippingStatusLabel}
+                                      </Badge>
                                     </HStack>
                                   )}
                                   <HStack justify="space-between" w="full">
