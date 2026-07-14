@@ -3354,6 +3354,7 @@
       "emailInvalid": "Format email tidak valid. Contoh: vendor@perusahaan.com.",
       "vendorCodeExists": "Kode vendor sudah digunakan. Gunakan kode lain atau kosongkan agar dibuat otomatis.",
       "fieldTooLong": "Salah satu isian terlalu panjang. Periksa kembali panjang data yang dimasukkan.",
+      "hiddenCharacters": "Data kontak berisi karakter tersembunyi dari hasil paste. Teks sudah dibersihkan, silakan periksa kembali lalu simpan lagi.",
       "typeRequired": "Tipe kontak wajib dipilih",
       "phoneMinLength": "Nomor telepon minimal 10 digit"
     },

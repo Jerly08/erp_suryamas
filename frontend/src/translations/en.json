@@ -3290,6 +3290,7 @@
       "emailInvalid": "Email format is invalid. Example: vendor@company.com.",
       "vendorCodeExists": "Vendor code is already in use. Use another code or leave it empty for automatic generation.",
       "fieldTooLong": "One of the fields is too long. Check the length of the entered data.",
+      "hiddenCharacters": "The contact data contains hidden characters from pasted text. The text has been cleaned; please review it and save again.",
       "typeRequired": "Contact type is required",
       "phoneMinLength": "Phone number should be at least 10 digits"
     },

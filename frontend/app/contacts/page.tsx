@@ -77,6 +77,67 @@ interface ContactAddress {
   is_default: boolean;
 }
 
+const CONTROL_CHARACTERS_EXCEPT_WHITESPACE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+
+const sanitizeContactString = (value: string) =>
+  value.replace(CONTROL_CHARACTERS_EXCEPT_WHITESPACE, '');
+
+const sanitizeContactInput = <T,>(value: T): T =>
+  (typeof value === 'string' ? sanitizeContactString(value) : value) as T;
+
+const sanitizeContactPayload = (payload: Partial<Contact>): Partial<Contact> =>
+  Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => [key, sanitizeContactInput(value)])
+  ) as Partial<Contact>;
+
+const extractContactErrorMessage = (
+  error: unknown,
+  fallback: string,
+  hiddenCharactersMessage: string
+) => {
+  const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+  let message = '';
+
+  if (responseData && typeof responseData === 'object') {
+    const data = responseData as {
+      error?: unknown;
+      message?: unknown;
+      details?: Record<string, unknown>;
+    };
+
+    if (typeof data.error === 'string') {
+      message = data.error;
+    } else if (typeof data.message === 'string') {
+      message = data.message;
+    } else if (data.details && typeof data.details === 'object') {
+      const detailMessage = Object.values(data.details).find(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0
+      );
+      message = detailMessage || '';
+    }
+  }
+
+  if (!message && error instanceof Error) {
+    message = error.message;
+  }
+
+  const normalizedMessage = message.toLowerCase();
+  if (
+    normalizedMessage.includes('hidden characters') ||
+    normalizedMessage.includes('invalid byte sequence') ||
+    normalizedMessage.includes('sqlstate 22021') ||
+    normalizedMessage.includes('0x00')
+  ) {
+    return hiddenCharactersMessage;
+  }
+
+  if (!message || normalizedMessage.includes('request failed with status code')) {
+    return fallback;
+  }
+
+  return message;
+};
+
 const ContactsPage = () => {
   const { token } = useAuth();
   const { t } = useTranslation();
@@ -111,7 +172,7 @@ const ContactsPage = () => {
       const response = await api.get(API_ENDPOINTS.CONTACTS);
       // Backend returns direct array, not wrapped in data field
       setContacts(Array.isArray(response.data) ? response.data : response.data.data || []);
-    } catch (err: any) {
+    } catch (err) {
       setError(t('contacts.messages.fetchError'));
       console.error('Error fetching contacts:', err);
     } finally {
@@ -132,11 +193,14 @@ const ContactsPage = () => {
     setIsSubmitting(true);
     setError(null);
 
+    const isUpdate = Boolean(formData.id);
+    const payload = sanitizeContactPayload(formData);
+
     try {
-      if (formData.id) {
-        await api.put(`${API_ENDPOINTS.CONTACTS}/${formData.id}`, formData);
+      if (isUpdate) {
+        await api.put(`${API_ENDPOINTS.CONTACTS}/${formData.id}`, payload);
       } else {
-        await api.post(API_ENDPOINTS.CONTACTS, formData);
+        await api.post(API_ENDPOINTS.CONTACTS, payload);
       }
 
       // Refresh contacts list
@@ -144,8 +208,8 @@ const ContactsPage = () => {
 
       // Show success message
       toast({
-        title: formData.id ? t('contacts.messages.contactUpdated') : t('contacts.messages.contactCreated'),
-        description: formData.id ? t('contacts.messages.updateSuccess') : t('contacts.messages.createSuccess'),
+        title: isUpdate ? t('contacts.messages.contactUpdated') : t('contacts.messages.contactCreated'),
+        description: isUpdate ? t('contacts.messages.updateSuccess') : t('contacts.messages.createSuccess'),
         status: 'success',
         duration: 3000,
         isClosable: true,
@@ -167,7 +231,11 @@ const ContactsPage = () => {
         is_active: true
       });
     } catch (err) {
-      setError(formData.id ? t('contacts.messages.updateError') : t('contacts.messages.createError'));
+      setError(extractContactErrorMessage(
+        err,
+        isUpdate ? t('contacts.messages.updateError') : t('contacts.messages.createError'),
+        t('contacts.validation.hiddenCharacters')
+      ));
       console.error('Error submitting contact:', err);
     } finally {
       setIsSubmitting(false);
@@ -231,10 +299,10 @@ const ContactsPage = () => {
   };
 
   // Handle form input changes
-  const handleInputChange = (field: keyof Contact, value: any) => {
+  const handleInputChange = (field: keyof Contact, value: Contact[keyof Contact]) => {
     setFormData(prev => ({
       ...prev,
-      [field]: value
+      [field]: sanitizeContactInput(value)
     }));
   };
 

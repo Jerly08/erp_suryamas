@@ -135,20 +135,20 @@ func (s *contactService) UpdateContact(id string, contact models.Contact) (*mode
 // required by the contact form. Optional fields are intentionally allowed to
 // remain empty.
 func prepareContact(contact models.Contact) (models.Contact, error) {
-	contact.Code = strings.TrimSpace(contact.Code)
-	contact.Name = strings.TrimSpace(contact.Name)
-	contact.Type = strings.ToUpper(strings.TrimSpace(contact.Type))
-	contact.Category = strings.TrimSpace(contact.Category)
-	contact.Email = strings.TrimSpace(contact.Email)
-	contact.Phone = strings.TrimSpace(contact.Phone)
-	contact.Mobile = strings.TrimSpace(contact.Mobile)
-	contact.Fax = strings.TrimSpace(contact.Fax)
-	contact.Website = strings.TrimSpace(contact.Website)
-	contact.TaxNumber = strings.TrimSpace(contact.TaxNumber)
-	contact.PICName = strings.TrimSpace(contact.PICName)
-	contact.ExternalID = strings.TrimSpace(contact.ExternalID)
-	contact.Address = strings.TrimSpace(contact.Address)
-	contact.Notes = strings.TrimSpace(contact.Notes)
+	contact.Code = cleanAndTrimContactText(contact.Code)
+	contact.Name = cleanAndTrimContactText(contact.Name)
+	contact.Type = strings.ToUpper(cleanAndTrimContactText(contact.Type))
+	contact.Category = cleanAndTrimContactText(contact.Category)
+	contact.Email = cleanAndTrimContactText(contact.Email)
+	contact.Phone = cleanAndTrimContactText(contact.Phone)
+	contact.Mobile = cleanAndTrimContactText(contact.Mobile)
+	contact.Fax = cleanAndTrimContactText(contact.Fax)
+	contact.Website = cleanAndTrimContactText(contact.Website)
+	contact.TaxNumber = cleanAndTrimContactText(contact.TaxNumber)
+	contact.PICName = cleanAndTrimContactText(contact.PICName)
+	contact.ExternalID = cleanAndTrimContactText(contact.ExternalID)
+	contact.Address = cleanAndTrimContactText(contact.Address)
+	contact.Notes = cleanAndTrimContactText(contact.Notes)
 
 	contactLabel := "Contact"
 	if contact.Type == models.ContactTypeVendor {
@@ -210,12 +210,46 @@ func friendlyContactSaveError(contactType string, err error) error {
 	if strings.Contains(errorText, "duplicate") || strings.Contains(errorText, "unique constraint") {
 		return utils.NewConflictError("Contact code is already in use. Leave the code empty to generate it automatically.")
 	}
+	if strings.Contains(errorText, "invalid byte sequence") ||
+		strings.Contains(errorText, "sqlstate 22021") ||
+		strings.Contains(errorText, "0x00") {
+		return utils.NewValidationError("Contact data contains hidden characters. Paste the text as plain text or remove unusual characters, then try again.", map[string]string{
+			"contact": "Remove hidden characters from the contact form.",
+		})
+	}
 
 	label := "contact"
 	if contactType == models.ContactTypeVendor {
 		label = "vendor"
 	}
 	return utils.NewInternalError(fmt.Sprintf("Unable to save %s. Please try again.", label), err)
+}
+
+func cleanAndTrimContactText(value string) string {
+	return strings.TrimSpace(cleanContactText(value))
+}
+
+func cleanContactText(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == 0 {
+			return -1
+		}
+		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+func prepareContactAddress(address models.ContactAddress) models.ContactAddress {
+	address.Type = strings.ToUpper(cleanAndTrimContactText(address.Type))
+	address.Address1 = cleanAndTrimContactText(address.Address1)
+	address.Address2 = cleanAndTrimContactText(address.Address2)
+	address.City = cleanAndTrimContactText(address.City)
+	address.State = cleanAndTrimContactText(address.State)
+	address.PostalCode = cleanAndTrimContactText(address.PostalCode)
+	address.Country = cleanAndTrimContactText(address.Country)
+	return address
 }
 
 // DeleteContact deletes a contact by ID
@@ -282,6 +316,7 @@ func (s *contactService) AddContactAddress(contactID string, address models.Cont
 		return nil, fmt.Errorf("contact not found: %v", err)
 	}
 
+	address = prepareContactAddress(address)
 	address.ContactID = uint(contactIDUint)
 	return s.repo.AddAddress(address)
 }
@@ -304,6 +339,7 @@ func (s *contactService) UpdateContactAddress(contactID string, addressID string
 		return nil, fmt.Errorf("contact not found: %v", err)
 	}
 
+	address = prepareContactAddress(address)
 	address.ID = uint(addressIDUint)
 	address.ContactID = uint(contactIDUint)
 	return s.repo.UpdateAddress(address)
