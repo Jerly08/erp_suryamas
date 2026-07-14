@@ -422,15 +422,50 @@ const ContactsPage = () => {
             }}
           />
 
-          <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="lg">
+          <Modal
+            isOpen={isModalOpen}
+            onClose={() => setIsModalOpen(false)}
+            size="lg"
+            scrollBehavior="inside"
+          >
             <ModalOverlay />
-            <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor} color={fieldTextColor}>
-              <form onSubmit={handleSubmit}>
-                <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
+            <ModalContent
+              bg={modalBg}
+              borderWidth="1px"
+              borderColor={modalBorderColor}
+              color={fieldTextColor}
+              maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 48px)' }}
+              my={{ base: 3, md: 6 }}
+              overflow="hidden"
+            >
+              <form
+                onSubmit={handleSubmit}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  minHeight: 0,
+                  maxHeight: 'inherit',
+                }}
+              >
+                <ModalHeader
+                  bg={modalHeaderBg}
+                  borderBottomWidth="1px"
+                  borderColor={modalBorderColor}
+                  flexShrink={0}
+                >
                   {selectedContact?.id ? t('contacts.editContact') : t('contacts.createContact')}
                 </ModalHeader>
                 <ModalCloseButton color={fieldTextColor} />
-                <ModalBody>
+                <ModalBody
+                  overflowY="auto"
+                  flex="1"
+                  minH={0}
+                  pb={6}
+                  sx={{
+                    WebkitOverflowScrolling: 'touch',
+                    overscrollBehavior: 'contain',
+                  }}
+                >
                   <VStack spacing={4}>
                     <FormControl isRequired>
                       <FormLabel color={labelColor}>{t('common.name')}</FormLabel>
@@ -591,7 +626,12 @@ const ContactsPage = () => {
                     </FormControl>
                   </VStack>
                 </ModalBody>
-                <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
+                <ModalFooter
+                  borderTopWidth="1px"
+                  borderColor={modalBorderColor}
+                  bg={modalBg}
+                  flexShrink={0}
+                >
                   <Button variant="ghost" mr={3} onClick={() => setIsModalOpen(false)}>
                     {t('common.cancel')}
                   </Button>
@@ -609,14 +649,41 @@ const ContactsPage = () => {
           </Modal>
 
           {/* View Modal */}
-          <Modal isOpen={isViewModalOpen} onClose={() => setIsViewModalOpen(false)} size="lg">
+          <Modal
+            isOpen={isViewModalOpen}
+            onClose={() => setIsViewModalOpen(false)}
+            size="lg"
+            scrollBehavior="inside"
+          >
             <ModalOverlay />
-            <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor} color={fieldTextColor}>
-              <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
+            <ModalContent
+              bg={modalBg}
+              borderWidth="1px"
+              borderColor={modalBorderColor}
+              color={fieldTextColor}
+              maxH={{ base: 'calc(100dvh - 24px)', md: 'calc(100dvh - 48px)' }}
+              my={{ base: 3, md: 6 }}
+              overflow="hidden"
+            >
+              <ModalHeader
+                bg={modalHeaderBg}
+                borderBottomWidth="1px"
+                borderColor={modalBorderColor}
+                flexShrink={0}
+              >
                 {t('contacts.contactDetails')}
               </ModalHeader>
               <ModalCloseButton color={fieldTextColor} />
-              <ModalBody>
+              <ModalBody
+                overflowY="auto"
+                flex="1"
+                minH={0}
+                pb={6}
+                sx={{
+                  WebkitOverflowScrolling: 'touch',
+                  overscrollBehavior: 'contain',
+                }}
+              >
                 {viewContact && (
                   <VStack spacing={3} align="stretch">
                     <Box bg={detailCardBg} borderWidth="1px" borderColor={modalBorderColor} borderRadius="md" p={4}>
@@ -676,7 +743,12 @@ const ContactsPage = () => {
                   </VStack>
                 )}
               </ModalBody>
-              <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
+              <ModalFooter
+                borderTopWidth="1px"
+                borderColor={modalBorderColor}
+                bg={modalBg}
+                flexShrink={0}
+              >
                 <Button onClick={() => setIsViewModalOpen(false)}>{t('common.close')}</Button>
               </ModalFooter>
             </ModalContent>
