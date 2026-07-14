@@ -34,6 +34,7 @@ import {
   useDisclosure,
   Alert,
   AlertIcon,
+  AlertDescription,
   Select,
   VStack,
   useColorModeValue,
@@ -43,6 +44,7 @@ import {
   Badge,
   FormControl,
   FormLabel,
+  FormHelperText,
   NumberInput,
   NumberInputField,
   NumberInputStepper,
@@ -57,6 +59,7 @@ import {
   ModalContent,
   ModalHeader,
   ModalBody,
+  ModalFooter,
   ModalCloseButton,
 } from "@chakra-ui/react";
 import {
@@ -70,6 +73,7 @@ import {
   FiChevronRight,
   FiHash,
   FiSave,
+  FiX,
 } from "react-icons/fi";
 import { handleDeleteError, handleSuccess } from "@/utils/errorHandler";
 
@@ -155,6 +159,11 @@ const SalesPageContent: React.FC = () => {
     onOpen: onInvoiceTypesOpen,
     onClose: onInvoiceTypesClose,
   } = useDisclosure();
+  const {
+    isOpen: isSalesCounterOpen,
+    onOpen: onSalesCounterOpen,
+    onClose: onSalesCounterClose,
+  } = useDisclosure();
 
   // Theme-aware colors
   const headingColor = useColorModeValue("gray.800", "var(--text-primary)");
@@ -165,9 +174,9 @@ const SalesPageContent: React.FC = () => {
   const tableBg = useColorModeValue("white", "var(--bg-secondary)");
   const textColor = useColorModeValue("gray.600", "var(--text-secondary)");
   const paginationBorderColor = useColorModeValue("gray.200", "gray.700");
-  const counterBorderColor = useColorModeValue("blue.100", "whiteAlpha.200");
   const counterIconBg = useColorModeValue("blue.50", "whiteAlpha.100");
   const counterIconColor = useColorModeValue("blue.600", "blue.200");
+  const modalBorderColor = useColorModeValue("gray.200", "gray.700");
 
   const [state, setState] = useState<SalesPageState>({
     sales: [],
@@ -340,6 +349,11 @@ const SalesPageContent: React.FC = () => {
     loadSales({ limit, page: 1 });
   };
 
+  const handleOpenSalesCounter = () => {
+    onSalesCounterOpen();
+    loadSalesCodeCounter();
+  };
+
   const handleSalesCodeCounterChange = (nextNumberValue: number) => {
     const nextNumber =
       Number.isFinite(nextNumberValue) && nextNumberValue > 0
@@ -382,10 +396,11 @@ const SalesPageContent: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
+      onSalesCounterClose();
     } catch (error: unknown) {
       const message = getSalesCounterErrorMessage(
         error,
-        "Gagal menyimpan counter kode penjualan",
+        "Counter tidak bisa disimpan. Pastikan nomor berikutnya belum pernah dipakai.",
       );
 
       setSalesCodeCounter((prev) => ({
@@ -666,6 +681,19 @@ const SalesPageContent: React.FC = () => {
               />
             </Tooltip>
 
+            {isAdmin && (
+              <Button
+                leftIcon={<FiHash />}
+                colorScheme="blue"
+                variant="outline"
+                size="md"
+                onClick={handleOpenSalesCounter}
+                isLoading={salesCodeCounter.loading && isSalesCounterOpen}
+              >
+                Counter Penjualan
+              </Button>
+            )}
+
             <Button
               leftIcon={<FiSettings />}
               colorScheme="purple"
@@ -726,111 +754,6 @@ const SalesPageContent: React.FC = () => {
               formatCurrency={salesService.formatCurrency}
             />
           </Box>
-        )}
-
-        {isAdmin && (
-          <Card
-            mb={6}
-            borderWidth="1px"
-            borderColor={counterBorderColor}
-            bg={tableBg}
-          >
-            <CardBody>
-              <Flex
-                align={{ base: "stretch", lg: "center" }}
-                justify="space-between"
-                direction={{ base: "column", lg: "row" }}
-                gap={4}
-              >
-                <HStack align="start" spacing={4} flex="1" minW={0}>
-                  <Flex
-                    w="44px"
-                    h="44px"
-                    align="center"
-                    justify="center"
-                    borderRadius="md"
-                    bg={counterIconBg}
-                    color={counterIconColor}
-                    flexShrink={0}
-                  >
-                    <Icon as={FiHash} boxSize={5} />
-                  </Flex>
-                  <Box minW={0}>
-                    <HStack spacing={2} wrap="wrap">
-                      <Text
-                        fontSize="sm"
-                        fontWeight="semibold"
-                        color={textColor}
-                      >
-                        Counter Kode Penjualan
-                      </Text>
-                      <Badge colorScheme="blue" variant="subtle">
-                        Admin
-                      </Badge>
-                    </HStack>
-                    <Heading size="sm" mt={1} color={headingColor}>
-                      Kode Penjualan:{" "}
-                      {salesCodeCounter.loading
-                        ? "Memuat..."
-                        : salesCodeCounter.nextCode}
-                    </Heading>
-                    <Text fontSize="sm" color={subheadingColor} mt={1}>
-                      Nomor ini dipakai untuk penjualan berikutnya.
-                    </Text>
-                    {salesCodeCounter.error && (
-                      <Text fontSize="sm" color="red.500" mt={2}>
-                        {salesCodeCounter.error}
-                      </Text>
-                    )}
-                  </Box>
-                </HStack>
-
-                <HStack
-                  spacing={3}
-                  align="end"
-                  justify={{ base: "stretch", md: "flex-end" }}
-                  flexWrap="wrap"
-                >
-                  <FormControl w={{ base: "100%", sm: "180px" }}>
-                    <FormLabel fontSize="sm" mb={2} color={textColor}>
-                      Nomor Berikutnya
-                    </FormLabel>
-                    <NumberInput
-                      min={1}
-                      precision={0}
-                      value={salesCodeCounter.nextNumber}
-                      onChange={(_, valueAsNumber) =>
-                        handleSalesCodeCounterChange(valueAsNumber)
-                      }
-                      isDisabled={
-                        salesCodeCounter.loading || salesCodeCounter.saving
-                      }
-                    >
-                      <NumberInputField bg={tableBg} />
-                      <NumberInputStepper>
-                        <NumberIncrementStepper />
-                        <NumberDecrementStepper />
-                      </NumberInputStepper>
-                    </NumberInput>
-                  </FormControl>
-
-                  <Button
-                    leftIcon={<FiSave />}
-                    colorScheme="blue"
-                    onClick={handleSaveSalesCodeCounter}
-                    isLoading={salesCodeCounter.saving}
-                    isDisabled={
-                      salesCodeCounter.loading ||
-                      salesCodeCounter.nextNumber < 1
-                    }
-                    w={{ base: "100%", sm: "auto" }}
-                  >
-                    Simpan Counter
-                  </Button>
-                </HStack>
-              </Flex>
-            </CardBody>
-          </Card>
         )}
 
         {/* Search and Filters */}
@@ -1092,6 +1015,117 @@ const SalesPageContent: React.FC = () => {
         onSave={handlePPh23Save}
         sale={state.selectedSale}
       />
+
+      <Modal
+        isOpen={isSalesCounterOpen}
+        onClose={onSalesCounterClose}
+        size="lg"
+        isCentered
+      >
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader borderBottomWidth="1px" borderColor={modalBorderColor}>
+            <HStack spacing={3}>
+              <Flex
+                w="36px"
+                h="36px"
+                align="center"
+                justify="center"
+                borderRadius="md"
+                bg={counterIconBg}
+                color={counterIconColor}
+                flexShrink={0}
+              >
+                <Icon as={FiHash} boxSize={5} />
+              </Flex>
+              <Box>
+                <HStack spacing={2}>
+                  <Text>Counter Kode Penjualan</Text>
+                  <Badge colorScheme="blue" variant="subtle">
+                    Admin
+                  </Badge>
+                </HStack>
+                <Text fontSize="sm" fontWeight="normal" color={subheadingColor}>
+                  Atur nomor yang akan dipakai pada penjualan berikutnya.
+                </Text>
+              </Box>
+            </HStack>
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody py={6}>
+            <VStack spacing={5} align="stretch">
+              <Box>
+                <Text fontSize="sm" color={textColor} mb={1}>
+                  Preview Kode Berikutnya
+                </Text>
+                <Heading size="md" color={headingColor}>
+                  Kode Penjualan:{" "}
+                  {salesCodeCounter.loading
+                    ? "Memuat..."
+                    : salesCodeCounter.nextCode}
+                </Heading>
+              </Box>
+
+              {salesCodeCounter.error && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  <AlertDescription>{salesCodeCounter.error}</AlertDescription>
+                </Alert>
+              )}
+
+              <FormControl>
+                <FormLabel fontSize="sm" color={textColor}>
+                  Nomor Berikutnya
+                </FormLabel>
+                <NumberInput
+                  min={1}
+                  precision={0}
+                  value={salesCodeCounter.nextNumber}
+                  onChange={(_, valueAsNumber) =>
+                    handleSalesCodeCounterChange(valueAsNumber)
+                  }
+                  isDisabled={
+                    salesCodeCounter.loading || salesCodeCounter.saving
+                  }
+                >
+                  <NumberInputField bg={tableBg} />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+                <FormHelperText color={subheadingColor}>
+                  Jangan isi nomor yang sudah pernah menjadi kode penjualan.
+                  Sistem akan menolak nomor yang sudah dipakai.
+                </FormHelperText>
+              </FormControl>
+            </VStack>
+          </ModalBody>
+          <ModalFooter borderTopWidth="1px" borderColor={modalBorderColor}>
+            <HStack spacing={3}>
+              <Button
+                leftIcon={<FiX />}
+                variant="ghost"
+                onClick={onSalesCounterClose}
+                isDisabled={salesCodeCounter.saving}
+              >
+                Batal
+              </Button>
+              <Button
+                leftIcon={<FiSave />}
+                colorScheme="blue"
+                onClick={handleSaveSalesCodeCounter}
+                isLoading={salesCodeCounter.saving}
+                isDisabled={
+                  salesCodeCounter.loading || salesCodeCounter.nextNumber < 1
+                }
+              >
+                Simpan Counter
+              </Button>
+            </HStack>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* Invoice Types Management Modal */}
       <Modal

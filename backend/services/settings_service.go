@@ -11,6 +11,8 @@ import (
 	"log"
 	"math"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,6 +138,10 @@ func (s *SettingsService) UpdateSettings(updates map[string]interface{}, userID 
 		updates["fiscal_year_start"] = s.normalizeFiscalYearStart(v)
 	}
 
+	if err := s.validateSalesNextNumberUpdate(&settings, updates); err != nil {
+		return err
+	}
+
 	// Capture old values for audit logging
 	oldValues := s.captureCurrentValues(&settings, updates)
 	// Add the user who is updating
@@ -242,8 +248,97 @@ func (s *SettingsService) validateSettings(updates map[string]interface{}) error
 			}
 		}
 	}
-	// No more validation for next numbers — now using monthly sequences
+	// Other next-number counters are validated at their domain-specific update paths.
 	return nil
+}
+
+func (s *SettingsService) validateSalesNextNumberUpdate(settings *models.Settings, updates map[string]interface{}) error {
+	value, exists := updates["sales_next_number"]
+	if !exists {
+		return nil
+	}
+
+	nextNumber, err := normalizePositiveCounter(value)
+	if err != nil {
+		return errors.New("Nomor counter penjualan harus berupa angka bulat minimal 1.")
+	}
+
+	prefix := settings.SalesPrefix
+	if updatedPrefix, ok := updates["sales_prefix"].(string); ok {
+		prefix = strings.TrimSpace(updatedPrefix)
+	}
+	if prefix == "" {
+		return errors.New("Prefix kode penjualan tidak boleh kosong.")
+	}
+
+	maxUsedNumber, err := s.getMaxUsedSalesNumber(prefix)
+	if err != nil {
+		log.Printf("Error validating sales_next_number for prefix %s: %v", prefix, err)
+		return errors.New("Gagal memeriksa kode penjualan yang sudah dipakai. Silakan coba lagi.")
+	}
+
+	if maxUsedNumber > 0 && nextNumber <= maxUsedNumber {
+		usedCode := formatInvoiceNumber(prefix, nextNumber)
+		nextSafeCode := formatInvoiceNumber(prefix, maxUsedNumber+1)
+		return fmt.Errorf(
+			"Kode penjualan %s sudah pernah dipakai. Gunakan nomor %d atau lebih besar agar kode berikutnya menjadi %s.",
+			usedCode,
+			maxUsedNumber+1,
+			nextSafeCode,
+		)
+	}
+
+	updates["sales_next_number"] = nextNumber
+	return nil
+}
+
+func normalizePositiveCounter(value interface{}) (int, error) {
+	var number float64
+
+	switch typedValue := value.(type) {
+	case int:
+		number = float64(typedValue)
+	case int32:
+		number = float64(typedValue)
+	case int64:
+		number = float64(typedValue)
+	case float32:
+		number = float64(typedValue)
+	case float64:
+		number = typedValue
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typedValue))
+		if err != nil {
+			return 0, err
+		}
+		number = float64(parsed)
+	default:
+		return 0, fmt.Errorf("unsupported counter type %T", value)
+	}
+
+	if math.Trunc(number) != number || number < 1 {
+		return 0, errors.New("counter must be a whole number greater than zero")
+	}
+
+	return int(number), nil
+}
+
+func (s *SettingsService) getMaxUsedSalesNumber(prefix string) (int, error) {
+	escapedPrefix := regexp.QuoteMeta(prefix)
+	capturePattern := fmt.Sprintf("^%s-([0-9]+)$", escapedPrefix)
+	matchPattern := fmt.Sprintf("^%s-[0-9]+$", escapedPrefix)
+
+	var maxUsedNumber int
+	err := s.db.Raw(`
+		SELECT COALESCE(MAX(CAST(SUBSTRING(code FROM ?) AS INTEGER)), 0)
+		FROM sales
+		WHERE code ~ ?
+	`, capturePattern, matchPattern).Scan(&maxUsedNumber).Error
+	if err != nil {
+		return 0, err
+	}
+
+	return maxUsedNumber, nil
 }
 
 // createDefaultSettings creates default system settings
