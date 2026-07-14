@@ -417,6 +417,17 @@ export interface SalesSummary {
   top_customers: CustomerSales[];
 }
 
+export interface SalesCodeCounter {
+  prefix: string;
+  nextNumber: number;
+  nextCode: string;
+}
+
+interface SettingsCounterPayload {
+  sales_prefix?: string | null;
+  sales_next_number?: number | string | null;
+}
+
 export interface CustomerSales {
   customer_id: number;
   customer_name: string;
@@ -457,6 +468,57 @@ export interface ReceivableItem {
 
 class SalesService {
   // Basic CRUD Operations
+
+  formatSalesCode(prefix: string = "SOA", nextNumber: number = 1): string {
+    const safePrefix = (prefix || "SOA").trim() || "SOA";
+    const safeNumber =
+      Number.isFinite(nextNumber) && nextNumber > 0
+        ? Math.floor(nextNumber)
+        : 1;
+
+    return `${safePrefix}-${safeNumber.toString().padStart(5, "0")}`;
+  }
+
+  private buildSalesCodeCounter(
+    settings?: SettingsCounterPayload | null,
+  ): SalesCodeCounter {
+    const prefix = settings?.sales_prefix || "SOA";
+    const rawNextNumber = Number(settings?.sales_next_number ?? 1);
+    const nextNumber =
+      Number.isFinite(rawNextNumber) && rawNextNumber > 0
+        ? Math.floor(rawNextNumber)
+        : 1;
+
+    return {
+      prefix,
+      nextNumber,
+      nextCode: this.formatSalesCode(prefix, nextNumber),
+    };
+  }
+
+  async getSalesCodeCounter(): Promise<SalesCodeCounter> {
+    const response = await api.get(API_ENDPOINTS.SETTINGS);
+    const settings = (response.data?.data ||
+      response.data) as SettingsCounterPayload;
+
+    return this.buildSalesCodeCounter(settings);
+  }
+
+  async updateSalesCodeCounter(nextNumber: number): Promise<SalesCodeCounter> {
+    const safeNextNumber =
+      Number.isFinite(nextNumber) && nextNumber > 0
+        ? Math.floor(nextNumber)
+        : 1;
+    const response = await api.put(API_ENDPOINTS.SETTINGS_UPDATE, {
+      sales_next_number: safeNextNumber,
+    });
+    const settings = (response.data?.data || {
+      sales_prefix: "SOA",
+      sales_next_number: safeNextNumber,
+    }) as SettingsCounterPayload;
+
+    return this.buildSalesCodeCounter(settings);
+  }
 
   async getSales(filter: SalesFilter = {}): Promise<SalesResult> {
     const params = new URLSearchParams();

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import SimpleLayout from "@/components/layout/SimpleLayout";
 import ProtectedModule from "@/components/common/ProtectedModule";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,7 +13,11 @@ import SalesForm from "@/components/sales/SalesForm";
 import PaymentForm from "@/components/sales/PaymentForm";
 import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
 import InvoiceTypeManagement from "@/components/invoicetype/InvoiceTypeManagement";
-import salesService, { Sale, SalesFilter } from "@/services/salesService";
+import salesService, {
+  Sale,
+  SalesCodeCounter,
+  SalesFilter,
+} from "@/services/salesService";
 import {
   Box,
   Heading,
@@ -25,7 +29,6 @@ import {
   InputGroup,
   InputLeftElement,
   Card,
-  CardHeader,
   CardBody,
   useToast,
   useDisclosure,
@@ -37,6 +40,14 @@ import {
   Tooltip,
   IconButton,
   Icon,
+  Badge,
+  FormControl,
+  FormLabel,
+  NumberInput,
+  NumberInputField,
+  NumberInputStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
   Menu,
   MenuButton,
   MenuList,
@@ -54,16 +65,13 @@ import {
   FiDownload,
   FiRefreshCw,
   FiFilter,
-  FiBarChart,
   FiSettings,
   FiChevronLeft,
   FiChevronRight,
+  FiHash,
+  FiSave,
 } from "react-icons/fi";
-import {
-  handleLoadingError,
-  handleDeleteError,
-  handleSuccess,
-} from "@/utils/errorHandler";
+import { handleDeleteError, handleSuccess } from "@/utils/errorHandler";
 
 interface SalesPageState {
   sales: Sale[];
@@ -78,6 +86,33 @@ interface SalesPageState {
     limit: number;
     totalPages: number;
   };
+}
+
+interface SalesCodeCounterState extends SalesCodeCounter {
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+}
+
+function getSalesCounterErrorMessage(error: unknown, fallback: string): string {
+  const responseData = (
+    error as {
+      response?: {
+        data?: {
+          details?: string;
+          message?: string;
+          error?: string;
+        };
+      };
+    }
+  ).response?.data;
+
+  return (
+    responseData?.details ||
+    responseData?.message ||
+    responseData?.error ||
+    fallback
+  );
 }
 
 export default function SalesPage() {
@@ -98,6 +133,7 @@ const SalesPageContent: React.FC = () => {
   const { t } = useTranslation();
   const { canCreate, canEdit, canDelete, canExport } =
     useModulePermissions("sales");
+  const isAdmin = user?.role?.toLowerCase() === "admin";
 
   const {
     isOpen: isFormOpen,
@@ -120,18 +156,6 @@ const SalesPageContent: React.FC = () => {
     onClose: onInvoiceTypesClose,
   } = useDisclosure();
 
-  // Tooltip descriptions for sales page
-  const tooltips = {
-    search:
-      "Cari penjualan berdasarkan nomor invoice, nama customer, atau referensi",
-    status:
-      "Filter penjualan berdasarkan status workflow aktif: Draft, Invoiced, Paid, atau Cancelled.",
-    dateRange:
-      "Filter penjualan berdasarkan tanggal transaksi untuk periode tertentu",
-    export: "Unduh data penjualan dalam format PDF atau Excel",
-    refresh: "Muat ulang data penjualan terbaru dari server",
-  };
-
   // Theme-aware colors
   const headingColor = useColorModeValue("gray.800", "var(--text-primary)");
   const subheadingColor = useColorModeValue(
@@ -141,6 +165,9 @@ const SalesPageContent: React.FC = () => {
   const tableBg = useColorModeValue("white", "var(--bg-secondary)");
   const textColor = useColorModeValue("gray.600", "var(--text-secondary)");
   const paginationBorderColor = useColorModeValue("gray.200", "gray.700");
+  const counterBorderColor = useColorModeValue("blue.100", "whiteAlpha.200");
+  const counterIconBg = useColorModeValue("blue.50", "whiteAlpha.100");
+  const counterIconColor = useColorModeValue("blue.600", "blue.200");
 
   const [state, setState] = useState<SalesPageState>({
     sales: [],
@@ -163,6 +190,15 @@ const SalesPageContent: React.FC = () => {
       totalPages: 1,
     },
   });
+  const [salesCodeCounter, setSalesCodeCounter] =
+    useState<SalesCodeCounterState>({
+      prefix: "SOA",
+      nextNumber: 1,
+      nextCode: "SOA-00001",
+      loading: false,
+      saving: false,
+      error: null,
+    });
 
   // Load sales data
   const loadSales = async (newFilter?: Partial<SalesFilter>) => {
@@ -234,11 +270,48 @@ const SalesPageContent: React.FC = () => {
     }
   };
 
+  const loadSalesCodeCounter = useCallback(async () => {
+    if (!isAdmin) return;
+
+    setSalesCodeCounter((prev) => ({
+      ...prev,
+      loading: true,
+      error: null,
+    }));
+
+    try {
+      const counter = await salesService.getSalesCodeCounter();
+      setSalesCodeCounter({
+        ...counter,
+        loading: false,
+        saving: false,
+        error: null,
+      });
+    } catch (error: unknown) {
+      const message = getSalesCounterErrorMessage(
+        error,
+        "Gagal memuat counter kode penjualan",
+      );
+
+      setSalesCodeCounter((prev) => ({
+        ...prev,
+        loading: false,
+        error: message,
+      }));
+    }
+  }, [isAdmin]);
+
   // Initial load
   useEffect(() => {
     loadSales();
     loadSalesSummary();
   }, []);
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadSalesCodeCounter();
+    }
+  }, [isAdmin, loadSalesCodeCounter]);
 
   // Handle search
   const handleSearch = (searchTerm: string) => {
@@ -265,6 +338,70 @@ const SalesPageContent: React.FC = () => {
 
   const handlePageSizeChange = (limit: number) => {
     loadSales({ limit, page: 1 });
+  };
+
+  const handleSalesCodeCounterChange = (nextNumberValue: number) => {
+    const nextNumber =
+      Number.isFinite(nextNumberValue) && nextNumberValue > 0
+        ? Math.floor(nextNumberValue)
+        : 1;
+
+    setSalesCodeCounter((prev) => ({
+      ...prev,
+      nextNumber,
+      nextCode: salesService.formatSalesCode(prev.prefix, nextNumber),
+      error: null,
+    }));
+  };
+
+  const handleSaveSalesCodeCounter = async () => {
+    if (!isAdmin) return;
+
+    setSalesCodeCounter((prev) => ({
+      ...prev,
+      saving: true,
+      error: null,
+    }));
+
+    try {
+      const updatedCounter = await salesService.updateSalesCodeCounter(
+        salesCodeCounter.nextNumber,
+      );
+
+      setSalesCodeCounter({
+        ...updatedCounter,
+        loading: false,
+        saving: false,
+        error: null,
+      });
+
+      toast({
+        title: "Counter kode penjualan diperbarui",
+        description: `Kode berikutnya: ${updatedCounter.nextCode}`,
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch (error: unknown) {
+      const message = getSalesCounterErrorMessage(
+        error,
+        "Gagal menyimpan counter kode penjualan",
+      );
+
+      setSalesCodeCounter((prev) => ({
+        ...prev,
+        saving: false,
+        error: message,
+      }));
+
+      toast({
+        title: "Gagal menyimpan counter kode penjualan",
+        description: message,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    }
   };
 
   // Handle create/edit sale
@@ -438,6 +575,7 @@ const SalesPageContent: React.FC = () => {
     setState((prev) => ({ ...prev, selectedSale: null })); // Reset selected sale
     loadSales();
     loadSalesSummary();
+    loadSalesCodeCounter();
   };
 
   // Handle form close
@@ -522,6 +660,7 @@ const SalesPageContent: React.FC = () => {
                 onClick={() => {
                   loadSales();
                   loadSalesSummary();
+                  loadSalesCodeCounter();
                 }}
                 isLoading={state.loading}
               />
@@ -587,6 +726,111 @@ const SalesPageContent: React.FC = () => {
               formatCurrency={salesService.formatCurrency}
             />
           </Box>
+        )}
+
+        {isAdmin && (
+          <Card
+            mb={6}
+            borderWidth="1px"
+            borderColor={counterBorderColor}
+            bg={tableBg}
+          >
+            <CardBody>
+              <Flex
+                align={{ base: "stretch", lg: "center" }}
+                justify="space-between"
+                direction={{ base: "column", lg: "row" }}
+                gap={4}
+              >
+                <HStack align="start" spacing={4} flex="1" minW={0}>
+                  <Flex
+                    w="44px"
+                    h="44px"
+                    align="center"
+                    justify="center"
+                    borderRadius="md"
+                    bg={counterIconBg}
+                    color={counterIconColor}
+                    flexShrink={0}
+                  >
+                    <Icon as={FiHash} boxSize={5} />
+                  </Flex>
+                  <Box minW={0}>
+                    <HStack spacing={2} wrap="wrap">
+                      <Text
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        color={textColor}
+                      >
+                        Counter Kode Penjualan
+                      </Text>
+                      <Badge colorScheme="blue" variant="subtle">
+                        Admin
+                      </Badge>
+                    </HStack>
+                    <Heading size="sm" mt={1} color={headingColor}>
+                      Kode Penjualan:{" "}
+                      {salesCodeCounter.loading
+                        ? "Memuat..."
+                        : salesCodeCounter.nextCode}
+                    </Heading>
+                    <Text fontSize="sm" color={subheadingColor} mt={1}>
+                      Nomor ini dipakai untuk penjualan berikutnya.
+                    </Text>
+                    {salesCodeCounter.error && (
+                      <Text fontSize="sm" color="red.500" mt={2}>
+                        {salesCodeCounter.error}
+                      </Text>
+                    )}
+                  </Box>
+                </HStack>
+
+                <HStack
+                  spacing={3}
+                  align="end"
+                  justify={{ base: "stretch", md: "flex-end" }}
+                  flexWrap="wrap"
+                >
+                  <FormControl w={{ base: "100%", sm: "180px" }}>
+                    <FormLabel fontSize="sm" mb={2} color={textColor}>
+                      Nomor Berikutnya
+                    </FormLabel>
+                    <NumberInput
+                      min={1}
+                      precision={0}
+                      value={salesCodeCounter.nextNumber}
+                      onChange={(_, valueAsNumber) =>
+                        handleSalesCodeCounterChange(valueAsNumber)
+                      }
+                      isDisabled={
+                        salesCodeCounter.loading || salesCodeCounter.saving
+                      }
+                    >
+                      <NumberInputField bg={tableBg} />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+
+                  <Button
+                    leftIcon={<FiSave />}
+                    colorScheme="blue"
+                    onClick={handleSaveSalesCodeCounter}
+                    isLoading={salesCodeCounter.saving}
+                    isDisabled={
+                      salesCodeCounter.loading ||
+                      salesCodeCounter.nextNumber < 1
+                    }
+                    w={{ base: "100%", sm: "auto" }}
+                  >
+                    Simpan Counter
+                  </Button>
+                </HStack>
+              </Flex>
+            </CardBody>
+          </Card>
         )}
 
         {/* Search and Filters */}
