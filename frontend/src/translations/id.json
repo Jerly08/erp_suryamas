@@ -1253,6 +1253,7 @@
     },
     "table": {
       "code": "KODE",
+      "invoiceNumber": "NOMOR INVOICE",
       "customer": "PELANGGAN",
       "date": "TANGGAL",
       "total": "TOTAL",

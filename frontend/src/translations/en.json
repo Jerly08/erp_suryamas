@@ -1484,6 +1484,7 @@
     },
     "table": {
       "code": "CODE",
+      "invoiceNumber": "INVOICE NUMBER",
       "customer": "CUSTOMER",
       "date": "DATE",
       "total": "TOTAL",

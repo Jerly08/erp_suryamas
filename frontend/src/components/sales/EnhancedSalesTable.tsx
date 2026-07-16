@@ -18,11 +18,9 @@ import {
   MenuItem,
   MenuDivider,
   IconButton,
-  HStack,
   VStack,
   Spinner,
   useColorModeValue,
-  TableContainer,
   Card,
   CardHeader,
   CardBody,
@@ -37,8 +35,6 @@ import {
   FiDollarSign,
   FiDownload,
   FiTrash2,
-  FiXCircle,
-  FiPrinter,
   FiCopy,
 } from "react-icons/fi";
 import { Sale } from "@/services/salesService";
@@ -243,6 +239,14 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                     fontSize="xs"
                     fontWeight="bold"
                   >
+                    {t("sales.table.invoiceNumber")}
+                  </Th>
+                  <Th
+                    color={textColor}
+                    borderColor={borderColor}
+                    fontSize="xs"
+                    fontWeight="bold"
+                  >
                     {t("sales.table.customer")}
                   </Th>
                   <Th
@@ -344,6 +348,11 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                       <Td borderColor={borderColor} py={3}>
                         <Text fontWeight="medium" color="blue.600">
                           {sale.code}
+                        </Text>
+                      </Td>
+                      <Td borderColor={borderColor} py={3}>
+                        <Text fontSize="sm" color={textColor}>
+                          {sale.invoice_number || "-"}
                         </Text>
                       </Td>
                       <Td borderColor={borderColor} py={3}>
