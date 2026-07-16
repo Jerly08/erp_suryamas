@@ -11,7 +11,6 @@ import (
 	"log"
 	"math"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -271,20 +270,25 @@ func (s *SettingsService) validateSalesNextNumberUpdate(settings *models.Setting
 		return errors.New("Prefix kode penjualan tidak boleh kosong.")
 	}
 
-	maxUsedNumber, err := s.getMaxUsedSalesNumber(prefix)
+	usedCode := formatInvoiceNumber(prefix, nextNumber)
+	isUsed, err := s.isSalesCodeUsed(usedCode)
 	if err != nil {
 		log.Printf("Error validating sales_next_number for prefix %s: %v", prefix, err)
 		return errors.New("Gagal memeriksa kode penjualan yang sudah dipakai. Silakan coba lagi.")
 	}
 
-	if maxUsedNumber > 0 && nextNumber <= maxUsedNumber {
-		usedCode := formatInvoiceNumber(prefix, nextNumber)
-		nextSafeCode := formatInvoiceNumber(prefix, maxUsedNumber+1)
+	if isUsed {
+		nextAvailableNumber, findErr := s.findNextAvailableSalesNumber(prefix, nextNumber+1)
+		if findErr != nil {
+			log.Printf("Error finding next available sales number for prefix %s: %v", prefix, findErr)
+			return fmt.Errorf("Kode penjualan %s sudah pernah dipakai. Gunakan nomor lain yang belum dipakai.", usedCode)
+		}
+		nextAvailableCode := formatInvoiceNumber(prefix, nextAvailableNumber)
 		return fmt.Errorf(
-			"Kode penjualan %s sudah pernah dipakai. Gunakan nomor %d atau lebih besar agar kode berikutnya menjadi %s.",
+			"Kode penjualan %s sudah pernah dipakai. Gunakan nomor %d atau nomor lain yang belum dipakai agar kode berikutnya menjadi %s.",
 			usedCode,
-			maxUsedNumber+1,
-			nextSafeCode,
+			nextAvailableNumber,
+			nextAvailableCode,
 		)
 	}
 
@@ -323,22 +327,33 @@ func normalizePositiveCounter(value interface{}) (int, error) {
 	return int(number), nil
 }
 
-func (s *SettingsService) getMaxUsedSalesNumber(prefix string) (int, error) {
-	escapedPrefix := regexp.QuoteMeta(prefix)
-	capturePattern := fmt.Sprintf("^%s-([0-9]+)$", escapedPrefix)
-	matchPattern := fmt.Sprintf("^%s-[0-9]+$", escapedPrefix)
-
-	var maxUsedNumber int
-	err := s.db.Raw(`
-		SELECT COALESCE(MAX(CAST(SUBSTRING(code FROM ?) AS INTEGER)), 0)
-		FROM sales
-		WHERE code ~ ?
-	`, capturePattern, matchPattern).Scan(&maxUsedNumber).Error
+func (s *SettingsService) isSalesCodeUsed(code string) (bool, error) {
+	var count int64
+	err := s.db.Table("sales").Where("code = ?", code).Count(&count).Error
 	if err != nil {
-		return 0, err
+		return false, err
 	}
 
-	return maxUsedNumber, nil
+	return count > 0, nil
+}
+
+func (s *SettingsService) findNextAvailableSalesNumber(prefix string, startNumber int) (int, error) {
+	if startNumber < 1 {
+		startNumber = 1
+	}
+
+	for candidate := startNumber; candidate < startNumber+100000; candidate++ {
+		code := formatInvoiceNumber(prefix, candidate)
+		isUsed, err := s.isSalesCodeUsed(code)
+		if err != nil {
+			return 0, err
+		}
+		if !isUsed {
+			return candidate, nil
+		}
+	}
+
+	return 0, fmt.Errorf("unable to find available sales number for prefix %s", prefix)
 }
 
 // createDefaultSettings creates default system settings
@@ -483,8 +498,14 @@ func (s *SettingsService) GetNextSalesNumber() (string, error) {
 		return "", err
 	}
 
-	salesNumber := formatInvoiceNumber(settings.SalesPrefix, settings.SalesNextNumber)
-	settings.SalesNextNumber++
+	nextNumber, err := s.findNextAvailableSalesNumber(settings.SalesPrefix, settings.SalesNextNumber)
+	if err != nil {
+		tx.Rollback()
+		return "", err
+	}
+
+	salesNumber := formatInvoiceNumber(settings.SalesPrefix, nextNumber)
+	settings.SalesNextNumber = nextNumber + 1
 
 	if err := tx.Save(&settings).Error; err != nil {
 		tx.Rollback()
