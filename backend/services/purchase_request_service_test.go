@@ -1013,6 +1013,137 @@ func TestRequesterRevisionPreservesApprovedSnapshotAndRestartsApproval(t *testin
 	require.InDelta(t, 200000, *final.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
 }
 
+func TestFinanceStaffCanRequestRequesterRevisionBeforeInitialReview(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "revision-before-review-requester", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "revision-before-review-staff", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "revision-before-review-manager", models.RoleFinanceManager)
+	product := seedPurchaseRequestTestProduct(t, db, "REVISION-BEFORE-REVIEW")
+	vendor := seedPurchaseRequestTestVendor(t, db, "REVISION-BEFORE-REVIEW")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Title:      "PR perlu perbaikan sebelum review",
+		VendorID:   &vendor.ID,
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusPendingApproval, pr.Status)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, pr.CurrentApprovalStage)
+
+	_, err = service.OpenPurchaseRequestRequesterRevision(
+		pr.ID,
+		financeManager.ID,
+		financeManager.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Finance Manager mencoba membuka tahap Finance Staff"},
+	)
+	require.ErrorContains(t, err, "only the active purchase request reviewer")
+
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		pr.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Mohon lengkapi spesifikasi dan dokumen pendukung"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusAwaitingRevision, opened.Status)
+	require.Equal(t, models.PRApprovalStageFinalized, opened.CurrentApprovalStage)
+	require.Nil(t, opened.FinanceStaffApprovedBy)
+	require.Nil(t, opened.FinanceManagerApprovedBy)
+	require.Len(t, opened.RevisionSnapshots, 1)
+	require.Equal(t, models.PRStatusPendingApproval, opened.RevisionSnapshots[0].PreviousStatus)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, opened.RevisionSnapshots[0].PreviousApprovalStage)
+	require.Nil(t, opened.RevisionSnapshots[0].FinanceStaffApprovedBy)
+	require.Nil(t, opened.RevisionSnapshots[0].FinanceManagerApprovedBy)
+
+	revised, err := service.SubmitPurchaseRequestRequesterRevision(
+		opened.ID,
+		requester.ID,
+		requester.Role,
+		models.PurchaseRequestRequesterRevisionPayload{
+			Notes: "Spesifikasi dan nominal sudah diperbaiki PIC",
+			Items: []models.PurchaseRequestRequesterRevisionItemPayload{
+				{ItemID: opened.Items[0].ID, Quantity: 1, EstimatedPrice: 125000},
+			},
+		},
+		[]models.PurchaseRequestDocument{
+			{
+				FileName: "perbaikan-pic.pdf",
+				FilePath: "/uploads/purchase-requests/perbaikan-pic.pdf",
+				FileSize: 1024,
+				MimeType: "application/pdf",
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusPendingApproval, revised.Status)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, revised.CurrentApprovalStage)
+	require.Equal(t, 2, revised.ApprovalRevision)
+	require.Nil(t, revised.FinanceStaffApprovedBy)
+	require.Nil(t, revised.FinanceManagerApprovedBy)
+	require.NotNil(t, revised.RevisionSubmittedBy)
+	require.Equal(t, requester.ID, *revised.RevisionSubmittedBy)
+	require.InDelta(t, 125000, revised.TotalEstimatedAmount, 0.01)
+	require.NotNil(t, revised.RevisionSnapshots[0].NewTotalEstimatedAmount)
+	require.InDelta(t, 125000, *revised.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
+}
+
+func TestRequesterRevisionDuringApprovalRequiresReviewerAtCurrentStage(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "revision-current-stage-requester", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "revision-current-stage-staff", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "revision-current-stage-manager", models.RoleFinanceManager)
+	product := seedPurchaseRequestTestProduct(t, db, "REVISION-CURRENT-STAGE")
+	vendor := seedPurchaseRequestTestVendor(t, db, "REVISION-CURRENT-STAGE")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Title:      "PR revisi pada tahap Finance Manager",
+		VendorID:   &vendor.ID,
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
+		Items: []models.PurchaseRequestReviewItemPayload{
+			{ItemID: pr.Items[0].ID, Decision: models.PRItemDecisionApproved},
+		},
+		Reason: "Lanjut ke Finance Manager",
+	})
+	require.NoError(t, err)
+
+	_, err = service.OpenPurchaseRequestRequesterRevision(
+		pr.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Finance Staff mencoba membuka tahap Finance Manager"},
+	)
+	require.ErrorContains(t, err, "only the active purchase request reviewer")
+
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		pr.ID,
+		financeManager.ID,
+		financeManager.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Nominal dan dokumen perlu diperbaiki PIC"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusAwaitingRevision, opened.Status)
+	require.Len(t, opened.RevisionSnapshots, 1)
+	require.Equal(t, models.PRApprovalStageFinanceManager, opened.RevisionSnapshots[0].PreviousApprovalStage)
+	require.NotNil(t, opened.RevisionSnapshots[0].FinanceStaffApprovedBy)
+	require.Nil(t, opened.RevisionSnapshots[0].FinanceManagerApprovedBy)
+}
+
 func TestOpenRequesterRevisionRejectedWhenPurchaseAlreadyLinked(t *testing.T) {
 	db := newPurchaseRequestTestDB(t)
 	repo := repositories.NewPurchaseRequestRepository(db)

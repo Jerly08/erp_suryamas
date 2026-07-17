@@ -335,7 +335,7 @@ func (s *purchaseRequestService) UpdatePurchaseRequestInvoiceTerms(id uint, user
 }
 
 func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, userID uint, userRole string, payload models.PurchaseRequestOpenRevisionPayload) (*models.PurchaseRequest, error) {
-	if !canOpenPurchaseRequestRequesterRevision(userRole) {
+	if !canOpenPurchaseRequestRequesterRevisionByRole(userRole) {
 		return nil, fmt.Errorf("only finance staff, accounting, finance manager, or admin can open purchase request revision")
 	}
 
@@ -350,6 +350,9 @@ func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, u
 	}
 	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusPendingApproval {
 		return nil, fmt.Errorf("purchase request %s can only be opened for requester revision while pending approval or after finance manager approval", pr.PRNumber)
+	}
+	if !canOpenPurchaseRequestRequesterRevision(pr, userRole) {
+		return nil, fmt.Errorf("only the active purchase request reviewer can open requester revision")
 	}
 
 	linkedPurchases, err := s.getLinkedPurchasesForPurchaseRequest(pr.ID)
@@ -370,6 +373,9 @@ func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, u
 		}
 		if current.Status != models.PRStatusApproved && current.Status != models.PRStatusPendingApproval {
 			return fmt.Errorf("purchase request %s can only be opened for requester revision while pending approval or after approval", current.PRNumber)
+		}
+		if !canOpenPurchaseRequestRequesterRevision(&current, userRole) {
+			return fmt.Errorf("only the active purchase request reviewer can open requester revision")
 		}
 
 		snapshot, err := buildPurchaseRequestRevisionSnapshot(&current, userID, reason, now)
@@ -1340,9 +1346,43 @@ func canSubmitPurchaseRequestInvoiceRevision(pr *models.PurchaseRequest, userID 
 	return pr.RequesterID == userID
 }
 
-func canOpenPurchaseRequestRequesterRevision(role string) bool {
+func canOpenPurchaseRequestRequesterRevisionByRole(role string) bool {
 	roleNorm := models.NormalizeRole(role)
 	return roleNorm == models.RoleAdmin || models.IsFinanceTeamRole(roleNorm)
+}
+
+// canOpenPurchaseRequestRequesterRevision keeps the revision request with the
+// reviewer who currently owns the PR. A completed PR remains available to the
+// finance team so the established post-approval correction flow still works.
+func canOpenPurchaseRequestRequesterRevision(pr *models.PurchaseRequest, role string) bool {
+	if pr == nil || !canOpenPurchaseRequestRequesterRevisionByRole(role) {
+		return false
+	}
+
+	roleNorm := models.NormalizeRole(role)
+	if roleNorm == models.RoleAdmin {
+		return true
+	}
+	if pr.Status == models.PRStatusApproved {
+		return true
+	}
+	if pr.Status != models.PRStatusPendingApproval {
+		return false
+	}
+
+	stage := pr.CurrentApprovalStage
+	if stage == "" {
+		stage = resolveInitialPurchaseRequestStage(pr.Requester.Role)
+	}
+
+	switch stage {
+	case models.PRApprovalStageFinanceStaff:
+		return models.IsFinanceStaffRole(roleNorm) || models.IsAccountingRole(roleNorm)
+	case models.PRApprovalStageFinanceManager:
+		return models.IsFinanceManagerRole(roleNorm)
+	default:
+		return false
+	}
 }
 
 func canSubmitPurchaseRequestRequesterRevision(pr *models.PurchaseRequest, userID uint, userRole string) bool {

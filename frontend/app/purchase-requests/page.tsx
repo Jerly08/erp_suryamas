@@ -1055,9 +1055,14 @@ export default function PurchaseRequestsPage() {
       setRequesterRevisionOpenReason("");
       await fetchData();
       onRequesterRevisionClose();
+      const isInitialRevision = isInitialRequesterRevisionRequest(selectedRequest);
       toast({
-        title: "PR dibuka untuk revisi PIC",
-        description: "PIC dapat mengubah nominal dan upload dokumen pendukung.",
+        title: isInitialRevision
+          ? "Perbaikan PR diminta ke PIC"
+          : "PR dibuka untuk revisi PIC",
+        description: isInitialRevision
+          ? "Belum ada approval yang dikirim. PIC dapat memperbaiki data dan mengunggah dokumen pendukung."
+          : "PIC dapat mengubah nominal dan upload dokumen pendukung.",
         status: "success",
         duration: 4000,
       });
@@ -1312,6 +1317,12 @@ export default function PurchaseRequestsPage() {
     if (!pr || pr.status !== "PENDING_APPROVAL") return null;
     return pr.current_approval_stage || "FINANCE_STAFF";
   };
+
+  const isInitialRequesterRevisionRequest = (
+    pr?: PurchaseRequest | null,
+  ) =>
+    pr?.status === "PENDING_APPROVAL" &&
+    getCurrentReviewStage(pr) === "FINANCE_STAFF";
 
   const getStageLabel = (pr?: PurchaseRequest | null) => {
     const stage = getCurrentReviewStage(pr);
@@ -1625,11 +1636,22 @@ export default function PurchaseRequestsPage() {
 
   const canOpenRequesterRevision = (pr?: PurchaseRequest | null) => {
     if (!pr || !canApprove("purchase_requests")) return false;
-    if (roleNorm !== "admin" && !isFinanceTeamRole(roleNorm)) return false;
     if (pr.status !== "APPROVED" && pr.status !== "PENDING_APPROVAL") {
       return false;
     }
-    return !getPurchaseRealizationSummary(pr).hasPurchase;
+    if (getPurchaseRealizationSummary(pr).hasPurchase) return false;
+    if (roleNorm === "admin") return true;
+    if (!isFinanceTeamRole(roleNorm)) return false;
+    if (pr.status === "APPROVED") return true;
+
+    const stage = getCurrentReviewStage(pr);
+    if (stage === "FINANCE_STAFF") {
+      return isFinanceStaffRole(roleNorm) || isAccountingRole(roleNorm);
+    }
+    if (stage === "FINANCE_MANAGER") {
+      return isFinanceManagerRole(roleNorm);
+    }
+    return false;
   };
 
   const renderPaymentProofRealization = (
@@ -5013,6 +5035,32 @@ export default function PurchaseRequestsPage() {
                       Reject Semua
                     </Button>
                   </Flex>
+                  {canOpenRequesterRevision(selectedRequest) && (
+                    <Box
+                      mb={3}
+                      pt={3}
+                      borderTopWidth="1px"
+                      borderColor={borderColor}
+                    >
+                      <Button
+                        leftIcon={<FiEdit3 />}
+                        size="sm"
+                        colorScheme="purple"
+                        variant="outline"
+                        w={{ base: "full", sm: "auto" }}
+                        onClick={handleOpenRequesterRevisionRequest}
+                      >
+                        {isInitialRequesterRevisionRequest(selectedRequest)
+                          ? "Minta Perbaikan PIC"
+                          : "Buka Revisi PIC"}
+                      </Button>
+                      <Text fontSize="sm" color={mutedTextColor} mt={2}>
+                        {isInitialRequesterRevisionRequest(selectedRequest)
+                          ? "Kembalikan PR ke PIC untuk diperbaiki sebelum review dikirim. Alasan perbaikan wajib diisi."
+                          : "Buka akses revisi PIC. Setelah disubmit, PR akan kembali ke Finance Staff untuk approval ulang."}
+                      </Text>
+                    </Box>
+                  )}
                   <FormControl>
                     <FormLabel color={textColor}>Catatan Review</FormLabel>
                     <Textarea
@@ -5141,7 +5189,9 @@ export default function PurchaseRequestsPage() {
                         onClick={handleOpenRequesterRevisionRequest}
                         w={{ base: "full", md: "auto" }}
                       >
-                        Buka Revisi PIC
+                        {isInitialRequesterRevisionRequest(selectedRequest)
+                          ? "Minta Perbaikan PIC"
+                          : "Buka Revisi PIC"}
                       </Button>
                     )}
                     {canCancelPurchaseRequest(selectedRequest) && (
@@ -5170,17 +5220,22 @@ export default function PurchaseRequestsPage() {
           <AlertDialogOverlay>
             <AlertDialogContent bg={modalBg} color={textColor}>
               <AlertDialogHeader fontSize="lg" fontWeight="bold">
-                Buka Revisi PR untuk PIC
+                {isInitialRequesterRevisionRequest(selectedRequest)
+                  ? "Minta Perbaikan PR dari PIC"
+                  : "Buka Revisi PR untuk PIC"}
               </AlertDialogHeader>
               <AlertDialogBody>
                 <Text mb={3}>
-                  PR {selectedRequest?.pr_number} akan dibuka agar PIC dapat
-                  memperbarui nominal dan menambahkan dokumen pendukung. Setelah
-                  PIC submit, PR akan masuk approval ulang Finance Staff dan
-                  Finance Manager.
+                  {isInitialRequesterRevisionRequest(selectedRequest)
+                    ? `PR ${selectedRequest?.pr_number} akan dikembalikan ke PIC untuk diperbaiki sebelum review Finance Staff dikirim. Tidak ada approval yang dicatat. Setelah PIC submit, PR masuk kembali ke Finance Staff lalu Finance Manager.`
+                    : `PR ${selectedRequest?.pr_number} akan dibuka agar PIC dapat memperbarui nominal dan menambahkan dokumen pendukung. Setelah PIC submit, PR akan masuk approval ulang Finance Staff dan Finance Manager.`}
                 </Text>
                 <FormControl isRequired>
-                  <FormLabel>Alasan buka revisi</FormLabel>
+                  <FormLabel>
+                    {isInitialRequesterRevisionRequest(selectedRequest)
+                      ? "Alasan perbaikan"
+                      : "Alasan buka revisi"}
+                  </FormLabel>
                   <Textarea
                     value={requesterRevisionOpenReason}
                     onChange={(e) =>
@@ -5211,7 +5266,9 @@ export default function PurchaseRequestsPage() {
                   isDisabled={!requesterRevisionOpenReason.trim()}
                   ml={3}
                 >
-                  Buka Revisi
+                  {isInitialRequesterRevisionRequest(selectedRequest)
+                    ? "Kirim Permintaan"
+                    : "Buka Revisi"}
                 </Button>
               </AlertDialogFooter>
             </AlertDialogContent>
