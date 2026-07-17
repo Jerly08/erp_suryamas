@@ -358,6 +358,32 @@ export default function PurchaseRequestsPage() {
       return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
     }
 
+    const compactMatch = trimmedValue.match(/^(\d{8})$/);
+    if (compactMatch) {
+      const compactValue = compactMatch[1];
+      const yearFirst = Number(compactValue.slice(0, 4));
+      const isYearFirst = yearFirst >= 1900 && yearFirst <= 9999;
+      const year = isYearFirst
+        ? yearFirst
+        : Number(compactValue.slice(4, 8));
+      const month = Number(
+        isYearFirst ? compactValue.slice(4, 6) : compactValue.slice(2, 4),
+      );
+      const day = Number(
+        isYearFirst ? compactValue.slice(6, 8) : compactValue.slice(0, 2),
+      );
+      const parsedDate = new Date(year, month - 1, day);
+      if (
+        parsedDate.getFullYear() === year &&
+        parsedDate.getMonth() === month - 1 &&
+        parsedDate.getDate() === day
+      ) {
+        return formatDateInputValue(parsedDate);
+      }
+
+      return "";
+    }
+
     const localizedMatch = trimmedValue.match(
       /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/,
     );
@@ -398,10 +424,6 @@ export default function PurchaseRequestsPage() {
       month: "2-digit",
       year: "numeric",
     });
-  };
-
-  const formatInvoiceDateFieldValue = (value: string) => {
-    return formatDateInputDisplayValue(value) || value.trim();
   };
 
   const addDaysToDateInput = (dateValue: string, dayCount: number) => {
@@ -1985,7 +2007,7 @@ export default function PurchaseRequestsPage() {
       );
       setSelectedRequest(updated);
       setInvoiceTermsUpdateReceivedDate(
-        formatDateInputDisplayValue(updated.vendor_invoice_received_date),
+        normalizeDateInputValue(updated.vendor_invoice_received_date),
       );
       setInvoiceTermsUpdateDays(getInvoiceTermsDaysInputValue(updated));
       await fetchData();
@@ -2057,7 +2079,7 @@ export default function PurchaseRequestsPage() {
       setSelectedRequest(detail);
       setProjectUpdateId(detail.project_id?.toString() || "");
       setInvoiceTermsUpdateReceivedDate(
-        formatDateInputDisplayValue(detail.vendor_invoice_received_date),
+        normalizeDateInputValue(detail.vendor_invoice_received_date),
       );
       setInvoiceTermsUpdateDays(
         getInvoiceTermsDaysInputValue(detail),
@@ -2119,7 +2141,7 @@ export default function PurchaseRequestsPage() {
         setSelectedRequest(detail);
         setProjectUpdateId(detail.project_id?.toString() || "");
         setInvoiceTermsUpdateReceivedDate(
-          formatDateInputDisplayValue(detail.vendor_invoice_received_date),
+          normalizeDateInputValue(detail.vendor_invoice_received_date),
         );
         setInvoiceTermsUpdateDays(
           getInvoiceTermsDaysInputValue(detail),
@@ -2972,16 +2994,11 @@ export default function PurchaseRequestsPage() {
 	                    Tanggal Terima Invoice Vendor
 	                  </FormLabel>
 	                  <Input
-	                    type="text"
-	                    inputMode="numeric"
-	                    placeholder="dd/mm/yyyy"
-	                    value={vendorInvoiceReceivedDate}
+	                    type="date"
+	                    value={normalizeDateInputValue(vendorInvoiceReceivedDate)}
 	                    onChange={(e) =>
-	                      setVendorInvoiceReceivedDate(e.currentTarget.value)
-	                    }
-	                    onBlur={(e) =>
 	                      setVendorInvoiceReceivedDate(
-	                        formatInvoiceDateFieldValue(e.currentTarget.value),
+	                        normalizeDateInputValue(e.currentTarget.value),
 	                      )
 	                    }
 	                    bg={inputBg}
@@ -2990,6 +3007,9 @@ export default function PurchaseRequestsPage() {
 	                    _hover={{ borderColor: inputBorderColor }}
 	                    _focusVisible={fieldFocusStyles}
 	                  />
+	                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+	                    Ketuk field untuk membuka kalender.
+	                  </Text>
 	                </FormControl>
 	                <FormControl>
 	                  <FormLabel color={textColor}>Termin Pembayaran</FormLabel>
@@ -3573,19 +3593,14 @@ export default function PurchaseRequestsPage() {
 			                            Tgl Terima Invoice
 			                          </FormLabel>
 			                          <Input
-			                            type="text"
-			                            inputMode="numeric"
-			                            placeholder="dd/mm/yyyy"
+			                            type="date"
 			                            size="sm"
-			                            value={invoiceTermsUpdateReceivedDate}
+			                            value={normalizeDateInputValue(
+			                              invoiceTermsUpdateReceivedDate,
+			                            )}
 			                            onChange={(e) =>
 			                              setInvoiceTermsUpdateReceivedDate(
-			                                e.currentTarget.value,
-			                              )
-			                            }
-			                            onBlur={(e) =>
-			                              setInvoiceTermsUpdateReceivedDate(
-			                                formatInvoiceDateFieldValue(
+			                                normalizeDateInputValue(
 			                                  e.currentTarget.value,
 			                                ),
 			                              )
@@ -3596,6 +3611,9 @@ export default function PurchaseRequestsPage() {
 			                            _hover={{ borderColor: inputBorderColor }}
 			                            _focusVisible={fieldFocusStyles}
 			                          />
+			                          <Text fontSize="xs" color={mutedTextColor} mt={1}>
+			                            Ketuk field untuk membuka kalender.
+			                          </Text>
 			                        </FormControl>
 			                        <FormControl>
 			                          <FormLabel fontSize="xs" color={mutedTextColor}>

@@ -1160,7 +1160,7 @@ const PurchasesPage: React.FC = () => {
     vendor_id: "",
     purchase_request_id: "",
     project_id: "",
-    date: new Date().toISOString().split("T")[0],
+    date: formatDateForInput(new Date()),
     due_date: "",
     notes: "",
     discount: "0",
@@ -1240,7 +1240,7 @@ const PurchasesPage: React.FC = () => {
 
   // Receipt form state
   const [receiptFormData, setReceiptFormData] = useState({
-    received_date: new Date().toISOString().split("T")[0],
+    received_date: formatDateForInput(new Date()),
     notes: "",
     receipt_items: [] as Array<{
       purchase_item_id: number;
@@ -2603,7 +2603,7 @@ const PurchasesPage: React.FC = () => {
         .filter((item) => item.quantity_received > 0);
 
       setReceiptFormData({
-        received_date: new Date().toISOString().split("T")[0],
+        received_date: formatDateForInput(new Date()),
         notes: "",
         receipt_items: receiptItems,
       });
@@ -2809,7 +2809,7 @@ const PurchasesPage: React.FC = () => {
 
       // Reset form and close modal
       setReceiptFormData({
-        received_date: new Date().toISOString().split("T")[0],
+        received_date: formatDateForInput(new Date()),
         notes: "",
         receipt_items: [],
       });
@@ -4782,7 +4782,7 @@ const PurchasesPage: React.FC = () => {
       vendor_id: "",
       purchase_request_id: "",
       project_id: "",
-      date: new Date().toISOString().split("T")[0], // Today's date
+      date: formatDateForInput(new Date()), // Today's date
       due_date: "",
       notes: "",
       discount: "0",
@@ -5410,7 +5410,7 @@ const PurchasesPage: React.FC = () => {
         vendor_id: detailResponse.vendor_id?.toString() || "",
         purchase_request_id: "",
         project_id: detailResponse.project_id?.toString() || "",
-        date: new Date().toISOString().split("T")[0], // Use today's date
+        date: formatDateForInput(new Date()), // Use today's date
         due_date: "", // Clear due date
         notes: detailResponse.notes || "",
         discount: detailResponse.discount?.toString() || "0",

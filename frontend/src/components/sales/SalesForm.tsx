@@ -201,6 +201,13 @@ const resolveShippingTreatment = (
   return shippingTaxable ? "buyer_taxable" : "buyer_non_taxable";
 };
 
+const getLocalDateInputValue = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const SalesForm: React.FC<SalesFormProps> = ({
   isOpen,
   onClose,
@@ -427,7 +434,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
           setTimeout(() => {
             populateFormWithSale(initialData);
             // After population, ensure date is set to today for duplicated items (though handleDuplicate does it, re-confirm here)
-            setValue("date", new Date().toISOString().split("T")[0]);
+            setValue("date", getLocalDateInputValue());
           }, 100);
         } else {
           resetForm();
@@ -928,7 +935,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
       type: saleData.type || "INVOICE",
       date: saleData.date
         ? saleData.date.split("T")[0]
-        : new Date().toISOString().split("T")[0],
+        : getLocalDateInputValue(),
       due_date: saleData.due_date ? saleData.due_date.split("T")[0] : undefined,
       valid_until: saleData.valid_until
         ? saleData.valid_until.split("T")[0]
@@ -1018,7 +1025,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const resetForm = () => {
     reset({
       type: "INVOICE",
-      date: new Date().toISOString().split("T")[0],
+      date: getLocalDateInputValue(),
       currency: "IDR",
       exchange_rate: 1,
       discount_percent: 0,
@@ -2214,7 +2221,11 @@ const SalesForm: React.FC<SalesFormProps> = ({
                       </FormControl>
                     )}
 
-                    <HStack w="full" spacing={4}>
+                    <SimpleGrid
+                      w="full"
+                      columns={{ base: 1, md: 3 }}
+                      spacing={4}
+                    >
                       <FormControl isRequired isInvalid={!!errors.date}>
                         <FormLabel>{getDateFieldLabel(watchType)}</FormLabel>
                         <Input
@@ -2282,7 +2293,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           {t("sales.tooltips.validUntil")}
                         </FormHelperText>
                       </FormControl>
-                    </HStack>
+                    </SimpleGrid>
                   </VStack>
                 </Box>
 
