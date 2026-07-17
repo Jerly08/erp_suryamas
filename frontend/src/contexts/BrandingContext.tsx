@@ -16,7 +16,7 @@ import {
   FALLBACK_ICON_PATH,
   DEFAULT_LOGO_PATH,
   DEFAULT_LOGO_SCALE,
-  POWERED_BY_TEXT,
+  DEFAULT_POWERED_BY_TEXT,
   normalizeLogoScale,
 } from '@/config/branding';
 import { getImageUrl } from '@/utils/imageUrl';
@@ -28,6 +28,7 @@ interface PublicBrandingResponse {
     company_logo?: string;
     company_logo_scale?: number;
     company_icon?: string;
+    powered_by_text?: string;
     updated_at?: string;
   };
 }
@@ -46,6 +47,7 @@ interface BrandingState {
   logoUrl: string;
   logoScale: number;
   iconUrl: string;
+  poweredByText: string;
   updatedAt: string;
 }
 
@@ -54,6 +56,7 @@ const defaultBranding: BrandingState = {
   logoUrl: DEFAULT_LOGO_PATH,
   logoScale: DEFAULT_LOGO_SCALE,
   iconUrl: DEFAULT_ICON_PATH,
+  poweredByText: DEFAULT_POWERED_BY_TEXT,
   updatedAt: '',
 };
 
@@ -111,6 +114,7 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         logoUrl: appendVersion(logoUrl, version),
         logoScale: normalizeLogoScale(data.company_logo_scale),
         iconUrl: appendVersion(iconUrl, version),
+        poweredByText: data.powered_by_text?.trim() || DEFAULT_POWERED_BY_TEXT,
         updatedAt: version,
       });
     } catch (error) {
@@ -176,7 +180,7 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       logoUrl: branding.logoUrl,
       logoScale: branding.logoScale,
       iconUrl: branding.iconUrl,
-      poweredByText: POWERED_BY_TEXT,
+      poweredByText: branding.poweredByText,
       refreshBranding,
     }),
     [
@@ -184,6 +188,7 @@ export const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       branding.iconUrl,
       branding.logoScale,
       branding.logoUrl,
+      branding.poweredByText,
       refreshBranding,
     ],
   );

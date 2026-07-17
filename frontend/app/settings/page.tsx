@@ -199,6 +199,7 @@ interface SystemSettings {
   company_logo?: string;
   company_logo_scale?: number;
   company_icon?: string;
+  powered_by_text?: string;
   tax_number?: string;
   currency: string;
   date_format: string;
@@ -1127,6 +1128,34 @@ const SettingsPage: React.FC = () => {
                       </Stack>
                       <FormHelperText fontSize="xs">
                         {t("settings.companyLogoScaleHelp")}
+                      </FormHelperText>
+                    </FormControl>
+                    <Divider borderColor={dividerColor} />
+
+                    <FormControl>
+                      <FormLabel
+                        fontWeight="semibold"
+                        color={mutedTextColor}
+                        fontSize="sm"
+                      >
+                        {t("settings.poweredByText")}
+                      </FormLabel>
+                      <Input
+                        value={
+                          formData?.powered_by_text ??
+                          settings?.powered_by_text ??
+                          ""
+                        }
+                        onChange={(e) =>
+                          handleFormChange("powered_by_text", e.target.value)
+                        }
+                        placeholder={t("settings.poweredByTextPlaceholder")}
+                        maxLength={160}
+                        variant="filled"
+                        {...fieldStyles}
+                      />
+                      <FormHelperText fontSize="xs">
+                        {t("settings.poweredByTextHelp")}
                       </FormHelperText>
                     </FormControl>
                     <Divider borderColor={dividerColor} />

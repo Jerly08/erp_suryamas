@@ -27,6 +27,7 @@ type Settings struct {
 	CompanyLogo    string `json:"company_logo"`
 	CompanyLogoScale int  `json:"company_logo_scale" gorm:"default:100"`
 	CompanyIcon    string `json:"company_icon"`
+	PoweredByText  string `json:"powered_by_text" gorm:"column:powered_by_text;type:varchar(160);not null;default:'Powered by'"`
 	CompanyWebsite string `json:"company_website"`
 	
 	// Financial Settings
@@ -90,6 +91,7 @@ type SettingsResponse struct {
 	CompanyLogo    string `json:"company_logo"`
 	CompanyLogoScale int  `json:"company_logo_scale"`
 	CompanyIcon    string `json:"company_icon"`
+	PoweredByText  string `json:"powered_by_text"`
 	CompanyWebsite string `json:"company_website"`
 	
 	// Financial Settings
@@ -143,6 +145,7 @@ func (s *Settings) ToResponse() SettingsResponse {
 		CompanyLogo:        s.CompanyLogo,
 		CompanyLogoScale:   s.CompanyLogoScale,
 		CompanyIcon:        s.CompanyIcon,
+		PoweredByText:      s.PoweredByText,
 		CompanyWebsite:     s.CompanyWebsite,
 		Currency:           s.Currency,
 		DateFormat:         s.DateFormat,

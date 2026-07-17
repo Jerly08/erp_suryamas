@@ -9,7 +9,7 @@ export const APPLE_TOUCH_ICON_PATH = "/api/v1/branding/icon?size=180&source=runt
 export const DEFAULT_LOGO_SCALE = 100;
 export const MIN_LOGO_SCALE = 50;
 export const MAX_LOGO_SCALE = 180;
-export const POWERED_BY_TEXT = "Powered by PT SURYA HEBAT BERBAKAT";
+export const DEFAULT_POWERED_BY_TEXT = "Powered by";
 
 export const normalizeLogoScale = (value: unknown): number => {
   const scale = typeof value === "number" ? value : Number(value);

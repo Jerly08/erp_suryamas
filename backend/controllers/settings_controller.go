@@ -75,6 +75,7 @@ func (sc *SettingsController) GetPublicSettings(c *gin.Context) {
 			"company_logo":       settings.CompanyLogo,
 			"company_logo_scale": settings.CompanyLogoScale,
 			"company_icon":       settings.CompanyIcon,
+			"powered_by_text":    settings.PoweredByText,
 			"company_type":       settings.CompanyType,
 			"currency":           settings.Currency,
 			"date_format":        settings.DateFormat,
@@ -105,6 +106,7 @@ func (sc *SettingsController) GetPublicBranding(c *gin.Context) {
 			"company_logo":       settings.CompanyLogo,
 			"company_logo_scale": settings.CompanyLogoScale,
 			"company_icon":       settings.CompanyIcon,
+			"powered_by_text":    settings.PoweredByText,
 			"updated_at":         settings.UpdatedAt,
 		},
 	})

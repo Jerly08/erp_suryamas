@@ -28,6 +28,7 @@ func TestPublicBrandingEndpoints(t *testing.T) {
 		CompanyLogo:      "/uploads/company/logo.png",
 		CompanyLogoScale: 140,
 		CompanyIcon:      "/uploads/company/icon.png",
+		PoweredByText:    "Powered by Kode Inovasi Semesta",
 	}).Error)
 
 	controller := NewSettingsController(services.NewSettingsService(db))
@@ -51,6 +52,7 @@ func TestPublicBrandingEndpoints(t *testing.T) {
 				CompanyLogo      string `json:"company_logo"`
 				CompanyLogoScale int    `json:"company_logo_scale"`
 				CompanyIcon      string `json:"company_icon"`
+				PoweredByText    string `json:"powered_by_text"`
 			} `json:"data"`
 		}
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
@@ -59,6 +61,7 @@ func TestPublicBrandingEndpoints(t *testing.T) {
 		require.Equal(t, "/uploads/company/logo.png", payload.Data.CompanyLogo)
 		require.Equal(t, 140, payload.Data.CompanyLogoScale)
 		require.Equal(t, "/uploads/company/icon.png", payload.Data.CompanyIcon)
+		require.Equal(t, "Powered by Kode Inovasi Semesta", payload.Data.PoweredByText)
 	})
 
 	t.Run("redirects stable logo URL to uploaded logo", func(t *testing.T) {

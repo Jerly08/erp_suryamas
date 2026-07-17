@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type SettingsService struct {
@@ -200,6 +201,23 @@ func (s *SettingsService) validateSettings(updates map[string]interface{}) error
 			return errors.New("company logo scale must be a whole number between 50 and 180")
 		}
 		updates["company_logo_scale"] = int(logoScale)
+	}
+	// The footer branding is rendered on public screens, so keep it concise and non-empty.
+	if value, exists := updates["powered_by_text"]; exists {
+		poweredByText, ok := value.(string)
+		if !ok {
+			return errors.New("teks branding footer harus berupa teks")
+		}
+
+		poweredByText = strings.TrimSpace(poweredByText)
+		if poweredByText == "" {
+			return errors.New("teks branding footer tidak boleh kosong")
+		}
+		if utf8.RuneCountInString(poweredByText) > 160 {
+			return errors.New("teks branding footer maksimal 160 karakter")
+		}
+
+		updates["powered_by_text"] = poweredByText
 	}
 	// Validate language
 	if language, ok := updates["language"].(string); ok {
