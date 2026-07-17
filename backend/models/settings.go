@@ -27,7 +27,7 @@ type Settings struct {
 	CompanyLogo    string `json:"company_logo"`
 	CompanyLogoScale int  `json:"company_logo_scale" gorm:"default:100"`
 	CompanyIcon    string `json:"company_icon"`
-	PoweredByText  string `json:"powered_by_text" gorm:"column:powered_by_text;type:varchar(160);not null;default:'Powered by'"`
+	PoweredByText  string `json:"powered_by_text" gorm:"column:powered_by_text;type:varchar(160);not null;default:'Powered by PT SURYA HEBAT BERBAKAT'"`
 	CompanyWebsite string `json:"company_website"`
 	
 	// Financial Settings

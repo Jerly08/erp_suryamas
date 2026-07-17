@@ -127,6 +127,10 @@ func TestPublicBrandingFallbacksAreTenantNeutral(t *testing.T) {
 		CompanyName: "Tenant Baru",
 	}).Error)
 
+	var settings models.Settings
+	require.NoError(t, db.First(&settings).Error)
+	require.Equal(t, "Powered by PT SURYA HEBAT BERBAKAT", settings.PoweredByText)
+
 	controller := NewSettingsController(services.NewSettingsService(db))
 	router := gin.New()
 	router.GET("/api/v1/branding/logo", controller.GetPublicBrandingLogo)
