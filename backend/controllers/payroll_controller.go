@@ -82,6 +82,8 @@ func payrollDate(value string, required bool) (*time.Time, error) {
 }
 
 func payrollResponse(run models.PayrollRun, detailAllowed bool) models.PayrollRunResponse {
+	enrichPayrollBPJSDashboardTotals(&run)
+
 	if !detailAllowed {
 		run.Items = nil
 		run.Settlements = nil
@@ -189,9 +191,7 @@ var splitPayrollBPJSImportColumns = []string{
 	"bpjs_tk_jp_employer",
 	"bpjs_tk_jp_employee",
 	"bpjs_tk_jkk_employer",
-	"bpjs_tk_jkk_employee",
 	"bpjs_tk_jkm_employer",
-	"bpjs_tk_jkm_employee",
 	"bpjs_kesehatan_employer",
 	"bpjs_kesehatan_employee",
 }
@@ -217,9 +217,7 @@ var payrollImportTemplateHeaders = []string{
 	"IURAN JP\n(PEMBERI KERJA)",
 	"IURAN JP\n(TENAGA KERJA)",
 	"IURAN JKK\n(PEMBERI KERJA)",
-	"IURAN JKK\n(TENAGA KERJA)",
 	"IURAN JKM\n(PEMBERI KERJA)",
-	"IURAN JKM\n(TENAGA KERJA)",
 	"BPJS KESEHATAN\n(PEMBERI KERJA)",
 	"BPJS KESEHATAN\n(TENAGA KERJA)",
 	"PROPORTIONAL",
@@ -282,14 +280,14 @@ func buildPayrollRunExcel(run *models.PayrollRun) ([]byte, error) {
 	dateStyle, _ := workbook.NewStyle(&excelize.Style{NumFmt: 14})
 	numberStyle, _ := workbook.NewStyle(&excelize.Style{NumFmt: 4})
 
-	workbook.SetCellStyle(sheetName, "A1", "AC1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "AA1", headerStyle)
 	workbook.SetRowHeight(sheetName, 1, 34)
-	workbook.SetColWidth(sheetName, "A", "AC", 18)
+	workbook.SetColWidth(sheetName, "A", "AA", 18)
 	workbook.SetColWidth(sheetName, "B", "B", 24)
 	workbook.SetColWidth(sheetName, "I", "I", 28)
 	workbook.SetColWidth(sheetName, "J", "J", 24)
-	workbook.SetColWidth(sheetName, "P", "Y", 22)
-	workbook.SetColWidth(sheetName, "AB", "AB", 28)
+	workbook.SetColWidth(sheetName, "P", "W", 22)
+	workbook.SetColWidth(sheetName, "Z", "Z", 28)
 
 	periodLabel := payrollRunPeriodLabel(run)
 	for index, item := range run.Items {
@@ -316,22 +314,20 @@ func buildPayrollRunExcel(run *models.PayrollRun) ([]byte, error) {
 		workbook.SetCellValue(sheetName, fmt.Sprintf("R%d", row), item.BPJSTKJPEmployer)
 		workbook.SetCellValue(sheetName, fmt.Sprintf("S%d", row), payrollModelBPJSTKJPEmployee(item))
 		workbook.SetCellValue(sheetName, fmt.Sprintf("T%d", row), item.BPJSTKJKKEmployer)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("U%d", row), item.BPJSTKJKKEmployee)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("V%d", row), item.BPJSTKJKMEmployer)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("W%d", row), item.BPJSTKJKMEmployee)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("X%d", row), item.BPJSKesehatanEmployer)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("Y%d", row), payrollModelBPJSKesehatanEmployee(item))
-		workbook.SetCellValue(sheetName, fmt.Sprintf("Z%d", row), item.Proportional)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("AA%d", row), item.OtherDeduction)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("AB%d", row), item.EmployeeLoanDeduction)
-		workbook.SetCellValue(sheetName, fmt.Sprintf("AC%d", row), item.NetPay)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("U%d", row), item.BPJSTKJKMEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("V%d", row), item.BPJSKesehatanEmployer)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("W%d", row), payrollModelBPJSKesehatanEmployee(item))
+		workbook.SetCellValue(sheetName, fmt.Sprintf("X%d", row), item.Proportional)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("Y%d", row), item.OtherDeduction)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("Z%d", row), item.EmployeeLoanDeduction)
+		workbook.SetCellValue(sheetName, fmt.Sprintf("AA%d", row), item.NetPay)
 	}
 
 	if len(run.Items) > 0 {
 		lastRow := len(run.Items) + 1
 		workbook.SetCellStyle(sheetName, "A2", fmt.Sprintf("A%d", lastRow), dateStyle)
 		workbook.SetCellStyle(sheetName, "C2", fmt.Sprintf("C%d", lastRow), numberStyle)
-		workbook.SetCellStyle(sheetName, "K2", fmt.Sprintf("AC%d", lastRow), numberStyle)
+		workbook.SetCellStyle(sheetName, "K2", fmt.Sprintf("AA%d", lastRow), numberStyle)
 	}
 
 	buffer, err := workbook.WriteToBuffer()
@@ -382,6 +378,33 @@ func payrollCreateBPJSEmployeeTotal(item *models.PayrollItemCreateRequest) float
 	return roundPayrollMoney(item.BPJSTKJHT + item.BPJSTKJP + item.BPJSKesehatan)
 }
 
+func payrollCreateBPJSKetenagakerjaanTotal(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	return roundPayrollMoney(
+		item.BPJSTKJHTEmployer +
+			item.BPJSTKJHTEmployee +
+			item.BPJSTKJPEmployer +
+			item.BPJSTKJPEmployee +
+			item.BPJSTKJKKEmployer +
+			item.BPJSTKJKKEmployee +
+			item.BPJSTKJKMEmployer +
+			item.BPJSTKJKMEmployee,
+	)
+}
+
+func payrollCreateBPJSKesehatanTotal(item *models.PayrollItemCreateRequest) float64 {
+	if item == nil {
+		return 0
+	}
+	employeeKesehatan := item.BPJSKesehatanEmployee
+	if employeeKesehatan <= 0.01 {
+		employeeKesehatan = item.BPJSKesehatan
+	}
+	return roundPayrollMoney(item.BPJSKesehatanEmployer + employeeKesehatan)
+}
+
 func payrollCreateBPJSTotal(item *models.PayrollItemCreateRequest) float64 {
 	if item == nil {
 		return 0
@@ -430,6 +453,44 @@ func payrollModelBPJSKesehatanEmployee(item models.PayrollItem) float64 {
 		return item.BPJSKesehatanEmployee
 	}
 	return item.BPJSKesehatan
+}
+
+func payrollModelBPJSKetenagakerjaanTotal(item models.PayrollItem) float64 {
+	return roundPayrollMoney(
+		item.BPJSTKJHTEmployer +
+			payrollModelBPJSTKJHTEmployee(item) +
+			item.BPJSTKJPEmployer +
+			payrollModelBPJSTKJPEmployee(item) +
+			item.BPJSTKJKKEmployer +
+			item.BPJSTKJKKEmployee +
+			item.BPJSTKJKMEmployer +
+			item.BPJSTKJKMEmployee,
+	)
+}
+
+func payrollModelBPJSKesehatanTotal(item models.PayrollItem) float64 {
+	return roundPayrollMoney(item.BPJSKesehatanEmployer + payrollModelBPJSKesehatanEmployee(item))
+}
+
+func enrichPayrollBPJSDashboardTotals(run *models.PayrollRun) {
+	if run == nil {
+		return
+	}
+	if len(run.Items) > 0 {
+		var ketenagakerjaanTotal float64
+		var kesehatanTotal float64
+		for _, item := range run.Items {
+			ketenagakerjaanTotal += payrollModelBPJSKetenagakerjaanTotal(item)
+			kesehatanTotal += payrollModelBPJSKesehatanTotal(item)
+		}
+		run.TotalBPJSKetenagakerjaan = roundPayrollMoney(ketenagakerjaanTotal)
+		run.TotalBPJSKesehatan = roundPayrollMoney(kesehatanTotal)
+		return
+	}
+
+	if run.TotalBPJS > 0.01 && run.TotalBPJSKetenagakerjaan <= 0.01 && run.TotalBPJSKesehatan <= 0.01 {
+		run.TotalBPJSKetenagakerjaan = roundPayrollMoney(run.TotalBPJS)
+	}
 }
 
 func payrollCalculatedNetPay(item *models.PayrollItemCreateRequest) float64 {
@@ -1340,15 +1401,15 @@ func (c *PayrollController) DownloadPayrollImportTemplate(ctx *gin.Context) {
 	dateStyle, _ := workbook.NewStyle(&excelize.Style{
 		NumFmt: 14,
 	})
-	workbook.SetCellStyle(sheetName, "A1", "AC1", headerStyle)
+	workbook.SetCellStyle(sheetName, "A1", "AA1", headerStyle)
 	workbook.SetCellStyle(sheetName, "A1", "B1", highlightHeaderStyle)
-	workbook.SetCellStyle(sheetName, "P1", "Y1", highlightHeaderStyle)
-	workbook.SetCellStyle(sheetName, "AB1", "AB1", highlightHeaderStyle)
+	workbook.SetCellStyle(sheetName, "P1", "W1", highlightHeaderStyle)
+	workbook.SetCellStyle(sheetName, "Z1", "Z1", highlightHeaderStyle)
 	workbook.SetRowHeight(sheetName, 1, 44)
-	workbook.SetColWidth(sheetName, "A", "AC", 18)
+	workbook.SetColWidth(sheetName, "A", "AA", 18)
 	workbook.SetColWidth(sheetName, "B", "B", 24)
-	workbook.SetColWidth(sheetName, "P", "Y", 22)
-	workbook.SetColWidth(sheetName, "AB", "AB", 28)
+	workbook.SetColWidth(sheetName, "P", "W", 22)
+	workbook.SetColWidth(sheetName, "Z", "Z", 28)
 
 	// Light sample values help HR keep the expected data shape without saving real employee data.
 	workbook.SetCellValue(sheetName, "A2", time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC))
@@ -1528,6 +1589,8 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		response.Summary.TotalBPJS += item.BPJS
 		response.Summary.TotalBPJSEmployer += payrollCreateBPJSEmployerTotal(&item)
 		response.Summary.TotalBPJSEmployee += payrollCreateBPJSEmployeeTotal(&item)
+		response.Summary.TotalBPJSKetenagakerjaan += payrollCreateBPJSKetenagakerjaanTotal(&item)
+		response.Summary.TotalBPJSKesehatan += payrollCreateBPJSKesehatanTotal(&item)
 		response.Summary.TotalEmployeeLoanDeduction += item.EmployeeLoanDeduction
 		response.Summary.TotalOverall += item.NetPay
 	}
@@ -1714,6 +1777,8 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		run.TotalBPJS += item.BPJS
 		run.TotalBPJSEmployer += payrollCreateBPJSEmployerTotal(&reqItem)
 		run.TotalBPJSEmployee += payrollCreateBPJSEmployeeTotal(&reqItem)
+		run.TotalBPJSKetenagakerjaan += payrollCreateBPJSKetenagakerjaanTotal(&reqItem)
+		run.TotalBPJSKesehatan += payrollCreateBPJSKesehatanTotal(&reqItem)
 		run.TotalEmployeeLoanDeduction += item.EmployeeLoanDeduction
 		run.TotalOverall += item.NetPay
 		run.Items = append(run.Items, item)
