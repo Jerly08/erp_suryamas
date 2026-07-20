@@ -49,6 +49,8 @@ type PayrollRun struct {
 	TotalBPJS                  float64        `json:"total_bpjs" gorm:"type:decimal(15,2);default:0"`
 	TotalBPJSEmployer          float64        `json:"total_bpjs_employer" gorm:"column:total_bpjs_employer;type:decimal(15,2);default:0"`
 	TotalBPJSEmployee          float64        `json:"total_bpjs_employee" gorm:"column:total_bpjs_employee;type:decimal(15,2);default:0"`
+	TotalBPJSKetenagakerjaan   float64        `json:"total_bpjs_ketenagakerjaan" gorm:"column:total_bpjs_ketenagakerjaan;type:decimal(15,2);default:0"`
+	TotalBPJSKesehatan         float64        `json:"total_bpjs_kesehatan" gorm:"column:total_bpjs_kesehatan;type:decimal(15,2);default:0"`
 	TotalEmployeeLoanDeduction float64        `json:"total_employee_loan_deduction" gorm:"column:total_employee_loan_deduction;type:decimal(15,2);default:0"`
 	TotalOverall               float64        `json:"total_overall" gorm:"type:decimal(15,2);default:0"`
 	EmployeeLoanAccountID      *uint          `json:"employee_loan_account_id" gorm:"column:employee_loan_account_id;index"`
@@ -264,6 +266,8 @@ type PayrollImportSummary struct {
 	TotalBPJS                  float64 `json:"total_bpjs"`
 	TotalBPJSEmployer          float64 `json:"total_bpjs_employer"`
 	TotalBPJSEmployee          float64 `json:"total_bpjs_employee"`
+	TotalBPJSKetenagakerjaan   float64 `json:"total_bpjs_ketenagakerjaan"`
+	TotalBPJSKesehatan         float64 `json:"total_bpjs_kesehatan"`
 	TotalEmployeeLoanDeduction float64 `json:"total_employee_loan_deduction"`
 	TotalOverall               float64 `json:"total_overall"`
 }

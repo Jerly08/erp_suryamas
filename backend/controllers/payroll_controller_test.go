@@ -73,7 +73,7 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	row := []interface{}{
 		"2026-06-25", "26/05/2026 to 25/06/2026", 22, "KIS-001", "Head Office", "IT", "Payroll", "1122334455",
 		"Budi Santoso", "Backend Developer", 10000000, 300000, 0, 500000, 250000,
-		370000, 200000, 200000, 100287, 10000, 0, 30000, 0, 400000, 100000,
+		370000, 200000, 200000, 100287, 10000, 30000, 400000, 100000,
 		0, 50000, 125000, 0,
 	}
 	for columnIndex, value := range row {
@@ -90,7 +90,7 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create thousands number style: %v", err)
 	}
-	if err := workbook.SetCellStyle("Salary", "K2", "AC2", numberStyle); err != nil {
+	if err := workbook.SetCellStyle("Salary", "K2", "AA2", numberStyle); err != nil {
 		t.Fatalf("failed to apply thousands number style: %v", err)
 	}
 
@@ -145,6 +145,12 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	}
 	if response.Data.Summary.TotalBPJSEmployee != 400287 {
 		t.Fatalf("summary BPJS employee = %.2f, expected 400287", response.Data.Summary.TotalBPJSEmployee)
+	}
+	if response.Data.Summary.TotalBPJSKetenagakerjaan != 910287 {
+		t.Fatalf("summary BPJS ketenagakerjaan = %.2f, expected 910287", response.Data.Summary.TotalBPJSKetenagakerjaan)
+	}
+	if response.Data.Summary.TotalBPJSKesehatan != 500000 {
+		t.Fatalf("summary BPJS kesehatan = %.2f, expected 500000", response.Data.Summary.TotalBPJSKesehatan)
 	}
 	if response.Data.SuggestedPeriodStart != "2026-05-26" || response.Data.SuggestedPeriodEnd != "2026-06-25" {
 		t.Fatalf("suggested period = %q to %q, expected 2026-05-26 to 2026-06-25", response.Data.SuggestedPeriodStart, response.Data.SuggestedPeriodEnd)
@@ -205,12 +211,14 @@ func TestDownloadPayrollImportTemplateMatchesRequestedHeaderOrder(t *testing.T) 
 	require.NoError(t, err)
 	highlightedJHTEmployerStyle, err := workbook.GetCellStyle("Salary", "P1")
 	require.NoError(t, err)
-	highlightedEmployeeLoanStyle, err := workbook.GetCellStyle("Salary", "AB1")
+	highlightedEmployeeLoanStyle, err := workbook.GetCellStyle("Salary", "Z1")
 	require.NoError(t, err)
 	require.NotEqual(t, standardHeaderStyle, highlightedPaymentDateStyle)
 	require.NotEqual(t, standardHeaderStyle, highlightedJHTEmployerStyle)
 	require.NotEqual(t, standardHeaderStyle, highlightedEmployeeLoanStyle)
-	require.Equal(t, "DEDUCTION (PINJAMAN KARYAWAN)", rows[0][27])
+	require.NotContains(t, rows[0], "IURAN JKK\n(TENAGA KERJA)")
+	require.NotContains(t, rows[0], "IURAN JKM\n(TENAGA KERJA)")
+	require.Equal(t, "DEDUCTION (PINJAMAN KARYAWAN)", rows[0][25])
 
 	paymentViaExample, err := workbook.GetCellValue("Salary", "G2")
 	require.NoError(t, err)
@@ -299,7 +307,7 @@ func TestDownloadPayrollRunExcelExportsSavedPayrollData(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "100000", jhtEmployee)
 
-	netPay, err := workbook.GetCellValue("Salary", "AC2", excelize.Options{RawCellValue: true})
+	netPay, err := workbook.GetCellValue("Salary", "AA2", excelize.Options{RawCellValue: true})
 	require.NoError(t, err)
 	require.Equal(t, "10000000", netPay)
 }
@@ -597,6 +605,8 @@ func TestPayrollItemTotalsSeparatesEmployerBPJSFromEmployeeNetPayDeduction(t *te
 	require.Equal(t, float64(1410000), item.BPJS)
 	require.Equal(t, float64(1010000), payrollCreateBPJSEmployerTotal(&item))
 	require.Equal(t, float64(400000), payrollCreateBPJSEmployeeTotal(&item))
+	require.Equal(t, float64(910000), payrollCreateBPJSKetenagakerjaanTotal(&item))
+	require.Equal(t, float64(500000), payrollCreateBPJSKesehatanTotal(&item))
 	require.Equal(t, float64(10225000), item.NetPay)
 }
 

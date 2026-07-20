@@ -95,6 +95,8 @@ export interface PayrollRun {
   total_bpjs: number;
   total_bpjs_employer?: number;
   total_bpjs_employee?: number;
+  total_bpjs_ketenagakerjaan?: number;
+  total_bpjs_kesehatan?: number;
   total_employee_loan_deduction?: number;
   total_overall: number;
   employee_loan_account_id?: number | null;
@@ -180,6 +182,8 @@ export interface PayrollImportPreview {
     total_bpjs: number;
     total_bpjs_employer?: number;
     total_bpjs_employee?: number;
+    total_bpjs_ketenagakerjaan?: number;
+    total_bpjs_kesehatan?: number;
     total_employee_loan_deduction?: number;
     total_overall: number;
   };

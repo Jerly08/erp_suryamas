@@ -232,6 +232,40 @@ export default function PurchaseRequestsPage() {
       maximumFractionDigits: 2,
     }).format(numericValue);
   };
+  const formatDocumentUploadTime = (value?: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+
+    return date.toLocaleString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Jakarta",
+      timeZoneName: "short",
+    });
+  };
+  const getDocumentUploaderName = (document: PurchaseRequestDocument) => {
+    const uploader = document.uploader;
+    if (!uploader) return "";
+    const fullName = `${uploader.first_name || ""} ${uploader.last_name || ""}`.trim();
+    return fullName || uploader.username || uploader.email || "";
+  };
+  const getDocumentUploadMeta = (document: PurchaseRequestDocument) => {
+    const pieces = [formatFileSize(document.file_size)];
+    const uploaderName = getDocumentUploaderName(document);
+    const uploadedAt = formatDocumentUploadTime(document.created_at);
+    if (uploaderName && uploadedAt) {
+      pieces.push(`diunggah oleh ${uploaderName} pada ${uploadedAt}`);
+    } else if (uploaderName) {
+      pieces.push(`diunggah oleh ${uploaderName}`);
+    } else if (uploadedAt) {
+      pieces.push(`diunggah pada ${uploadedAt}`);
+    }
+    return pieces.join(" - ");
+  };
   const toast = useToast();
   const { user } = useAuth();
   const userDepartment =
@@ -4936,17 +4970,15 @@ export default function PurchaseRequestsPage() {
                           >
                             <Flex align="center" gap={3} minW={0}>
                               <Icon as={FiFileText} color="green.500" />
-                              <Box minW={0}>
-                                <Text fontWeight="medium" noOfLines={1}>
-                                  {document.file_name}
-                                </Text>
-                                <Text fontSize="xs" color={mutedTextColor}>
-                                  {formatFileSize(document.file_size)}
-                                  {document.uploader &&
-                                    ` - diunggah oleh ${document.uploader.first_name} ${document.uploader.last_name}`}
-                                </Text>
-                                {getDocumentTypeBadge(document.document_type)}
-                              </Box>
+	                              <Box minW={0}>
+	                                <Text fontWeight="medium" noOfLines={1}>
+	                                  {document.file_name}
+	                                </Text>
+	                                <Text fontSize="xs" color={mutedTextColor}>
+	                                  {getDocumentUploadMeta(document)}
+	                                </Text>
+	                                {getDocumentTypeBadge(document.document_type)}
+	                              </Box>
                             </Flex>
                             <Button
                               onClick={() => handleDownloadDocument(document)}
@@ -5131,14 +5163,12 @@ export default function PurchaseRequestsPage() {
                         <Flex align="center" gap={3} minW={0}>
                           <Icon as={FiFileText} color="blue.500" />
                           <Box minW={0}>
-                            <Text fontWeight="medium" noOfLines={1}>
-                              {document.file_name}
-                            </Text>
-                            <Text fontSize="xs" color={mutedTextColor}>
-                              {formatFileSize(document.file_size)}
-                              {document.uploader &&
-                                ` - diunggah oleh ${document.uploader.first_name} ${document.uploader.last_name}`}
-                            </Text>
+	                            <Text fontWeight="medium" noOfLines={1}>
+	                              {document.file_name}
+	                            </Text>
+	                            <Text fontSize="xs" color={mutedTextColor}>
+	                              {getDocumentUploadMeta(document)}
+	                            </Text>
                             {document.approval_revision > 1 && (
                               <Badge mt={1} colorScheme="orange">
                                 Dokumen tambahan - Approval ulang
