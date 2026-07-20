@@ -9,9 +9,9 @@ WITH item_totals AS (
     payroll_run_id,
     SUM(
       COALESCE(bpjs_tk_jht_employer, 0) +
-      CASE WHEN COALESCE(bpjs_tk_jht_employee, 0) > 0 THEN COALESCE(bpjs_tk_jht_employee, 0) ELSE COALESCE(bpjs_tk_jht, 0) END +
+      CASE WHEN COALESCE(bpjs_tk_jht_employee, 0) > 0 THEN COALESCE(bpjs_tk_jht_employee, 0) ELSE COALESCE(bpjstkjht, 0) END +
       COALESCE(bpjs_tk_jp_employer, 0) +
-      CASE WHEN COALESCE(bpjs_tk_jp_employee, 0) > 0 THEN COALESCE(bpjs_tk_jp_employee, 0) ELSE COALESCE(bpjs_tk_jp, 0) END +
+      CASE WHEN COALESCE(bpjs_tk_jp_employee, 0) > 0 THEN COALESCE(bpjs_tk_jp_employee, 0) ELSE COALESCE(bpjstkjp, 0) END +
       COALESCE(bpjs_tk_jkk_employer, 0) +
       COALESCE(bpjs_tk_jkk_employee, 0) +
       COALESCE(bpjs_tk_jkm_employer, 0) +
