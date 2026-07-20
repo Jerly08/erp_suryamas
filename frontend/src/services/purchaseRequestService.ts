@@ -136,6 +136,7 @@ export interface PurchaseRequestRevisionSnapshot {
   previous_total_estimated_amount: number;
   new_total_estimated_amount?: number | null;
   item_snapshot?: string;
+  new_item_snapshot?: string;
   opened_by: number;
   opened_at: string;
   open_reason?: string;
@@ -303,7 +304,9 @@ export interface PurchaseRequestOpenRevisionPayload {
 }
 
 export interface PurchaseRequestRequesterRevisionItemPayload {
-  item_id: number;
+  item_id?: number;
+  product_id?: number;
+  item_name?: string;
   quantity: number;
   estimated_price: number;
   notes?: string;

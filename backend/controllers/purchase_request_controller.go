@@ -242,7 +242,7 @@ func (c *PurchaseRequestController) SubmitRequesterRevision(ctx *gin.Context) {
 			return
 		}
 	} else {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "multipart/form-data with supporting documents is required"})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "multipart/form-data is required"})
 		return
 	}
 
@@ -261,29 +261,31 @@ func (c *PurchaseRequestController) SubmitRequesterRevision(ctx *gin.Context) {
 	documentFiles = append(documentFiles, form.File["supporting_documents"]...)
 	documentFiles = append(documentFiles, form.File["attachments"]...)
 	documentFiles = append(documentFiles, form.File["document"]...)
-	if len(documentFiles) == 0 {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Supporting document is required"})
-		return
-	}
-
-	if err := validatePurchaseRequestDocumentFiles(documentFiles); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if len(documentFiles) > 0 {
+		if err := validatePurchaseRequestDocumentFiles(documentFiles); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	userID := ctx.MustGet("user_id").(uint)
 	userRole := ctx.GetString("role")
 
-	documents, savedPaths, err := c.preparePurchaseRequestDocumentRecords(
-		ctx,
-		uint(id),
-		documentFiles,
-		userID,
-		models.PurchaseRequestDocumentRequesterRevision,
-	)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	documents := make([]models.PurchaseRequestDocument, 0, len(documentFiles))
+	var savedPaths []string
+	if len(documentFiles) > 0 {
+		var err error
+		documents, savedPaths, err = c.preparePurchaseRequestDocumentRecords(
+			ctx,
+			uint(id),
+			documentFiles,
+			userID,
+			models.PurchaseRequestDocumentRequesterRevision,
+		)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	pr, err := c.service.SubmitPurchaseRequestRequesterRevision(uint(id), userID, userRole, payload, documents)
@@ -665,12 +667,15 @@ func validatePurchaseRequestInvoiceRevisionPayload(payload models.PurchaseReques
 }
 
 func validatePurchaseRequestRequesterRevisionPayload(payload models.PurchaseRequestRequesterRevisionPayload) error {
+	if strings.TrimSpace(payload.Notes) == "" {
+		return fmt.Errorf("revision notes are required")
+	}
 	if len(payload.Items) == 0 {
 		return fmt.Errorf("items are required")
 	}
 	for index, item := range payload.Items {
-		if item.ItemID == 0 {
-			return fmt.Errorf("item_id is required for item %d", index+1)
+		if item.ItemID == 0 && item.ProductID == 0 && strings.TrimSpace(item.ItemName) == "" {
+			return fmt.Errorf("product_id or item_name is required for new item %d", index+1)
 		}
 		if item.Quantity < 1 {
 			return fmt.Errorf("quantity must be at least 1 for item %d", index+1)

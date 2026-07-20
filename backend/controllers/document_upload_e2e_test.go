@@ -115,6 +115,103 @@ func TestPurchaseRequestCreateParsesPayloadWithLargeMultipartDocument(t *testing
 	require.NotContains(t, recorder.Body.String(), "payload is required")
 }
 
+func TestPurchaseRequestRequesterRevisionAllowsNoNewDocument(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newDocumentUploadTestDB(t)
+
+	requester := models.User{
+		Username:  "pic-revision-no-document",
+		Email:     "pic-revision-no-document@example.com",
+		Password:  "hashed",
+		FirstName: "PIC",
+		LastName:  "Revision",
+		Role:      models.RoleEmployee,
+		IsActive:  true,
+	}
+	financeStaff := models.User{
+		Username:  "finance-staff-revision-no-document",
+		Email:     "finance-staff-revision-no-document@example.com",
+		Password:  "hashed",
+		FirstName: "Finance",
+		LastName:  "Staff",
+		Role:      models.RoleFinanceStaff,
+		IsActive:  true,
+	}
+	product := models.Product{
+		Code:          "PRD-REV-NO-DOC",
+		Name:          "Kebutuhan operasional",
+		Unit:          "pcs",
+		PurchasePrice: 100000,
+		CostPrice:     100000,
+		SalePrice:     120000,
+		IsActive:      true,
+	}
+	require.NoError(t, db.Create(&requester).Error)
+	require.NoError(t, db.Create(&financeStaff).Error)
+	require.NoError(t, db.Create(&product).Error)
+
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := services.NewPurchaseRequestService(db, repo, nil)
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Title:      "PR revisi tanpa dokumen baru",
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		pr.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Nominal perlu diperbaiki PIC"},
+	)
+	require.NoError(t, err)
+	require.Len(t, opened.Items, 1)
+
+	payload, err := json.Marshal(models.PurchaseRequestRequesterRevisionPayload{
+		Notes: "Nominal diperbarui sesuai konfirmasi vendor.",
+		Items: []models.PurchaseRequestRequesterRevisionItemPayload{
+			{
+				ItemID:         opened.Items[0].ID,
+				Quantity:       1,
+				EstimatedPrice: 125000,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	require.NoError(t, writer.WriteField("payload", string(payload)))
+	require.NoError(t, writer.Close())
+
+	controller := NewPurchaseRequestController(service)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconvUint(pr.ID)}}
+	ctx.Set("user_id", requester.ID)
+	ctx.Set("role", requester.Role)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/purchase-requests/"+strconvUint(pr.ID)+"/requester-revision", body)
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	controller.SubmitRequesterRevision(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	var documentCount int64
+	require.NoError(t, db.Model(&models.PurchaseRequestDocument{}).Where("purchase_request_id = ?", pr.ID).Count(&documentCount).Error)
+	require.Zero(t, documentCount)
+
+	revised, err := repo.GetByID(pr.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusPendingApproval, revised.Status)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, revised.CurrentApprovalStage)
+	require.InDelta(t, 125000, revised.TotalEstimatedAmount, 0.01)
+	require.Len(t, revised.RevisionSnapshots, 1)
+	require.Equal(t, "Nominal diperbarui sesuai konfirmasi vendor.", revised.RevisionSnapshots[0].SubmittedNotes)
+}
+
 func TestPurchaseRequestRealizationDocumentUploadE2E(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newDocumentUploadTestDB(t)

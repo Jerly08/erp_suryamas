@@ -984,6 +984,7 @@ func TestRequesterRevisionPreservesApprovedSnapshotAndRestartsApproval(t *testin
 	require.NotNil(t, revised.RevisionSnapshots[0].NewTotalEstimatedAmount)
 	require.InDelta(t, 200000, *revised.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
 	require.Equal(t, "Nominal naik sesuai dokumen baru", revised.RevisionSnapshots[0].SubmittedNotes)
+	require.Contains(t, revised.RevisionSnapshots[0].NewItemSnapshot, `"estimated_price":200000`)
 
 	_, err = service.ReviewPurchaseRequest(revised.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
 		Items: []models.PurchaseRequestReviewItemPayload{
@@ -1011,6 +1012,99 @@ func TestRequesterRevisionPreservesApprovedSnapshotAndRestartsApproval(t *testin
 	require.InDelta(t, 100000, final.RevisionSnapshots[0].PreviousTotalEstimatedAmount, 0.01)
 	require.NotNil(t, final.RevisionSnapshots[0].NewTotalEstimatedAmount)
 	require.InDelta(t, 200000, *final.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
+}
+
+func TestRequesterRevisionAllowsItemAddRemoveWithoutNewDocument(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "requester-revision-items", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "requester-revision-items-staff", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "requester-revision-items-manager", models.RoleFinanceManager)
+	firstProduct := seedPurchaseRequestTestProduct(t, db, "REQUESTER-REVISION-ITEMS-ONE")
+	secondProduct := seedPurchaseRequestTestProduct(t, db, "REQUESTER-REVISION-ITEMS-TWO")
+	vendor := seedPurchaseRequestTestVendor(t, db, "REQUESTER-REVISION-ITEMS")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Title:      "PR revisi tambah dan hapus item",
+		VendorID:   &vendor.ID,
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: firstProduct.ID, Quantity: 1, EstimatedPrice: 100000},
+			{ProductID: secondProduct.ID, Quantity: 1, EstimatedPrice: 75000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Len(t, pr.Items, 2)
+
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
+		Items: []models.PurchaseRequestReviewItemPayload{
+			{ItemID: pr.Items[0].ID, Decision: models.PRItemDecisionApproved},
+			{ItemID: pr.Items[1].ID, Decision: models.PRItemDecisionApproved},
+		},
+		Reason: "Review staff awal",
+	})
+	require.NoError(t, err)
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestReviewPayload{
+		Items: []models.PurchaseRequestReviewItemPayload{
+			{ItemID: pr.Items[0].ID, Decision: models.PRItemDecisionApproved},
+			{ItemID: pr.Items[1].ID, Decision: models.PRItemDecisionApproved},
+		},
+		Reason: "Review manager awal",
+	})
+	require.NoError(t, err)
+
+	approved, err := service.GetPurchaseRequestByID(pr.ID, financeManager.ID, financeManager.Role)
+	require.NoError(t, err)
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		approved.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Kebutuhan operasional berubah"},
+	)
+	require.NoError(t, err)
+	removedItemID := opened.Items[1].ID
+
+	_, err = service.SubmitPurchaseRequestRequesterRevision(
+		opened.ID,
+		requester.ID,
+		requester.Role,
+		models.PurchaseRequestRequesterRevisionPayload{
+			Items: []models.PurchaseRequestRequesterRevisionItemPayload{
+				{ItemID: opened.Items[0].ID, Quantity: 2, EstimatedPrice: 100000, Notes: "Qty disesuaikan"},
+			},
+		},
+		nil,
+	)
+	require.ErrorContains(t, err, "revision notes are required")
+
+	revised, err := service.SubmitPurchaseRequestRequesterRevision(
+		opened.ID,
+		requester.ID,
+		requester.Role,
+		models.PurchaseRequestRequesterRevisionPayload{
+			Notes: "Qty diperbarui, item kedua dibatalkan, dan jasa instalasi ditambahkan.",
+			Items: []models.PurchaseRequestRequesterRevisionItemPayload{
+				{ItemID: opened.Items[0].ID, Quantity: 2, EstimatedPrice: 100000, Notes: "Qty disesuaikan"},
+				{ItemName: "Jasa instalasi", Quantity: 1, EstimatedPrice: 50000, Notes: "Kebutuhan tambahan"},
+			},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusPendingApproval, revised.Status)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, revised.CurrentApprovalStage)
+	require.Len(t, revised.Items, 2)
+	require.InDelta(t, 250000, revised.TotalEstimatedAmount, 0.01)
+	require.Empty(t, revised.Documents)
+	require.NotNil(t, revised.RevisionSnapshots[0].NewTotalEstimatedAmount)
+	require.InDelta(t, 250000, *revised.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
+	require.Contains(t, revised.RevisionSnapshots[0].NewItemSnapshot, "Jasa instalasi")
+
+	var removedItem models.PurchaseRequestItem
+	require.NoError(t, db.Unscoped().First(&removedItem, removedItemID).Error)
+	require.True(t, removedItem.DeletedAt.Valid)
 }
 
 func TestFinanceStaffCanRequestRequesterRevisionBeforeInitialReview(t *testing.T) {

@@ -136,6 +136,7 @@ type PurchaseRequestRevisionSnapshot struct {
 	PreviousTotalEstimatedAmount float64        `json:"previous_total_estimated_amount" gorm:"type:decimal(15,2);default:0"`
 	NewTotalEstimatedAmount      *float64       `json:"new_total_estimated_amount" gorm:"type:decimal(15,2)"`
 	ItemSnapshot                 string         `json:"item_snapshot" gorm:"type:text"`
+	NewItemSnapshot              string         `json:"new_item_snapshot" gorm:"type:text"`
 	OpenedBy                     uint           `json:"opened_by" gorm:"not null;index"`
 	OpenedAt                     time.Time      `json:"opened_at" gorm:"not null"`
 	OpenReason                   string         `json:"open_reason" gorm:"type:text"`
@@ -268,7 +269,9 @@ type PurchaseRequestOpenRevisionPayload struct {
 }
 
 type PurchaseRequestRequesterRevisionItemPayload struct {
-	ItemID         uint    `json:"item_id" binding:"required"`
+	ItemID         uint    `json:"item_id"`
+	ProductID      uint    `json:"product_id"`
+	ItemName       string  `json:"item_name"`
 	Quantity       int     `json:"quantity" binding:"required,min=1"`
 	EstimatedPrice float64 `json:"estimated_price" binding:"required,min=0"`
 	Notes          string  `json:"notes"`

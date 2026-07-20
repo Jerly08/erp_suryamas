@@ -138,6 +138,17 @@ type InvoiceRevisionFormItem = {
   notes: string;
 };
 
+type RequesterRevisionFormItem = {
+  client_id: string;
+  item_id?: number;
+  source: "catalog" | "manual";
+  product_id: string;
+  item_name: string;
+  quantity: number | string;
+  estimated_price: number | string;
+  notes: string;
+};
+
 type FinalizedPaymentReceipt = {
   purchaseId: number;
   purchaseCode: string;
@@ -155,6 +166,19 @@ type FinalizedPaymentReceipt = {
 };
 
 const createEmptyPurchaseRequestItem = (): PurchaseRequestFormItem => ({
+  source: "catalog",
+  product_id: "",
+  item_name: "",
+  quantity: 1,
+  estimated_price: 0,
+  notes: "",
+});
+
+const createRequesterRevisionItemKey = () =>
+  `requester-revision-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+const createEmptyRequesterRevisionItem = (): RequesterRevisionFormItem => ({
+  client_id: createRequesterRevisionItemKey(),
   source: "catalog",
   product_id: "",
   item_name: "",
@@ -266,7 +290,7 @@ export default function PurchaseRequestsPage() {
   const [requesterRevisionOpenReason, setRequesterRevisionOpenReason] =
     useState("");
   const [requesterRevisionItems, setRequesterRevisionItems] = useState<
-    InvoiceRevisionFormItem[]
+    RequesterRevisionFormItem[]
   >([]);
   const [requesterRevisionDocuments, setRequesterRevisionDocuments] = useState<
     File[]
@@ -795,6 +819,20 @@ export default function PurchaseRequestsPage() {
       notes: item.notes || "",
     }));
 
+  const buildRequesterRevisionItems = (
+    pr?: PurchaseRequest | null,
+  ): RequesterRevisionFormItem[] =>
+    (pr?.items || []).map((item) => ({
+      client_id: `existing-${item.id}`,
+      item_id: item.id,
+      source: item.product_id ? "catalog" : "manual",
+      product_id: item.product_id?.toString() || "",
+      item_name: item.product?.name || item.item_name || `Item #${item.id}`,
+      quantity: item.quantity,
+      estimated_price: item.estimated_price,
+      notes: item.notes || "",
+    }));
+
   const handleInvoiceRevisionDocumentChange = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -877,15 +915,74 @@ export default function PurchaseRequestsPage() {
     );
   };
 
-  const handleRequesterRevisionItemChange = (
-    itemId: number,
-    field: "quantity" | "estimated_price" | "notes",
-    value: string,
+  const handleAddRequesterRevisionItem = () => {
+    setRequesterRevisionItems((currentItems) => [
+      ...currentItems,
+      createEmptyRequesterRevisionItem(),
+    ]);
+  };
+
+  const handleRemoveRequesterRevisionItem = (clientID: string) => {
+    if (requesterRevisionItems.length <= 1) {
+      toast({
+        title: "PR harus memiliki minimal satu item",
+        description: "Tambahkan item lain sebelum menghapus baris terakhir.",
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+    setRequesterRevisionItems((currentItems) =>
+      currentItems.filter((item) => item.client_id !== clientID),
+    );
+  };
+
+  const handleRequesterRevisionItemSourceChange = (
+    clientID: string,
+    source: RequesterRevisionFormItem["source"],
   ) => {
     setRequesterRevisionItems((currentItems) =>
       currentItems.map((item) =>
-        item.item_id === itemId ? { ...item, [field]: value } : item,
+        item.client_id === clientID && !item.item_id
+          ? {
+              ...item,
+              source,
+              product_id: "",
+              item_name: "",
+              estimated_price: 0,
+            }
+          : item,
       ),
+    );
+  };
+
+  const handleRequesterRevisionItemChange = (
+    clientID: string,
+    field:
+      | "product_id"
+      | "item_name"
+      | "quantity"
+      | "estimated_price"
+      | "notes",
+    value: string | number,
+  ) => {
+    setRequesterRevisionItems((currentItems) =>
+      currentItems.map((item) => {
+        if (item.client_id !== clientID) return item;
+
+        if (field === "product_id") {
+          const selectedProduct = products.find(
+            (product) => product.id?.toString() === value.toString(),
+          );
+          return {
+            ...item,
+            product_id: value.toString(),
+            estimated_price: selectedProduct?.purchase_price || 0,
+          };
+        }
+
+        return { ...item, [field]: value };
+      }),
     );
   };
 
@@ -1049,7 +1146,7 @@ export default function PurchaseRequestsPage() {
         { reason },
       );
       setSelectedRequest(updated);
-      setRequesterRevisionItems(buildInvoiceRevisionItems(updated));
+      setRequesterRevisionItems(buildRequesterRevisionItems(updated));
       setRequesterRevisionDocuments([]);
       setRequesterRevisionNotes("");
       setRequesterRevisionOpenReason("");
@@ -1061,8 +1158,8 @@ export default function PurchaseRequestsPage() {
           ? "Perbaikan PR diminta ke PIC"
           : "PR dibuka untuk revisi PIC",
         description: isInitialRevision
-          ? "Belum ada approval yang dikirim. PIC dapat memperbaiki data dan mengunggah dokumen pendukung."
-          : "PIC dapat mengubah nominal dan upload dokumen pendukung.",
+          ? "Belum ada approval yang dikirim. PIC dapat memperbaiki daftar item dan nominal; dokumen hanya ditambahkan bila diperlukan."
+          : "PIC dapat mengubah daftar item dan nominal; dokumen hanya ditambahkan bila diperlukan.",
         status: "success",
         duration: 4000,
       });
@@ -1081,23 +1178,29 @@ export default function PurchaseRequestsPage() {
   const handleSubmitRequesterRevision = async () => {
     if (!selectedRequest) return;
 
-    if (requesterRevisionDocuments.length === 0) {
+    if (!requesterRevisionNotes.trim()) {
       return toast({
-        title: "Upload dokumen pendukung dulu",
+        title: "Catatan revisi wajib diisi",
         description:
-          "Lampirkan dokumen pendukung sebelum mengirim revisi nominal PR.",
+          "Jelaskan alasan perubahan agar riwayat revisi tetap dapat diaudit.",
         status: "warning",
         duration: 4000,
       });
     }
 
     const invalidItemIndex = requesterRevisionItems.findIndex(
-      (item) => Number(item.quantity) < 1 || Number(item.estimated_price) < 0,
+      (item) =>
+        Number(item.quantity) < 1 ||
+        Number(item.estimated_price) < 0 ||
+        (!item.item_id &&
+          ((item.source === "catalog" && !item.product_id) ||
+            (item.source === "manual" && !item.item_name.trim()))),
     );
     if (invalidItemIndex >= 0) {
       return toast({
         title: `Nominal revisi baris ${invalidItemIndex + 1} belum valid`,
-        description: "Pastikan qty minimal 1 dan harga revisi tidak negatif.",
+        description:
+          "Pastikan item baru sudah dipilih/diisi, qty minimal 1, dan harga tidak negatif.",
         status: "warning",
         duration: 4000,
       });
@@ -1110,7 +1213,13 @@ export default function PurchaseRequestsPage() {
         {
           notes: requesterRevisionNotes.trim() || undefined,
           items: requesterRevisionItems.map((item) => ({
-            item_id: item.item_id,
+            ...(item.item_id ? { item_id: item.item_id } : {}),
+            ...(!item.item_id && item.source === "catalog" && item.product_id
+              ? { product_id: Number(item.product_id) }
+              : {}),
+            ...(!item.item_id && item.source === "manual"
+              ? { item_name: item.item_name.trim() }
+              : {}),
             quantity: Number(item.quantity),
             estimated_price: Number(item.estimated_price),
             notes: item.notes,
@@ -1119,7 +1228,7 @@ export default function PurchaseRequestsPage() {
         requesterRevisionDocuments,
       );
       setSelectedRequest(updated);
-      setRequesterRevisionItems(buildInvoiceRevisionItems(updated));
+      setRequesterRevisionItems(buildRequesterRevisionItems(updated));
       setRequesterRevisionDocuments([]);
       setRequesterRevisionNotes("");
       initializeReviewForm(updated);
@@ -2111,7 +2220,7 @@ export default function PurchaseRequestsPage() {
       setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
       setInvoiceRevisionDocuments([]);
       setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
-      setRequesterRevisionItems(buildInvoiceRevisionItems(detail));
+      setRequesterRevisionItems(buildRequesterRevisionItems(detail));
       setRequesterRevisionDocuments([]);
       setRequesterRevisionNotes("");
       setRequesterRevisionOpenReason("");
@@ -2173,7 +2282,7 @@ export default function PurchaseRequestsPage() {
         setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
         setInvoiceRevisionDocuments([]);
         setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
-        setRequesterRevisionItems(buildInvoiceRevisionItems(detail));
+        setRequesterRevisionItems(buildRequesterRevisionItems(detail));
         setRequesterRevisionDocuments([]);
         setRequesterRevisionNotes("");
         setRequesterRevisionOpenReason("");
@@ -4097,9 +4206,9 @@ export default function PurchaseRequestsPage() {
                   canSubmitSelectedRequesterRevision ? (
                     <Box>
                       <Text fontSize="sm" color={mutedTextColor} mb={3}>
-                        Ubah nominal sesuai informasi terbaru, lampirkan dokumen
-                        pendukung, lalu submit untuk approval ulang Finance
-                        Staff dan Finance Manager.
+                        Perbarui daftar item dan nominal sesuai informasi
+                        terbaru. Dokumen baru dapat ditambahkan bila diperlukan;
+                        catatan revisi wajib diisi untuk jejak audit.
                       </Text>
                       <TableContainer
                         overflowX="auto"
@@ -4107,7 +4216,7 @@ export default function PurchaseRequestsPage() {
                         borderColor={borderColor}
                         rounded="md"
                       >
-                        <Table size="sm" minW="760px">
+                        <Table size="sm" minW="900px">
                           <Thead bg={tableHeaderBg}>
                             <Tr>
                               <Th>Item</Th>
@@ -4121,15 +4230,120 @@ export default function PurchaseRequestsPage() {
                                 Total
                               </Th>
                               <Th minW="180px">Catatan</Th>
+                              <Th w="56px" />
                             </Tr>
                           </Thead>
                           <Tbody>
                             {requesterRevisionItems.map((item) => (
-                              <Tr key={item.item_id}>
+                              <Tr key={item.client_id}>
                                 <Td verticalAlign="top">
-                                  <Text fontWeight="medium" noOfLines={2}>
-                                    {item.item_name}
-                                  </Text>
+                                  {item.item_id ? (
+                                    <Box>
+                                      <Text fontWeight="medium" noOfLines={2}>
+                                        {item.item_name}
+                                      </Text>
+                                      <Text fontSize="xs" color={mutedTextColor}>
+                                        Item sebelumnya
+                                      </Text>
+                                    </Box>
+                                  ) : (
+                                    <Box>
+                                      <Flex align="center" gap={2} mb={2}>
+                                        <Badge colorScheme="blue">Item Baru</Badge>
+                                        <ButtonGroup
+                                          isAttached
+                                          size="xs"
+                                          variant="outline"
+                                        >
+                                          <Button
+                                            leftIcon={<FiPackage />}
+                                            colorScheme={
+                                              item.source === "catalog"
+                                                ? "blue"
+                                                : "gray"
+                                            }
+                                            variant={
+                                              item.source === "catalog"
+                                                ? "solid"
+                                                : "outline"
+                                            }
+                                            onClick={() =>
+                                              handleRequesterRevisionItemSourceChange(
+                                                item.client_id,
+                                                "catalog",
+                                              )
+                                            }
+                                          >
+                                            Katalog
+                                          </Button>
+                                          <Button
+                                            leftIcon={<FiEdit3 />}
+                                            colorScheme={
+                                              item.source === "manual"
+                                                ? "blue"
+                                                : "gray"
+                                            }
+                                            variant={
+                                              item.source === "manual"
+                                                ? "solid"
+                                                : "outline"
+                                            }
+                                            onClick={() =>
+                                              handleRequesterRevisionItemSourceChange(
+                                                item.client_id,
+                                                "manual",
+                                              )
+                                            }
+                                          >
+                                            Manual
+                                          </Button>
+                                        </ButtonGroup>
+                                      </Flex>
+                                      {item.source === "catalog" ? (
+                                        <Select
+                                          placeholder="Pilih item/barang"
+                                          value={item.product_id}
+                                          onChange={(event) =>
+                                            handleRequesterRevisionItemChange(
+                                              item.client_id,
+                                              "product_id",
+                                              event.target.value,
+                                            )
+                                          }
+                                          bg={inputBg}
+                                          borderColor={inputBorderColor}
+                                          color={textColor}
+                                          _hover={{ borderColor: inputBorderColor }}
+                                          _focusVisible={fieldFocusStyles}
+                                        >
+                                          {products.map((product) => (
+                                            <option key={product.id} value={product.id}>
+                                              {product.code} - {product.name}
+                                            </option>
+                                          ))}
+                                        </Select>
+                                      ) : (
+                                        <Input
+                                          placeholder="Nama kebutuhan"
+                                          value={item.item_name}
+                                          onChange={(event) =>
+                                            handleRequesterRevisionItemChange(
+                                              item.client_id,
+                                              "item_name",
+                                              event.target.value,
+                                            )
+                                          }
+                                          maxLength={255}
+                                          bg={inputBg}
+                                          borderColor={inputBorderColor}
+                                          color={textColor}
+                                          _hover={{ borderColor: inputBorderColor }}
+                                          _focusVisible={fieldFocusStyles}
+                                          _placeholder={{ color: mutedTextColor }}
+                                        />
+                                      )}
+                                    </Box>
+                                  )}
                                 </Td>
                                 <Td verticalAlign="top">
                                   <Input
@@ -4140,7 +4354,7 @@ export default function PurchaseRequestsPage() {
                                     value={item.quantity}
                                     onChange={(e) =>
                                       handleRequesterRevisionItemChange(
-                                        item.item_id,
+                                        item.client_id,
                                         "quantity",
                                         e.currentTarget.value,
                                       )
@@ -4157,7 +4371,7 @@ export default function PurchaseRequestsPage() {
                                     value={Number(item.estimated_price) || 0}
                                     onChange={(value) =>
                                       handleRequesterRevisionItemChange(
-                                        item.item_id,
+                                        item.client_id,
                                         "estimated_price",
                                         value.toString(),
                                       )
@@ -4184,7 +4398,7 @@ export default function PurchaseRequestsPage() {
                                     value={item.notes}
                                     onChange={(e) =>
                                       handleRequesterRevisionItemChange(
-                                        item.item_id,
+                                        item.client_id,
                                         "notes",
                                         e.currentTarget.value,
                                       )
@@ -4197,20 +4411,43 @@ export default function PurchaseRequestsPage() {
                                     _focusVisible={fieldFocusStyles}
                                   />
                                 </Td>
+                                <Td verticalAlign="top" textAlign="right">
+                                  <IconButton
+                                    aria-label={`Hapus item ${item.item_name || "baru"}`}
+                                    icon={<FiTrash2 />}
+                                    size="sm"
+                                    colorScheme="red"
+                                    variant="ghost"
+                                    onClick={() =>
+                                      handleRemoveRequesterRevisionItem(
+                                        item.client_id,
+                                      )
+                                    }
+                                  />
+                                </Td>
                               </Tr>
                             ))}
                           </Tbody>
                         </Table>
                       </TableContainer>
 
-                      <FormControl mt={3}>
+                      <Button
+                        leftIcon={<FiPlus />}
+                        size="sm"
+                        mt={3}
+                        onClick={handleAddRequesterRevisionItem}
+                      >
+                        Tambah Item
+                      </Button>
+
+                      <FormControl mt={3} isRequired>
                         <FormLabel color={textColor}>Catatan Revisi</FormLabel>
                         <Textarea
                           value={requesterRevisionNotes}
                           onChange={(e) =>
                             setRequesterRevisionNotes(e.target.value)
                           }
-                          placeholder="Opsional, jelaskan perubahan nominal PR."
+                          placeholder="Jelaskan alasan perubahan item atau nominal PR."
                           rows={3}
                           bg={inputBg}
                           borderColor={inputBorderColor}
@@ -4230,7 +4467,7 @@ export default function PurchaseRequestsPage() {
                           colorScheme="purple"
                           cursor="pointer"
                         >
-                          Pilih Dokumen Pendukung
+                          Tambah Dokumen (Opsional)
                           <Input
                             type="file"
                             multiple
@@ -4240,9 +4477,9 @@ export default function PurchaseRequestsPage() {
                           />
                         </Button>
                         <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                          Wajib lampirkan dokumen pendukung. Format PDF, Word,
-                          Excel, CSV, TXT, JPG, PNG, atau WebP. Maksimal 50MB
-                          per file.
+                          Opsional. Dokumen yang sudah ada tetap tersimpan.
+                          Format PDF, Word, Excel, CSV, TXT, JPG, PNG, atau
+                          WebP. Maksimal 50MB per file.
                         </Text>
                       </Box>
 
@@ -4294,7 +4531,6 @@ export default function PurchaseRequestsPage() {
                           leftIcon={<FiCheck />}
                           onClick={handleSubmitRequesterRevision}
                           isLoading={isSubmittingRequesterRevision}
-                          isDisabled={requesterRevisionDocuments.length === 0}
                         >
                           Submit Revisi untuk Approval
                         </Button>
