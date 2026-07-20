@@ -412,10 +412,6 @@ func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, u
 }
 
 func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint, userID uint, userRole string, payload models.PurchaseRequestRequesterRevisionPayload, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error) {
-	if len(documents) == 0 {
-		return nil, fmt.Errorf("supporting document is required for requester revision")
-	}
-
 	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
 	if err != nil {
 		return nil, err
@@ -426,6 +422,10 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 	if pr.Status != models.PRStatusAwaitingRevision || pr.ReapprovalReason != models.PRReapprovalReasonRequesterRevision {
 		return nil, fmt.Errorf("purchase request %s is not waiting for requester revision", pr.PRNumber)
 	}
+	revisionNotes := strings.TrimSpace(payload.Notes)
+	if revisionNotes == "" {
+		return nil, fmt.Errorf("revision notes are required")
+	}
 
 	linkedPurchases, err := s.getLinkedPurchasesForPurchaseRequest(pr.ID)
 	if err != nil {
@@ -435,18 +435,12 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 		return nil, fmt.Errorf("requester revision cannot be submitted because this purchase request is already linked to purchase: %s", joinPurchaseCodes(linkedPurchases))
 	}
 
-	itemUpdates, err := buildPurchaseRequestRequesterRevisionMap(payload.Items, pr.Items)
-	if err != nil {
-		return nil, err
-	}
-
 	now := time.Now()
 	previousRevision := pr.ApprovalRevision
 	nextRevision := previousRevision + 1
 	if nextRevision < 2 {
 		nextRevision = 2
 	}
-	revisionNotes := strings.TrimSpace(payload.Notes)
 	var totalEstimatedAmount float64
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
@@ -458,54 +452,105 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 			return fmt.Errorf("purchase request %s is not waiting for requester revision", current.PRNumber)
 		}
 
-		for index := range current.Items {
-			item := &current.Items[index]
-			update, exists := itemUpdates[item.ID]
-			if !exists {
-				return fmt.Errorf("requester revision must include every purchase request item")
+		itemPlans, retainedItemIDs, err := buildPurchaseRequestRequesterRevisionPlan(payload.Items, current.Items)
+		if err != nil {
+			return err
+		}
+
+		for _, itemPlan := range itemPlans {
+			itemTotal := float64(itemPlan.Quantity) * itemPlan.EstimatedPrice
+			if itemPlan.ExistingItemID != nil {
+				if err := tx.Model(&models.PurchaseRequestItem{}).
+					Where("id = ? AND purchase_request_id = ?", *itemPlan.ExistingItemID, current.ID).
+					Updates(map[string]interface{}{
+						"quantity":                 itemPlan.Quantity,
+						"estimated_price":          itemPlan.EstimatedPrice,
+						"total_estimated_price":    itemTotal,
+						"notes":                    itemPlan.Notes,
+						"approval_status":          models.PRItemDecisionPending,
+						"finance_staff_decision":   models.PRItemDecisionPending,
+						"finance_manager_decision": models.PRItemDecisionPending,
+						"director_decision":        models.PRItemDecisionPending,
+						"purchase_id":              nil,
+						"purchased_at":             nil,
+					}).Error; err != nil {
+					return err
+				}
+				totalEstimatedAmount += itemTotal
+				continue
 			}
 
-			item.Quantity = update.Quantity
-			item.EstimatedPrice = update.EstimatedPrice
-			item.TotalEstimatedPrice = float64(update.Quantity) * update.EstimatedPrice
-			item.Notes = update.Notes
-			item.ApprovalStatus = models.PRItemDecisionPending
-			item.FinanceStaffDecision = models.PRItemDecisionPending
-			item.FinanceManagerDecision = models.PRItemDecisionPending
-			item.DirectorDecision = models.PRItemDecisionPending
-			item.PurchaseID = nil
-			item.PurchasedAt = nil
+			itemName := strings.TrimSpace(itemPlan.ItemName)
+			var productID *uint
+			if itemPlan.ProductID != nil {
+				var product models.Product
+				if err := tx.Where("id = ?", *itemPlan.ProductID).First(&product).Error; err != nil {
+					return fmt.Errorf("invalid product id: %d", *itemPlan.ProductID)
+				}
+				productID = &product.ID
+				itemName = strings.TrimSpace(product.Name)
+			}
+			if itemName == "" {
+				return fmt.Errorf("item_name is required when product_id is not provided")
+			}
 
-			totalEstimatedAmount += item.TotalEstimatedPrice
+			newItem := models.PurchaseRequestItem{
+				PurchaseRequestID:      current.ID,
+				ProductID:              productID,
+				ItemName:               itemName,
+				Quantity:               itemPlan.Quantity,
+				EstimatedPrice:         itemPlan.EstimatedPrice,
+				TotalEstimatedPrice:    itemTotal,
+				ApprovalStatus:         models.PRItemDecisionPending,
+				FinanceStaffDecision:   models.PRItemDecisionPending,
+				FinanceManagerDecision: models.PRItemDecisionPending,
+				DirectorDecision:       models.PRItemDecisionPending,
+				Notes:                  itemPlan.Notes,
+			}
+			if err := tx.Create(&newItem).Error; err != nil {
+				return err
+			}
+			totalEstimatedAmount += itemTotal
 		}
 
-		current.TotalEstimatedAmount = totalEstimatedAmount
-		current.Status = models.PRStatusPendingApproval
-		current.CurrentApprovalStage = models.PRApprovalStageFinanceStaff
-		current.ApprovalRevision = nextRevision
-		current.ReapprovalReason = models.PRReapprovalReasonRequesterRevision
-		current.ApprovedBy = nil
-		current.ApprovedAt = nil
-		current.FinanceStaffApprovedBy = nil
-		current.FinanceStaffApprovedAt = nil
-		current.FinanceStaffReviewNotes = ""
-		current.FinanceManagerApprovedBy = nil
-		current.FinanceManagerApprovedAt = nil
-		current.FinanceManagerReviewNotes = ""
-		current.DirectorApprovedBy = nil
-		current.DirectorApprovedAt = nil
-		current.RejectionReason = ""
-		current.RevisionSubmittedBy = &userID
-		current.RevisionSubmittedAt = &now
-
-		for index := range documents {
-			documents[index].PurchaseRequestID = pr.ID
-			documents[index].DocumentType = models.PurchaseRequestDocumentRequesterRevision
-			documents[index].UploadedBy = userID
-			documents[index].ApprovalRevision = nextRevision
+		obsoleteItemIDs := make([]uint, 0)
+		for _, item := range current.Items {
+			if _, retained := retainedItemIDs[item.ID]; !retained {
+				obsoleteItemIDs = append(obsoleteItemIDs, item.ID)
+			}
 		}
-		if err := tx.Create(&documents).Error; err != nil {
+		if len(obsoleteItemIDs) > 0 {
+			if err := tx.Where("purchase_request_id = ? AND id IN ?", current.ID, obsoleteItemIDs).
+				Delete(&models.PurchaseRequestItem{}).Error; err != nil {
+				return err
+			}
+		}
+
+		var revisedItems []models.PurchaseRequestItem
+		if err := tx.Preload("Product").
+			Where("purchase_request_id = ?", current.ID).
+			Order("id asc").
+			Find(&revisedItems).Error; err != nil {
 			return err
+		}
+		if len(revisedItems) == 0 {
+			return fmt.Errorf("requester revision must contain at least one item")
+		}
+		newItemSnapshot, err := buildPurchaseRequestRevisionItemSnapshot(revisedItems)
+		if err != nil {
+			return err
+		}
+
+		if len(documents) > 0 {
+			for index := range documents {
+				documents[index].PurchaseRequestID = pr.ID
+				documents[index].DocumentType = models.PurchaseRequestDocumentRequesterRevision
+				documents[index].UploadedBy = userID
+				documents[index].ApprovalRevision = nextRevision
+			}
+			if err := tx.Create(&documents).Error; err != nil {
+				return err
+			}
 		}
 
 		var snapshot models.PurchaseRequestRevisionSnapshot
@@ -521,11 +566,33 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 				"submitted_at":               now,
 				"submitted_notes":            revisionNotes,
 				"new_total_estimated_amount": totalEstimatedAmount,
+				"new_item_snapshot":          newItemSnapshot,
 			}).Error; err != nil {
 			return err
 		}
 
-		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&current).Error
+		return tx.Model(&models.PurchaseRequest{}).
+			Where("id = ?", current.ID).
+			Updates(map[string]interface{}{
+				"total_estimated_amount":       totalEstimatedAmount,
+				"status":                       models.PRStatusPendingApproval,
+				"current_approval_stage":       models.PRApprovalStageFinanceStaff,
+				"approval_revision":            nextRevision,
+				"reapproval_reason":            models.PRReapprovalReasonRequesterRevision,
+				"approved_by":                  nil,
+				"approved_at":                  nil,
+				"finance_staff_approved_by":    nil,
+				"finance_staff_approved_at":    nil,
+				"finance_staff_review_notes":   "",
+				"finance_manager_approved_by":  nil,
+				"finance_manager_approved_at":  nil,
+				"finance_manager_review_notes": "",
+				"director_approved_by":         nil,
+				"director_approved_at":         nil,
+				"rejection_reason":             "",
+				"revision_submitted_by":        userID,
+				"revision_submitted_at":        now,
+			}).Error
 	})
 	if err != nil {
 		return nil, err
@@ -1411,18 +1478,14 @@ type purchaseRequestRevisionSnapshotItem struct {
 	Notes                  string  `json:"notes"`
 }
 
-func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy uint, reason string, openedAt time.Time) (*models.PurchaseRequestRevisionSnapshot, error) {
-	if pr == nil {
-		return nil, fmt.Errorf("purchase request is required")
-	}
-
-	items := make([]purchaseRequestRevisionSnapshotItem, 0, len(pr.Items))
-	for _, item := range pr.Items {
+func buildPurchaseRequestRevisionItemSnapshot(items []models.PurchaseRequestItem) (string, error) {
+	snapshotItems := make([]purchaseRequestRevisionSnapshotItem, 0, len(items))
+	for _, item := range items {
 		productName := ""
 		if item.Product != nil {
 			productName = item.Product.Name
 		}
-		items = append(items, purchaseRequestRevisionSnapshotItem{
+		snapshotItems = append(snapshotItems, purchaseRequestRevisionSnapshotItem{
 			ID:                     item.ID,
 			ProductID:              item.ProductID,
 			ProductName:            productName,
@@ -1437,9 +1500,22 @@ func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy u
 			Notes:                  item.Notes,
 		})
 	}
-	itemSnapshot, err := json.Marshal(items)
+
+	itemSnapshot, err := json.Marshal(snapshotItems)
 	if err != nil {
-		return nil, fmt.Errorf("failed to capture purchase request revision snapshot: %w", err)
+		return "", fmt.Errorf("failed to capture purchase request revision item snapshot: %w", err)
+	}
+	return string(itemSnapshot), nil
+}
+
+func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy uint, reason string, openedAt time.Time) (*models.PurchaseRequestRevisionSnapshot, error) {
+	if pr == nil {
+		return nil, fmt.Errorf("purchase request is required")
+	}
+
+	itemSnapshot, err := buildPurchaseRequestRevisionItemSnapshot(pr.Items)
+	if err != nil {
+		return nil, err
 	}
 
 	revisionNumber := pr.ApprovalRevision
@@ -1454,7 +1530,7 @@ func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy u
 		PreviousStatus:               pr.Status,
 		PreviousApprovalStage:        pr.CurrentApprovalStage,
 		PreviousTotalEstimatedAmount: pr.TotalEstimatedAmount,
-		ItemSnapshot:                 string(itemSnapshot),
+		ItemSnapshot:                 itemSnapshot,
 		OpenedBy:                     openedBy,
 		OpenedAt:                     openedAt,
 		OpenReason:                   reason,
@@ -1511,9 +1587,18 @@ func buildPurchaseRequestInvoiceRevisionMap(items []models.PurchaseRequestInvoic
 	return updates, nil
 }
 
-func buildPurchaseRequestRequesterRevisionMap(items []models.PurchaseRequestRequesterRevisionItemPayload, existingItems []models.PurchaseRequestItem) (map[uint]purchaseRequestInvoiceRevisionItemUpdate, error) {
+type purchaseRequestRequesterRevisionItemPlan struct {
+	ExistingItemID *uint
+	ProductID      *uint
+	ItemName       string
+	Quantity       int
+	EstimatedPrice float64
+	Notes          string
+}
+
+func buildPurchaseRequestRequesterRevisionPlan(items []models.PurchaseRequestRequesterRevisionItemPayload, existingItems []models.PurchaseRequestItem) ([]purchaseRequestRequesterRevisionItemPlan, map[uint]struct{}, error) {
 	if len(items) == 0 {
-		return nil, fmt.Errorf("requester revision items are required")
+		return nil, nil, fmt.Errorf("requester revision items are required")
 	}
 
 	existingByID := make(map[uint]struct{}, len(existingItems))
@@ -1521,36 +1606,46 @@ func buildPurchaseRequestRequesterRevisionMap(items []models.PurchaseRequestRequ
 		existingByID[item.ID] = struct{}{}
 	}
 
-	updates := make(map[uint]purchaseRequestInvoiceRevisionItemUpdate, len(items))
-	for _, item := range items {
-		if item.ItemID == 0 {
-			return nil, fmt.Errorf("item_id is required")
-		}
-		if _, exists := existingByID[item.ItemID]; !exists {
-			return nil, fmt.Errorf("purchase request item %d does not belong to this purchase request", item.ItemID)
-		}
-		if _, duplicate := updates[item.ItemID]; duplicate {
-			return nil, fmt.Errorf("duplicate requester revision submitted for item %d", item.ItemID)
-		}
+	plans := make([]purchaseRequestRequesterRevisionItemPlan, 0, len(items))
+	retainedItemIDs := make(map[uint]struct{}, len(existingItems))
+	for index, item := range items {
 		if item.Quantity < 1 {
-			return nil, fmt.Errorf("quantity must be at least 1 for item %d", item.ItemID)
+			return nil, nil, fmt.Errorf("quantity must be at least 1 for item %d", index+1)
 		}
 		if item.EstimatedPrice < 0 {
-			return nil, fmt.Errorf("estimated_price cannot be negative for item %d", item.ItemID)
+			return nil, nil, fmt.Errorf("estimated_price cannot be negative for item %d", index+1)
 		}
 
-		updates[item.ItemID] = purchaseRequestInvoiceRevisionItemUpdate{
+		plan := purchaseRequestRequesterRevisionItemPlan{
+			ItemName:       strings.TrimSpace(item.ItemName),
 			Quantity:       item.Quantity,
 			EstimatedPrice: item.EstimatedPrice,
 			Notes:          strings.TrimSpace(item.Notes),
 		}
+		if item.ItemID > 0 {
+			if _, exists := existingByID[item.ItemID]; !exists {
+				return nil, nil, fmt.Errorf("purchase request item %d does not belong to this purchase request", item.ItemID)
+			}
+			if _, duplicate := retainedItemIDs[item.ItemID]; duplicate {
+				return nil, nil, fmt.Errorf("duplicate requester revision submitted for item %d", item.ItemID)
+			}
+			itemID := item.ItemID
+			plan.ExistingItemID = &itemID
+			retainedItemIDs[itemID] = struct{}{}
+		} else {
+			if item.ProductID == 0 && plan.ItemName == "" {
+				return nil, nil, fmt.Errorf("product_id or item_name is required for new item %d", index+1)
+			}
+			if item.ProductID > 0 {
+				productID := item.ProductID
+				plan.ProductID = &productID
+			}
+		}
+
+		plans = append(plans, plan)
 	}
 
-	if len(updates) != len(existingByID) {
-		return nil, fmt.Errorf("requester revision must include every purchase request item")
-	}
-
-	return updates, nil
+	return plans, retainedItemIDs, nil
 }
 
 func joinPurchaseCodes(purchases []models.Purchase) string {
@@ -1855,10 +1950,15 @@ func (s *purchaseRequestService) notifyPurchaseRequestRequesterRevision(pr *mode
 		return
 	}
 
+	message := fmt.Sprintf("Purchase request %s sudah direvisi oleh PIC. Finance Staff perlu review ulang.", pr.PRNumber)
+	if documentCount > 0 {
+		message = fmt.Sprintf("Purchase request %s sudah direvisi oleh PIC dengan %d dokumen pendukung. Finance Staff perlu review ulang.", pr.PRNumber, documentCount)
+	}
+
 	if err := s.notificationService.smartService.CreateSmartNotification(
 		models.NotificationTypeApprovalPending,
 		"Purchase Request Revision Review Required",
-		fmt.Sprintf("Purchase request %s sudah direvisi oleh PIC dengan %d dokumen pendukung. Finance Staff perlu review ulang.", pr.PRNumber, documentCount),
+		message,
 		map[string]interface{}{
 			"pr_id":                  pr.ID,
 			"pr_number":              pr.PRNumber,
