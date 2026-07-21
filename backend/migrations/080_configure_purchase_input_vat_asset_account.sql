@@ -76,17 +76,29 @@ SELECT
 FROM accounts parent
 WHERE parent.code = '1105'
   AND parent.deleted_at IS NULL
-ON CONFLICT (code) WHERE deleted_at IS NULL
-DO UPDATE SET
-  name = EXCLUDED.name,
-  type = EXCLUDED.type,
-  category = EXCLUDED.category,
-  parent_id = EXCLUDED.parent_id,
-  level = EXCLUDED.level,
-  is_header = EXCLUDED.is_header,
+  AND NOT EXISTS (
+    SELECT 1
+    FROM accounts existing
+    WHERE existing.code = '1105-005'
+      AND existing.deleted_at IS NULL
+  );
+
+UPDATE accounts child
+SET
+  name = 'PPN MASUKAN',
+  type = 'ASSET',
+  category = 'CURRENT_ASSET',
+  parent_id = parent.id,
+  level = 4,
+  is_header = FALSE,
   is_active = TRUE,
   is_system_critical = TRUE,
-  updated_at = NOW();
+  updated_at = NOW()
+FROM accounts parent
+WHERE child.code = '1105-005'
+  AND child.deleted_at IS NULL
+  AND parent.code = '1105'
+  AND parent.deleted_at IS NULL;
 
 WITH ppn_masukan_asset AS (
   SELECT id
