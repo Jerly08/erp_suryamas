@@ -420,10 +420,14 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
   const ppnDescription = 'Pembayaran PPN terutang ke negara (kompensasi PPN Keluaran dikurangi PPN Masukan)';
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="xl">
+    <Modal isOpen={isOpen} onClose={handleClose} size="xl" scrollBehavior="inside">
       <ModalOverlay />
-      <ModalContent bg={bgColor}>
-        <ModalHeader>
+      <ModalContent
+        bg={bgColor}
+        maxH={{ base: 'calc(100dvh - 1rem)', md: 'calc(100vh - 3rem)' }}
+        display="flex"
+      >
+        <ModalHeader flexShrink={0}>
           <VStack align="start" spacing={1}>
             <Text>Pembayaran {ppnLabel}</Text>
             <Text fontSize="sm" fontWeight="normal" color={mutedColor}>
@@ -433,8 +437,17 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
         </ModalHeader>
         <ModalCloseButton />
 
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <ModalBody>
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          style={{ display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0 }}
+        >
+          <ModalBody
+            flex="1"
+            minH={0}
+            overflowY="auto"
+            overscrollBehavior="contain"
+            pb={6}
+          >
             <VStack spacing={4} align="stretch">
               {/* Info Alert */}
               <Alert status="info" borderRadius="md">
@@ -779,7 +792,7 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
             </VStack>
           </ModalBody>
 
-          <ModalFooter>
+          <ModalFooter flexShrink={0}>
             <Button variant="ghost" mr={3} onClick={handleClose}>
               Batal
             </Button>
