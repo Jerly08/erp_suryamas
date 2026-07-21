@@ -248,7 +248,7 @@ func (h *TaxAccountHelper) GetPurchaseInputVATAccount(tx *gorm.DB) (*models.Acco
 	settings, err := h.loadFreshSettings(tx)
 	if err != nil {
 		log.Printf("WARNING [TaxAccountHelper] Failed to load tax settings for PPN Masukan, using fallback: %v", err)
-		return h.getFirstAvailableValidPurchaseInputVATAccount(tx, "1240", "2102-002")
+		return h.getFirstAvailableValidPurchaseInputVATAccount(tx, "1105-005", "1240", "2102-002")
 	}
 
 	if settings.PurchaseInputVATAccountID > 0 {
@@ -272,8 +272,8 @@ func (h *TaxAccountHelper) GetPurchaseInputVATAccount(tx *gorm.DB) (*models.Acco
 		}
 	}
 
-	log.Printf("WARNING [TaxAccountHelper] PPN Masukan account not configured, using fallback (1240/2102-002)")
-	return h.getFirstAvailableValidPurchaseInputVATAccount(tx, "1240", "2102-002")
+	log.Printf("WARNING [TaxAccountHelper] PPN Masukan account not configured, using fallback (1105-005/1240/2102-002)")
+	return h.getFirstAvailableValidPurchaseInputVATAccount(tx, "1105-005", "1240", "2102-002")
 }
 
 // GetSalesOutputVATAccount returns the configured PPN Keluaran account or a safe legacy fallback.

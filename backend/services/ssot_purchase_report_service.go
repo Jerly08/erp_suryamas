@@ -494,13 +494,13 @@ func (s *SSOTPurchaseReportService) getPurchasesByCategory(ctx context.Context, 
 
 			SELECT
 				p.id as purchase_id,
-				COALESCE(tax_account.code, '2102-002') as account_code,
+				COALESCE(tax_account.code, '1105-005') as account_code,
 				COALESCE(tax_account.name, 'PPN Masukan') as account_name,
 				'Input Tax' as category_name,
 				p.tax_amount as amount
 			FROM purchases p
 			LEFT JOIN accounts tax_account
-				ON tax_account.code = '2102-002'
+				ON tax_account.code = '1105-005'
 				AND tax_account.deleted_at IS NULL
 			WHERE p.date BETWEEN ? AND ?
 			  AND p.deleted_at IS NULL

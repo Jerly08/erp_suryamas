@@ -31,7 +31,7 @@ func seedRequiredTaxAccountFixture(t *testing.T) (*gorm.DB, requiredTaxAccountFi
 		revenue:    createTaxTestAccount(t, db, "4101-001", "PENJUALAN", models.AccountTypeRevenue, models.CategoryOperatingRevenue),
 		outputVAT:  createTaxTestAccount(t, db, "2102-001", "PPN KELUARAN", models.AccountTypeLiability, models.CategoryCurrentLiability),
 		payable:    createTaxTestAccount(t, db, "2101-001", "UTANG USAHA", models.AccountTypeLiability, models.CategoryCurrentLiability),
-		inputVAT:   createTaxTestAccount(t, db, "2102-002", "PPN MASUKAN", models.AccountTypeLiability, models.CategoryCurrentLiability),
+		inputVAT:   createTaxTestAccount(t, db, "1105-005", "PPN MASUKAN", models.AccountTypeAsset, models.CategoryCurrentAsset),
 		expense:    createTaxTestAccount(t, db, "6102", "BEBAN ADMINISTRASI & UMUM", models.AccountTypeExpense, models.CategoryAdministrativeExp),
 		badRevenue: createTaxTestAccount(t, db, "4101", "PENDAPATAN PENJUALAN HEADER", models.AccountTypeRevenue, models.CategoryOperatingRevenue),
 	}
@@ -121,7 +121,7 @@ func TestTaxAccountServiceRepairsProductionLikeInvalidRequiredMappings(t *testin
 		"purchase_payable":   {repaired.PurchasePayableAccountID, models.AccountTypeLiability},
 		"purchase_cash":      {repaired.PurchaseCashAccountID, models.AccountTypeAsset},
 		"purchase_bank":      {repaired.PurchaseBankAccountID, models.AccountTypeAsset},
-		"purchase_input_vat": {repaired.PurchaseInputVATAccountID, models.AccountTypeLiability},
+		"purchase_input_vat": {repaired.PurchaseInputVATAccountID, models.AccountTypeAsset},
 		"purchase_expense":   {repaired.PurchaseExpenseAccountID, models.AccountTypeExpense},
 	}
 	for role, expected := range expectedTypes {

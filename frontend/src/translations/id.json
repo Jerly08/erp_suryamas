@@ -940,7 +940,7 @@
       "headerTooltip": "Buat kategori besar (Header) seperti ASSETS, CURRENT ASSETS, LIABILITIES, dll. Header tidak bisa digunakan untuk transaksi langsung, hanya untuk mengelompokkan akun.",
       "accountTooltip": "Buat akun detail seperti KAS KECIL (1101-001) dan PIUTANG USAHA (1102-001) yang bisa digunakan untuk mencatat transaksi. Akun PPN Masukan dan PPN Keluaran sekarang mengikuti konfigurasi aktif di halaman Tax Configuration.",
       "warningTitle": "Akun-Akun Wajib (Hardcoded di Backend)",
-      "warningDesc": "Akun berikut WAJIB ADA dan di-hardcode di backend: KAS KECIL (1101-001), PIUTANG USAHA (1102-001), PPN MASUKAN (2102-002), PPN KELUARAN (2102-001), UTANG USAHA (2101-001), PENDAPATAN (4101), HPP/BEBAN POKOK (5000). Jika terhapus, HARUS dibuat ulang dengan kode, nama UPPERCASE, dan type yang PERSIS sama! Klik ikon 📚 untuk panduan lengkap."
+      "warningDesc": "Akun berikut WAJIB ADA untuk sistem berjalan: KAS KECIL (1101-001), PIUTANG USAHA (1102-001), PPN MASUKAN (1105-005), PPN KELUARAN (2102-001), UTANG USAHA (2101-001), PENDAPATAN (4101), HPP/BEBAN POKOK (5000). Jika terhapus, HARUS dibuat ulang dengan kode, nama UPPERCASE, dan type yang PERSIS sama! Klik ikon 📚 untuk panduan lengkap."
     }
   },
   "products": {

@@ -32,6 +32,7 @@ func GetStandardCOA(companyType string) []models.Account {
 		{Code: "1105-002", Name: "PPH 23 DIBAYAR DIMUKA", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
 		{Code: "1105-003", Name: "PPH FINAL DIBAYAR DIMUKA", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true},
 		{Code: "1105-004", Name: "KREDIT PAJAK PPH 23", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true},
+		{Code: "1105-005", Name: "PPN MASUKAN", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
 
 		{Code: "1107", Name: "PIUTANG LAIN-LAIN", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 3, IsHeader: true, IsActive: true},
 		{Code: "1107-001", Name: "PINJAMAN KARYAWAN", Type: models.AccountTypeAsset, Category: models.CategoryCurrentAsset, Level: 4, IsHeader: false, IsActive: true},
@@ -58,7 +59,7 @@ func GetStandardCOA(companyType string) []models.Account {
 
 		{Code: "2102", Name: "UTANG PAJAK", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 3, IsHeader: true, IsActive: true},
 		{Code: "2102-001", Name: "PPN KELUARAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
-		{Code: "2102-002", Name: "PPN MASUKAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true}, // Note: Usually Contra-Asset or Liability with Debit balance, using Liability here as per user struct
+		{Code: "2102-002", Name: "PPN MASUKAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true}, // Legacy compatibility; new PPN Masukan postings use 1105-005.
 		{Code: "2102-003", Name: "HUTANG PPH PASAL 21", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
 		{Code: "2102-004", Name: "HUTANG PPH PASAL 23", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
 		{Code: "2102-005", Name: "HUTANG PPH PASAL 4(2) FINAL", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
@@ -79,8 +80,8 @@ func GetStandardCOA(companyType string) []models.Account {
 		{Code: "3104", Name: "EKUITAS SALDO AWAL", Type: models.AccountTypeEquity, Category: models.CategoryEquity, Level: 2, IsHeader: false, IsActive: true, IsSystemCritical: true},
 	}
 
-	// 1240 PPN MASUKAN legacy/compatibility check -> map to 2102-002 if needed or keep separate?
-	// The user request specifies 2102-002 for PPN Masukan under Liability. We will stick to that.
+	// 1105-005 is the active PPN Masukan account. 1240 and 2102-002 are
+	// retained only as legacy fallbacks for older databases.
 
 	// Industry Specific Accounts
 	var specificAccounts []models.Account

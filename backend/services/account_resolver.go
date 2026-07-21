@@ -88,7 +88,7 @@ var DefaultAccountMappings = map[AccountType]AccountMapping{
 		Description: "Accounts receivable",
 	},
 	AccountTypePPNReceivable: {
-		Codes:       []string{"2102-002", "1106", "1105"},
+		Codes:       []string{"1105-005", "1240", "2102-002", "1106", "1105"},
 		Names:       []string{"PPN Masukan", "PPN Receivable", "Pajak Masukan", "Input VAT"},
 		AccountType: models.AccountTypeAsset,
 		Description: "PPN receivable (input tax)",

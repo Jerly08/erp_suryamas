@@ -38,6 +38,7 @@ func isPurchaseInputVATAccount(accountID uint, code, name string, configuredID u
 	lowerName := strings.ToLower(name)
 	return (configuredID != 0 && accountID == configuredID) ||
 		strings.Contains(lowerName, "ppn masukan") ||
+		code == "1105-005" ||
 		code == "1240" ||
 		strings.HasPrefix(code, "2102-002")
 }

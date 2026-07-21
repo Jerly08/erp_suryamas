@@ -996,7 +996,7 @@ func (s *PurchaseService) generatePurchaseReturnNumber() string {
 type PurchaseAccountIDs struct {
 	PrimaryAccountID   uint // Inventory or main expense account
 	InventoryAccountID uint // 1103-001 - Persediaan Barang Dagangan
-	PPNInputAccountID  uint // 2102-002 - PPN Masukan
+	PPNInputAccountID  uint // 1105-005 - PPN Masukan
 	AccountsPayableID  uint // 2101 - Utang Usaha
 	PPh21PayableID     uint // 2102-003 - Utang PPh 21
 	PPh23PayableID     uint // 2102-004 - Utang PPh 23

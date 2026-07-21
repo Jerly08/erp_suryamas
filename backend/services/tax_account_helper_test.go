@@ -123,7 +123,7 @@ func TestGetPurchaseInputVATAccountUsesLatestSettingsWithoutRestart(t *testing.T
 func TestGetPurchaseInputVATAccountFallsBackFromInvalidRevenueAccount(t *testing.T) {
 	db := newTaxAccountHelperTestDB(t)
 
-	fallbackVAT := createTaxTestAccount(t, db, "2102-002", "PPN MASUKAN", models.AccountTypeLiability, models.CategoryCurrentLiability)
+	fallbackVAT := createTaxTestAccount(t, db, "1105-005", "PPN MASUKAN", models.AccountTypeAsset, models.CategoryCurrentAsset)
 	invalidRevenue := createTaxTestAccount(t, db, "4101", "PENDAPATAN PENJUALAN", models.AccountTypeRevenue, models.CategorySalesRevenue)
 	seedTaxSettings(t, db, invalidRevenue.ID)
 

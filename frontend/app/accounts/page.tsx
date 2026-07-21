@@ -567,7 +567,7 @@ const AccountsPage = () => {
                           <ListItem><Code>1102</Code> - {t('accounts.guide.accountsReceivable')} (PIUTANG USAHA)</ListItem>
                           <ListItem><Code>2101</Code> - {t('accounts.guide.accountsPayable')}</ListItem>
                           <ListItem><Code>2102-001</Code> - {t('accounts.guide.vatOutput')}</ListItem>
-                          <ListItem><Code>2102-002</Code> - {t('accounts.guide.vatInput')}</ListItem>
+                          <ListItem><Code>1105-005</Code> - {t('accounts.guide.vatInput')}</ListItem>
                           <ListItem><Code>4101</Code> - {t('accounts.guide.salesRevenue')}</ListItem>
                           <ListItem><Code>5101</Code> - {t('accounts.guide.costOfGoodsSold')}</ListItem>
                         </UnorderedList>
@@ -597,7 +597,7 @@ const AccountsPage = () => {
                           <ListItem><Code>1101 - {t('accounts.guide.cash')}</Code> (Asset, type: Asset)</ListItem>
                           <ListItem><Code>1101-003 - BANK GIRO</Code> (Asset, type: Asset)</ListItem>
                           <ListItem><Code>1102 - PIUTANG USAHA</Code> (Asset, type: Asset)</ListItem>
-                          <ListItem><Code>2102-002 - {t('accounts.guide.vatInput')}</Code> (Liability, type: Liability)</ListItem>
+                          <ListItem><Code>1105-005 - {t('accounts.guide.vatInput')}</Code> (Asset, type: Asset)</ListItem>
                           <ListItem><Code>2102-001 - {t('accounts.guide.vatOutput')}</Code> (Liability, type: Liability)</ListItem>
                           <ListItem><Code>4101 - {t('accounts.guide.salesRevenue')}</Code> (Revenue, type: Revenue)</ListItem>
                           <ListItem><Code>5101 - {t('accounts.guide.costOfGoodsSold')}</Code> (Expense, type: Expense)</ListItem>
@@ -822,4 +822,3 @@ const AccountsPage = () => {
 };
 
 export default AccountsPage;
-

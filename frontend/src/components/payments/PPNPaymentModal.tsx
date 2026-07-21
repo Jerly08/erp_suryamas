@@ -233,10 +233,10 @@ const PPNPaymentModal: React.FC<PPNPaymentModalProps> = ({
 
         console.log('💰 PPN Balance Data:', { masukanData, keluaranData });
 
-        // ⚠️ IMPORTANT: Use Math.abs() for both values as a defensive measure.
-        // PPN Masukan (2102-002) is a LIABILITY account, so its raw balance
-        // may be negative. Backend now returns absolute values, but we guard
-        // against any future regression. This ensures:
+        // Use Math.abs() for both values as a defensive measure. PPN Masukan
+        // is now an asset account, but older databases may still carry legacy
+        // contra-liability balances until they are reclassified. Backend now
+        // returns absolute values, but we guard against any future regression:
         //   CORRECT: 6,600,000 - 1,100,000 = 5,500,000
         //   NOT:     6,600,000 - (-1,100,000) = 7,700,000
         const ppnMasukan = Math.abs(masukanData.balance || 0);

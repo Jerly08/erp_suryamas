@@ -69,7 +69,11 @@ INSERT INTO tax_configs (
     0.0,   -- Other tax
     
     -- Purchase accounts (sesuaikan dengan ID account Anda)
-    164,   -- 1240 - PPN Masukan
+    COALESCE(
+      (SELECT id FROM accounts WHERE code = '1105-005' AND type = 'ASSET' AND is_active = true AND is_header = false AND deleted_at IS NULL LIMIT 1),
+      (SELECT id FROM accounts WHERE code = '1240' AND type = 'ASSET' AND is_active = true AND is_header = false AND deleted_at IS NULL LIMIT 1),
+      164
+    ),     -- 1105-005 - PPN Masukan (asset); 1240 kept as legacy fallback
     167,   -- 2104 - PPh 21 Yang Dipotong
     168,   -- 2105 - PPh 23 Yang Dipotong
     169,   -- 2106 - PPh 25

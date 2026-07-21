@@ -862,11 +862,11 @@ const TaxAccountSettingsPage: React.FC = () => {
                     'purchase_input_vat',
                     t('settings.taxAccounts.vatInput'),
                     false,
-                    ['LIABILITY'],
-                    ['CURRENT_LIABILITY'],
+                    ['ASSET'],
+                    ['CURRENT_ASSET'],
                     t('settings.taxAccounts.descriptions.vatInput'),
                     t('settings.taxAccounts.tooltips.vat'),
-                    ['2102-002', '2102']
+                    ['1105-005', '1240']
                   )}
 
                   {renderAccountSelect(

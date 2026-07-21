@@ -389,12 +389,15 @@ func (adapter *PurchaseSSOTJournalAdapter) getPurchaseAccountIDs() (*SSOTPurchas
 		ids.PrimaryAccountID = uint64(inv.ID)
 	}
 	if ids.PPNInputAccountID == 0 {
-		ppn, err := adapter.accountRepo.FindByCode(context.TODO(), "1240")
+		ppn, err := adapter.accountRepo.FindByCode(context.TODO(), "1105-005")
+		if err != nil {
+			ppn, err = adapter.accountRepo.FindByCode(context.TODO(), "1240")
+		}
 		if err != nil {
 			ppn, err = adapter.accountRepo.FindByCode(context.TODO(), "2102-002")
 		}
 		if err != nil {
-			return nil, fmt.Errorf("PPN input account from settings fallback (1240/2102-002) not found: %v", err)
+			return nil, fmt.Errorf("PPN input account from settings fallback (1105-005/1240/2102-002) not found: %v", err)
 		}
 		ids.PPNInputAccountID = uint64(ppn.ID)
 	}

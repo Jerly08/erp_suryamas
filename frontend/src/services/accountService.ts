@@ -419,8 +419,8 @@ class AccountService {
       return true;
     }
 
-    // PPN & tax accounts (2102-001 PPN Keluaran, 2102-002 PPN Masukan, etc.) should display as positive 
-    if (accountCode.startsWith('2102') || accountCode.startsWith('2103')) {
+    // PPN & tax accounts should display as positive.
+    if (accountCode.startsWith('2102') || accountCode.startsWith('2103') || accountCode === '1105-005') {
       return true;
     }
 

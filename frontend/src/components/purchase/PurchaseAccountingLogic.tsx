@@ -201,7 +201,7 @@ const PurchaseAccountingLogic: React.FC<PurchaseAccountingLogicProps> = ({
     if (accountingImpact.ppnAmount > 0) {
       entries.push({
         account: 'PPN Masukan (Input VAT)',
-        accountCode: '2102-002',
+        accountCode: '1105-005',
         debit: accountingImpact.ppnAmount,
         credit: 0,
         description: 'VAT paid on purchases (recoverable)',

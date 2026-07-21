@@ -221,7 +221,7 @@ func (s *TaxAccountService) requiredAccountRoles(settings *models.TaxAccountSett
 			Label:        "Purchase Input VAT",
 			AccountID:    settings.PurchaseInputVATAccountID,
 			AllowedTypes: []string{models.AccountTypeLiability, models.AccountTypeAsset},
-			DefaultCodes: []string{"2102-002", "1240", "2102"},
+			DefaultCodes: []string{"1105-005", "1240", "2102-002", "2102"},
 			Required:     true,
 		},
 		{

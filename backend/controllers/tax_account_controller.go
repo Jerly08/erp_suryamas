@@ -441,9 +441,9 @@ func (c *TaxAccountController) GetAccountSuggestions(ctx *gin.Context) {
 				"description":            "Bank (di bawah KAS DAN SETARA KAS 1101) - untuk pembelian via transfer bank",
 			},
 			"input_vat_account": map[string]interface{}{
-				"recommended_types":      []string{"LIABILITY"},
-				"recommended_categories": []string{"CURRENT_LIABILITY"},
-				"suggested_codes":        []string{"2102-002"},
+				"recommended_types":      []string{"ASSET"},
+				"recommended_categories": []string{"CURRENT_ASSET"},
+				"suggested_codes":        []string{"1105-005", "1240"},
 				"description":            "PPN Masukan - untuk mencatat PPN yang dapat dikreditkan dari pembelian",
 			},
 			"expense_account": map[string]interface{}{
