@@ -15,7 +15,6 @@ import {
   HStack,
   Flex,
   Tooltip,
-  useColorMode,
   useColorModeValue,
 } from '@chakra-ui/react';
 import { FiEdit, FiTrash2 } from 'react-icons/fi';
@@ -24,6 +23,7 @@ import { useModulePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import accountService from '@/services/accountService';
+import { shouldEmphasizeAccountRow } from '@/utils/accountDisplay';
 
 interface AccountsTableProps {
   accounts: Account[];
@@ -148,7 +148,10 @@ const AccountsTable: React.FC<AccountsTableProps> = ({ accounts, onEdit, onDelet
           </Tr>
         </Thead>
         <Tbody>
-          {accounts.map((account, index) => (
+          {accounts.map((account) => {
+            const isEmphasized = shouldEmphasizeAccountRow(account);
+
+            return (
             <Tr key={account.id} _hover={{ bg: hoverBg }} transition="all 0.2s ease">
               <Td px={6} py={4} borderColor={borderColor}>
                 <Text fontSize="sm" fontFamily="monospace" color={textColor}>
@@ -159,8 +162,8 @@ const AccountsTable: React.FC<AccountsTableProps> = ({ accounts, onEdit, onDelet
                 <Flex align="center">
                   <Box w={`${(account.level || 0) * 20}px`} />
                   <Text 
-                    fontWeight={account.is_header ? '600' : '400'}
-                    color={account.is_header ? primaryTextColor : textColor}
+                    fontWeight={isEmphasized ? '600' : '400'}
+                    color={isEmphasized ? primaryTextColor : textColor}
                     fontSize="sm"
                   >
                     {account.name}
@@ -181,7 +184,7 @@ const AccountsTable: React.FC<AccountsTableProps> = ({ accounts, onEdit, onDelet
                   )}
                   <Text 
                     fontSize="sm"
-                    fontWeight={account.is_header ? '600' : '400'}
+                    fontWeight={isEmphasized ? '600' : '400'}
                     color={isAbnormalBalance(account) ? 'red.500' : primaryTextColor}
                   >
                     {accountService.formatBalance(getDisplayBalance(account), 'IDR', account.code, account.type)}
@@ -264,7 +267,8 @@ const AccountsTable: React.FC<AccountsTableProps> = ({ accounts, onEdit, onDelet
                 )}
               </Td>
             </Tr>
-          ))}
+            );
+          })}
         </Tbody>
       </Table>
     </Box>

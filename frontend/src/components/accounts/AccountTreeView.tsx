@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Box,
   Flex,
@@ -24,6 +24,7 @@ import { Account } from '@/types/account';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import accountService from '@/services/accountService';
+import { shouldEmphasizeAccountRow } from '@/utils/accountDisplay';
 
 interface AccountTreeViewProps {
   accounts: Account[];
@@ -60,6 +61,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const hasChildren = account.children && account.children.length > 0;
   const childCount = account.child_count ?? account.children?.length ?? 0;
   const indentWidth = level * 20;
+  const isEmphasized = shouldEmphasizeAccountRow(account);
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -108,7 +110,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         <Flex flex={1} align="center" justify="space-between">
           <HStack spacing={3}>
             <Text
-              fontWeight={account.is_header ? 'bold' : 'normal'}
+              fontWeight={isEmphasized ? 'bold' : 'normal'}
               color={account.is_active ? 'gray.800' : 'gray.400'}
               fontSize={account.level === 1 ? 'md' : 'sm'}
             >
@@ -142,7 +144,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               <VStack spacing={0} align="end">
                 <Text
                   fontSize="sm"
-                  fontWeight={account.is_header ? "bold" : "medium"}
+                  fontWeight={isEmphasized ? "bold" : "medium"}
                   color="green.600"
                 >
                   {accountService.formatBalance(account.balance, 'IDR', account.code, account.type)}
