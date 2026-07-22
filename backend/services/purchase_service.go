@@ -2433,10 +2433,10 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 				continue
 			}
 
-			// Ambil durasi bulan, default = 12 jika tidak diset
+			// Durasi harus sudah tervalidasi saat purchase dibuat atau diperbarui.
 			months := item.AmortizationMonth
-			if months <= 0 {
-				months = 12
+			if months < 1 || months > 120 {
+				return fmt.Errorf("item prepaid %d memiliki durasi amortisasi tidak valid: %d bulan", item.ID, months)
 			}
 
 			// Hitung Biaya Per Bulan flat

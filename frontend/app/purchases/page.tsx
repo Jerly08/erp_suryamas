@@ -666,6 +666,7 @@ const mapPurchaseItemToFormData = (
   const itemType =
     item.item_type || (item.is_fixed_asset ? "ASSET" : "INVENTORY");
   const normalizedItemType = itemType.toUpperCase();
+  const amortizationMonth = item.amortization_month ?? 0;
   const isDescriptiveItem =
     normalizedItemType === "EXPENSE" ||
     normalizedItemType === "ASSET" ||
@@ -691,7 +692,9 @@ const mapPurchaseItemToFormData = (
     description: itemDescription,
     asset_category_id: item.asset_category_id?.toString() || "",
     amortization_month:
-      itemType === "PREPAID" ? item.amortization_month?.toString() || "12" : "",
+      itemType === "PREPAID" && amortizationMonth > 0
+        ? amortizationMonth.toString()
+        : "",
   });
 };
 
@@ -5131,7 +5134,8 @@ const PurchasesPage: React.FC = () => {
           !item.description?.trim() ||
           (shouldRequireItemAccount &&
             !resolvePurchaseItemExpenseAccountId(item)) ||
-          amortizationMonth <= 0
+          amortizationMonth < 1 ||
+          amortizationMonth > 120
         );
       }
       if (item.item_type === "EXPENSE") {
@@ -5163,7 +5167,7 @@ const PurchasesPage: React.FC = () => {
       else if (prepaidInvalid)
         errorMsg = shouldRequireItemAccount
           ? "Item Prepaid: Deskripsi dan Akun harus diisi."
-          : "Item Prepaid: Deskripsi dan durasi amortisasi harus diisi.";
+          : "Item Prepaid: Deskripsi dan durasi amortisasi 1-120 bulan harus diisi.";
       else if (expenseInvalid)
         errorMsg = shouldRequireItemAccount
           ? "Item Beban/Jasa: Deskripsi dan akun beban harus diisi."
@@ -8955,8 +8959,7 @@ const PurchasesPage: React.FC = () => {
                                                   ? items[index]
                                                       .asset_category_id
                                                   : "",
-                                              amortization_month:
-                                                val === "PREPAID" ? "12" : "",
+                                              amortization_month: "",
                                             };
                                             setFormData({ ...formData, items });
                                           }}
@@ -9182,7 +9185,7 @@ const PurchasesPage: React.FC = () => {
                                                 <NumberInputField
                                                   pl="1.5rem"
                                                   pr="3.5rem"
-                                                  placeholder="12"
+                                                  placeholder="1-120"
                                                   bg={inputBg}
                                                   color={inputTextColor}
                                                   borderColor={

@@ -92,6 +92,10 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
 		isExpenseItem := itemType == models.PurchaseItemTypeExpense
 
+		if isPrepaidItem && (itemReq.AmortizationMonth < 1 || itemReq.AmortizationMonth > 120) {
+			return fmt.Errorf("item %d: durasi amortisasi prepaid harus antara 1 dan 120 bulan", i+1)
+		}
+
 		if isAssetItem || isPrepaidItem || isExpenseItem {
 			itemTypeName := string(itemType)
 			fmt.Printf("ℹ Processing item %d/%d: %s item '%s', Qty %d, Price %.2f\n", i+1, len(items), itemTypeName, itemReq.Description, itemReq.Quantity, itemReq.UnitPrice)
@@ -132,6 +136,7 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 			IsFixedAsset:          isAssetItem,
 			Description:           itemReq.Description,
 			AssetCategoryID:       itemReq.AssetCategoryID,
+			AmortizationMonth:     itemReq.AmortizationMonth,
 			Quantity:              itemReq.Quantity,
 			UnitPrice:             sanitizeFloat(clampNonNegative(itemReq.UnitPrice)),
 			Discount:              sanitizeFloat(clampNonNegative(itemReq.Discount)),
@@ -376,7 +381,7 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 	// Clear existing items
 	purchase.PurchaseItems = []models.PurchaseItem{}
 
-	for _, itemReq := range items {
+	for i, itemReq := range items {
 		// Determine item type
 		itemType := itemReq.ItemType
 		if itemType == "" {
@@ -385,6 +390,10 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 		isAssetItem := itemType == models.PurchaseItemTypeAsset || itemReq.IsFixedAsset
 		isPrepaidItem := itemType == models.PurchaseItemTypePrepaid
 		isExpenseItem := itemType == models.PurchaseItemTypeExpense
+
+		if isPrepaidItem && (itemReq.AmortizationMonth < 1 || itemReq.AmortizationMonth > 120) {
+			return fmt.Errorf("item %d: durasi amortisasi prepaid harus antara 1 dan 120 bulan", i+1)
+		}
 
 		if !isAssetItem && !isPrepaidItem && !isExpenseItem {
 			// Validate product exists for inventory items
@@ -406,6 +415,7 @@ func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items [
 			IsFixedAsset:          isAssetItem,
 			Description:           itemReq.Description,
 			AssetCategoryID:       itemReq.AssetCategoryID,
+			AmortizationMonth:     itemReq.AmortizationMonth,
 			Quantity:              itemReq.Quantity,
 			UnitPrice:             itemReq.UnitPrice,
 			Discount:              itemReq.Discount,
