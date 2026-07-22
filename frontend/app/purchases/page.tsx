@@ -147,6 +147,7 @@ import { API_ENDPOINTS } from "@/config/api";
 
 const PAYMENT_PROOF_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp";
 const PR_REALIZATION_DOCUMENT_TYPE = "REALIZATION_DOCUMENT";
+const PURCHASE_SEARCH_DEBOUNCE_MS = 400;
 
 const formatFileSize = (size?: number) => {
   const bytes = Number(size || 0);
@@ -1039,7 +1040,6 @@ const PurchasesPage: React.FC = () => {
 
   // State management
   const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [allPurchases, setAllPurchases] = useState<Purchase[]>([]); // Store all purchases for client-side filtering
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({
@@ -1054,8 +1054,9 @@ const PurchasesPage: React.FC = () => {
     getDefaultPurchaseFilters,
   );
   const bootstrappedPurchaseTokenRef = useRef<string | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Local search state (client-side, no debouncing needed)
+  // Search input is debounced, then sent to the backend so vendor matches work across pages.
   const [searchInput, setSearchInput] = useState("");
 
   // Statistics state
@@ -1913,8 +1914,6 @@ const PurchasesPage: React.FC = () => {
       // Ensure response data is an array
       const purchaseData = Array.isArray(response?.data) ? response.data : [];
 
-      // Store all purchases for client-side filtering
-      setAllPurchases(purchaseData);
       setPurchases(purchaseData);
       setPagination({
         page: response?.page || 1,
@@ -2113,7 +2112,17 @@ const PurchasesPage: React.FC = () => {
 
   // Handle filter changes (immediate for non-search filters)
   const handleFilterChange = (newFilters: Partial<PurchaseFilterParams>) => {
-    const updatedFilters = { ...filters, ...newFilters, page: 1 };
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+
+    const updatedFilters = {
+      ...filters,
+      search: searchInput.trim(),
+      ...newFilters,
+      page: 1,
+    };
     setFilters(updatedFilters);
     fetchPurchases(updatedFilters);
   };
@@ -2122,12 +2131,18 @@ const PurchasesPage: React.FC = () => {
     accountingStatus = "READY_FOR_COA",
     useCurrentMonth = true,
   ) => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+
     const updatedFilters: PurchaseFilterParams = {
       ...filters,
       ...(useCurrentMonth ? getCurrentMonthPurchaseRange() : {}),
       status: "",
       approval_status: "",
       accounting_status: accountingStatus,
+      search: "",
       page: 1,
     };
     setSearchInput("");
@@ -2136,53 +2151,45 @@ const PurchasesPage: React.FC = () => {
   };
 
   const handleClearFilters = () => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+
     setSearchInput("");
-    setPurchases(allPurchases);
     const resetFilters = getDefaultPurchaseFilters();
     setFilters(resetFilters);
     fetchPurchases(resetFilters);
   };
 
-  // Client-side search handler (instant, no API call)
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
+    const search = value.trim();
 
-    // Client-side filtering - no API call
-    if (!value.trim()) {
-      // If search is empty, show all purchases
-      setPurchases(allPurchases);
-      return;
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
     }
 
-    // Filter purchases based on search term
-    const searchTerm = value.toLowerCase();
-    const filtered = allPurchases.filter((purchase) => {
-      // Search in purchase code
-      if (purchase.code?.toLowerCase().includes(searchTerm)) return true;
+    searchDebounceRef.current = setTimeout(() => {
+      if ((filters.search || "") === search) return;
 
-      // Search in vendor name
-      if (purchase.vendor?.name?.toLowerCase().includes(searchTerm))
-        return true;
-
-      // Search in notes
-      if (purchase.notes?.toLowerCase().includes(searchTerm)) return true;
-
-      // Search in payment reference
-      if (purchase.payment_reference?.toLowerCase().includes(searchTerm))
-        return true;
-
-      return false;
-    });
-
-    setPurchases(filtered);
+      const updatedFilters = {
+        ...filters,
+        search,
+        page: 1,
+      };
+      setFilters(updatedFilters);
+      fetchPurchases(updatedFilters);
+    }, PURCHASE_SEARCH_DEBOUNCE_MS);
   };
 
-  // Apply client-side search when allPurchases changes
   useEffect(() => {
-    if (searchInput) {
-      handleSearchChange(searchInput);
-    }
-  }, [allPurchases]);
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, []);
 
   // Handle page change
   const handlePageChange = (page: number) => {
@@ -6510,7 +6517,7 @@ const PurchasesPage: React.FC = () => {
                       </InputGroup>
                     </Box>
 
-                    <Box minW="180px">
+                    <Box minW={{ base: "100%", md: "260px" }}>
                       <Text
                         fontSize="sm"
                         fontWeight="medium"
@@ -6519,20 +6526,28 @@ const PurchasesPage: React.FC = () => {
                       >
                         {t("purchases.filterByVendor")}
                       </Text>
-                      <Select
+                      <SearchableSelect
+                        options={vendors.map((vendor) => ({
+                          id: vendor.id,
+                          code: vendor.code,
+                          name: vendor.name,
+                          active: true,
+                        }))}
                         placeholder={t("purchases.allVendors")}
                         value={filters.vendor_id || ""}
-                        onChange={(e) =>
-                          handleFilterChange({ vendor_id: e.target.value })
+                        onChange={(value) =>
+                          handleFilterChange({
+                            vendor_id: value ? value.toString() : "",
+                          })
                         }
-                        bg={cardBg}
-                      >
-                        {vendors.map((vendor) => (
-                          <option key={vendor.id} value={vendor.id.toString()}>
-                            {vendor.name}
-                          </option>
-                        ))}
-                      </Select>
+                        isLoading={loadingVendors}
+                        displayFormat={(vendor) =>
+                          vendor.code
+                            ? `${vendor.code} - ${vendor.name}`
+                            : vendor.name
+                        }
+                        size="md"
+                      />
                     </Box>
 
                     <Box minW="160px">

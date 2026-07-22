@@ -19,6 +19,7 @@ import {
   MenuDivider,
   IconButton,
   HStack,
+  VStack,
   Spinner,
   useColorModeValue,
   TableContainer,
@@ -216,10 +217,17 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                         {purchase.code}
                       </Text>
                     </Td>
-                    <Td borderColor={borderColor} py={3}>
-                      <Text fontWeight="medium" color={primaryTextColor} fontSize="sm">
-                        {purchase.vendor?.name || 'N/A'}
-                      </Text>
+                    <Td borderColor={borderColor} py={3} minW="180px">
+                      <VStack align="start" spacing={0}>
+                        <Text fontWeight="medium" color={primaryTextColor} fontSize="sm" noOfLines={2}>
+                          {purchase.vendor?.name || 'N/A'}
+                        </Text>
+                        {purchase.vendor?.code && (
+                          <Text fontSize="xs" color={textColor} fontFamily="mono">
+                            {purchase.vendor.code}
+                          </Text>
+                        )}
+                      </VStack>
                     </Td>
                     <Td borderColor={borderColor} py={3} minW="190px">
                       {purchase.purchase_request_id || purchase.project_id ? (

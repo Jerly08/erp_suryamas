@@ -66,6 +66,7 @@ import Layout from "@/components/layout/Layout";
 import ProtectedModule from "@/components/common/ProtectedModule";
 import { usePermissions } from "@/hooks/usePermissions";
 import CurrencyInput from "@/components/common/CurrencyInput";
+import SearchableSelect from "@/components/common/SearchableSelect";
 import {
   purchaseRequestService,
   PurchaseRequest,
@@ -196,6 +197,7 @@ export default function PurchaseRequestsPage() {
   const [products, setProducts] = useState<any[]>([]); // simplified type for catalogue items
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [vendorFilter, setVendorFilter] = useState("");
   const [progressFilter, setProgressFilter] =
     useState<PurchaseRequestProgressFilter>("");
   const [startDateFilter, setStartDateFilter] = useState("");
@@ -2355,11 +2357,16 @@ export default function PurchaseRequestsPage() {
     Boolean(startDateFilter && endDateFilter) && startDateFilter > endDateFilter;
 
   const hasActiveFilters = Boolean(
-    searchQuery || progressFilter || startDateFilter || endDateFilter,
+    searchQuery ||
+      vendorFilter ||
+      progressFilter ||
+      startDateFilter ||
+      endDateFilter,
   );
 
   const handleClearFilters = () => {
     setSearchQuery("");
+    setVendorFilter("");
     setProgressFilter("");
     setStartDateFilter("");
     setEndDateFilter("");
@@ -2387,9 +2394,14 @@ export default function PurchaseRequestsPage() {
       r.pr_number.toLowerCase().includes(normalizedSearch) ||
       getPurchaseRequestTitle(r).toLowerCase().includes(normalizedSearch) ||
       (r.vendor?.name || "").toLowerCase().includes(normalizedSearch) ||
+      (r.vendor?.code || "").toLowerCase().includes(normalizedSearch) ||
       (r.project?.name || "").toLowerCase().includes(normalizedSearch) ||
       (r.project?.code || "").toLowerCase().includes(normalizedSearch) ||
       requesterSearchText.includes(normalizedSearch);
+    const matchesVendor =
+      !vendorFilter ||
+      r.vendor_id?.toString() === vendorFilter ||
+      r.vendor?.id?.toString() === vendorFilter;
 
     const requestDate = getDateKey(r.created_at);
     const matchesStartDate =
@@ -2399,6 +2411,7 @@ export default function PurchaseRequestsPage() {
 
     return (
       matchesSearch &&
+      matchesVendor &&
       matchesProgressFilter(r) &&
       !isDateRangeInvalid &&
       matchesStartDate &&
@@ -2415,7 +2428,14 @@ export default function PurchaseRequestsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, progressFilter, startDateFilter, endDateFilter, pageSize]);
+  }, [
+    searchQuery,
+    vendorFilter,
+    progressFilter,
+    startDateFilter,
+    endDateFilter,
+    pageSize,
+  ]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -2792,12 +2812,37 @@ export default function PurchaseRequestsPage() {
                     _focusVisible={fieldFocusStyles}
                     _placeholder={{ color: mutedTextColor }}
 	                  />
-	                </InputGroup>
-	              </FormControl>
+		                </InputGroup>
+		              </FormControl>
 
-	              <FormControl maxW={{ base: "100%", md: "260px" }}>
-	                <FormLabel fontSize="sm" color={mutedTextColor}>
-	                  Progress
+              <FormControl maxW={{ base: "100%", md: "260px" }}>
+                <FormLabel fontSize="sm" color={mutedTextColor}>
+                  Vendor
+                </FormLabel>
+                <SearchableSelect
+                  options={vendors.map((vendor) => ({
+                    id: vendor.id,
+                    code: vendor.code,
+                    name: vendor.name,
+                    active: vendor.is_active,
+                  }))}
+                  placeholder="Semua Vendor"
+                  value={vendorFilter}
+                  onChange={(value) =>
+                    setVendorFilter(value ? value.toString() : "")
+                  }
+                  displayFormat={(vendor) =>
+                    vendor.code
+                      ? `${vendor.code} - ${vendor.name}`
+                      : vendor.name
+                  }
+                  size="md"
+                />
+              </FormControl>
+
+		              <FormControl maxW={{ base: "100%", md: "260px" }}>
+		                <FormLabel fontSize="sm" color={mutedTextColor}>
+		                  Progress
 	                </FormLabel>
 	                <Select
 	                  value={progressFilter}
@@ -3136,24 +3181,26 @@ export default function PurchaseRequestsPage() {
                 </FormControl>
                 <FormControl>
                   <FormLabel color={textColor}>Vendor Name</FormLabel>
-	                  <Select
-	                    placeholder="-- Pilih Vendor (Opsional) --"
-	                    value={vendorId}
-	                    onChange={(e) => handleVendorChange(e.target.value)}
-	                    bg={inputBg}
-	                    borderColor={inputBorderColor}
-	                    color={textColor}
-                    _hover={{ borderColor: inputBorderColor }}
-                    _focusVisible={fieldFocusStyles}
-                  >
-                    {vendors.map((vendor) => (
-                      <option key={vendor.id} value={vendor.id}>
-                        {vendor.name}
-                        {vendor.code ? ` - ${vendor.code}` : ""}
-                      </option>
-	                    ))}
-	                  </Select>
-	                </FormControl>
+                  <SearchableSelect
+                    options={vendors.map((vendor) => ({
+                      id: vendor.id,
+                      code: vendor.code,
+                      name: vendor.name,
+                      active: vendor.is_active,
+                    }))}
+                    placeholder="-- Pilih Vendor (Opsional) --"
+                    value={vendorId}
+                    onChange={(value) =>
+                      handleVendorChange(value ? value.toString() : "")
+                    }
+                    displayFormat={(vendor) =>
+                      vendor.code
+                        ? `${vendor.code} - ${vendor.name}`
+                        : vendor.name
+                    }
+                    size="md"
+                  />
+		                </FormControl>
 	                <FormControl>
 	                  <FormLabel color={textColor}>
 	                    Tanggal Terima Invoice Vendor
