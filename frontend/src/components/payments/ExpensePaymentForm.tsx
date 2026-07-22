@@ -148,6 +148,18 @@ const PPH_TYPES = [
   { value: 'PPH_22', label: 'PPh 22 - Pembelian Barang', defaultRate: 1.5 },
 ];
 
+const isEmployeeLoanAccount = (account: AccountCatalogItem) => {
+  const label = `${account.code} ${account.name}`.toLowerCase();
+  return account.code === '1107-001' || (label.includes('pinjaman') && label.includes('karyawan'));
+};
+
+const isIntercompanyReceivableAccount = (account: AccountCatalogItem) => {
+  const label = `${account.code} ${account.name}`.toLowerCase();
+  return label.includes('intercompany') ||
+    (label.includes('antar') && label.includes('perusahaan')) ||
+    (label.includes('piutang') && label.includes('afiliasi'));
+};
+
 // For expense payments we only support two methods: Cash and Bank Transfer
 const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Cash', icon: FiDollarSign },
@@ -188,6 +200,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const [expenseAccounts, setExpenseAccounts] = useState<AccountCatalogItem[]>([]);
   const [liabilityAccounts, setLiabilityAccounts] = useState<AccountCatalogItem[]>([]);
   const [employeeLoanAccounts, setEmployeeLoanAccounts] = useState<AccountCatalogItem[]>([]);
+  const [intercompanyReceivableAccounts, setIntercompanyReceivableAccounts] = useState<AccountCatalogItem[]>([]);
   const [defaultExpenseAccountId, setDefaultExpenseAccountId] = useState<number | null>(null);
   const [defaultExpenseAccountLabel, setDefaultExpenseAccountLabel] = useState('');
   const [cashBanks, setCashBanks] = useState<CashBank[]>([]);
@@ -242,7 +255,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     : 0;
   const netPayment = amount - pphAmount;
 
-  const selectedAccount = [...expenseAccounts, ...liabilityAccounts, ...employeeLoanAccounts].find(
+  const selectedAccount = [
+    ...expenseAccounts,
+    ...liabilityAccounts,
+    ...employeeLoanAccounts,
+    ...intercompanyReceivableAccounts,
+  ].find(
     acc => acc.id === Number(selectedAccountId)
   );
   const selectedLiabilityAccount = liabilityAccounts.find(
@@ -251,8 +269,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const selectedEmployeeLoanAccount = employeeLoanAccounts.find(
     acc => acc.id === Number(selectedAccountId)
   );
+  const selectedIntercompanyReceivableAccount = intercompanyReceivableAccounts.find(
+    acc => acc.id === Number(selectedAccountId)
+  );
   const isSelectedLiabilityAccount = !!selectedLiabilityAccount;
   const isSelectedEmployeeLoanAccount = !!selectedEmployeeLoanAccount;
+  const isSelectedReceivableAssetAccount = !!selectedEmployeeLoanAccount || !!selectedIntercompanyReceivableAccount;
   const isPayrollPPhAccount = selectedAccount?.code === '2102-003';
   const selectedPayrollRun = openPayrollPPh.find((payroll) => payroll.id === selectedPayrollRunId);
   const selectedLiabilityBalance = Number(selectedLiabilityAccount?.balance || 0);
@@ -414,16 +436,16 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   }, [isOpen, initialData, setValue, reset]);
 
   useEffect(() => {
-    if (!isSelectedLiabilityAccount && !isSelectedEmployeeLoanAccount && enablePPH) {
+    if (!isSelectedLiabilityAccount && !isSelectedReceivableAssetAccount && enablePPH) {
       return;
     }
 
-    if ((isSelectedLiabilityAccount || isSelectedEmployeeLoanAccount) && enablePPH) {
+    if ((isSelectedLiabilityAccount || isSelectedReceivableAssetAccount) && enablePPH) {
       setValue('enable_pph', false);
       setValue('pph_type', '');
       setValue('pph_rate', 0);
     }
-  }, [isSelectedLiabilityAccount, isSelectedEmployeeLoanAccount, enablePPH, setValue]);
+  }, [isSelectedLiabilityAccount, isSelectedReceivableAssetAccount, enablePPH, setValue]);
 
   useEffect(() => {
     if (!selectedAccount) {
@@ -557,10 +579,11 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       const activeLiabilityAccounts = filterActiveLeafAccounts(liabilityData);
 
       const assetData = await accountService.getAccountCatalog(token, 'ASSET');
-      const activeEmployeeLoanAccounts = filterActiveLeafAccounts(assetData).filter((account) => {
-        const label = `${account.code} ${account.name}`.toLowerCase();
-        return account.code === '1107-001' || (label.includes('pinjaman') && label.includes('karyawan'));
-      });
+      const activeAssetAccounts = filterActiveLeafAccounts(assetData);
+      const activeEmployeeLoanAccounts = activeAssetAccounts.filter(isEmployeeLoanAccount);
+      const activeIntercompanyReceivableAccounts = activeAssetAccounts.filter(
+        (account) => isIntercompanyReceivableAccount(account) && !isEmployeeLoanAccount(account),
+      );
 
       const fallbackExpenseAccount =
         activeExpenseAccounts[0] || activeLiabilityAccounts[0] || null;
@@ -579,6 +602,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       );
       setEmployeeLoanAccounts(
         canSelectExpenseAccountFromCOA ? activeEmployeeLoanAccounts : [],
+      );
+      setIntercompanyReceivableAccounts(
+        canSelectExpenseAccountFromCOA ? activeIntercompanyReceivableAccounts : [],
       );
 
       // Load cash/bank accounts that can be used for payments
@@ -632,8 +658,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       if (isSelectedLiabilityAccount && data.enable_pph) {
         throw new Error('Pemotongan PPh hanya untuk akun beban langsung. Untuk pelunasan hutang/liability, matikan opsi PPh.');
       }
-      if (isSelectedEmployeeLoanAccount && data.enable_pph) {
-        throw new Error('Pemotongan PPh tidak berlaku untuk pencairan pinjaman karyawan.');
+      if (isSelectedReceivableAssetAccount && data.enable_pph) {
+        throw new Error('Pemotongan PPh tidak berlaku untuk pembayaran ke akun aset/piutang.');
       }
 
       if (isPayrollPPhAccount) {
@@ -641,7 +667,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           throw new Error('Draft pembayaran PPh payroll lama tidak dapat dialihkan. Buat settlement payroll baru.');
         }
         if (!isFinanceManagerSubmitter) {
-          throw new Error('Settlement PPh payroll dari halaman Expense Payment hanya dapat diposting oleh Finance Manager.');
+          throw new Error('Settlement PPh payroll dari halaman Pembayaran COA hanya dapat diposting oleh Finance Manager.');
         }
         if (!selectedPayrollRun) {
           throw new Error('Pilih kewajiban payroll yang akan dilunasi.');
@@ -659,7 +685,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         });
         toast({
           title: 'PPh payroll berhasil dibayar',
-          description: `Settlement ${selectedPayrollRun.payroll_number} diposting melalui Expense Payment tanpa membuat jurnal ganda.`,
+          description: `Settlement ${selectedPayrollRun.payroll_number} diposting melalui Pembayaran COA tanpa membuat jurnal ganda.`,
           status: 'success',
           duration: 4000,
         });
@@ -685,7 +711,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
           data.notes ||
           data.description ||
           `Payment for ${selectedAccount?.code || ''} ${selectedAccount?.name || 'Expense'}`.trim(),
-        description: data.description || selectedAccount?.name || 'Expense Payment',
+        description: data.description || selectedAccount?.name || 'COA / Non-Invoice Payment',
         auto_create_journal: true,
         require_director_approval: !!data.require_director_approval,
         allow_liability_overpayment: isLiabilityOverpayment && !!data.allow_liability_overpayment,
@@ -811,7 +837,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     </FormHelperText>
                   </FormControl>
 
-                  {/* Expense/Liability Account Selection */}
+                  {/* Contra account selection */}
                   <FormControl
                     isInvalid={!!errors.expense_account_id}
                     isRequired={canSelectExpenseAccountFromCOA}
@@ -819,7 +845,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormLabel color={labelColor}>
                       <HStack spacing={1}>
                         <Icon as={FiBookOpen} />
-                        <Text>Expense / Liability / Pinjaman Karyawan</Text>
+                        <Text>{t('payments.form.transactionCOA')}</Text>
                         <Tooltip label={t('payments.form.expenseAccountTooltip')}>
                           <Icon as={FiInfo} boxSize={3} color={textColor} />
                         </Tooltip>
@@ -875,6 +901,18 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                               ))}
                             </>
                           )}
+                          {intercompanyReceivableAccounts.length > 0 && (
+                            <>
+                              <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
+                                ── {t('payments.form.receivableAssetAccounts')} ──
+                              </option>
+                              {intercompanyReceivableAccounts.map(account => (
+                                <option key={account.id} value={account.id}>
+                                  {account.code} - {account.name} | Saldo: {formatIDR(Number(account.balance || 0))}
+                                </option>
+                              ))}
+                            </>
+                          )}
                         </Select>
                       ) : (
                         <Box
@@ -897,7 +935,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
                     <FormHelperText color={textColor}>
                       {canSelectExpenseAccountFromCOA
-                        ? 'Gunakan akun beban untuk pembayaran langsung, akun kewajiban untuk pelunasan liability, atau Pinjaman Karyawan untuk mencairkan pinjaman ke karyawan.'
+                        ? 'Pilih akun lawan kas/bank: beban, kewajiban, pinjaman karyawan, atau piutang intercompany untuk pembayaran non-invoice.'
                         : 'User ini tidak memilih COA manual. Sistem akan memakai akun beban default.'}
                     </FormHelperText>
                   </FormControl>
@@ -979,6 +1017,23 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                           <AlertIcon />
                           <AlertDescription fontSize="sm">
                             Jurnal pencairan: Debit {selectedEmployeeLoanAccount.code} - {selectedEmployeeLoanAccount.name} dan Credit kas/bank. Pelunasan lewat payroll akan mengkredit akun ini.
+                          </AlertDescription>
+                        </Alert>
+                      </VStack>
+                    </Box>
+                  )}
+
+                  {selectedIntercompanyReceivableAccount && (
+                    <Box width="full" p={3} borderRadius="md" bg={selectedAccountBg} borderWidth={1} borderColor={borderColor}>
+                      <VStack spacing={2} align="stretch" fontSize="sm">
+                        <HStack justify="space-between">
+                          <Text color={textColor}>Saldo piutang/intercompany tercatat</Text>
+                          <Text fontWeight="bold">{formatIDR(Number(selectedIntercompanyReceivableAccount.balance || 0))}</Text>
+                        </HStack>
+                        <Alert status="info" borderRadius="md" py={2}>
+                          <AlertIcon />
+                          <AlertDescription fontSize="sm">
+                            Jurnal pembayaran keluar: Debit {selectedIntercompanyReceivableAccount.code} - {selectedIntercompanyReceivableAccount.name} dan Credit kas/bank.
                           </AlertDescription>
                         </Alert>
                       </VStack>
@@ -1231,7 +1286,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                         <input
                           id="enable-pph"
                           type="checkbox"
-                          disabled={isSelectedLiabilityAccount || isSelectedEmployeeLoanAccount}
+                          disabled={isSelectedLiabilityAccount || isSelectedReceivableAssetAccount}
                           checked={field.value}
                           onChange={(e) => {
                             field.onChange(e.target.checked);
@@ -1245,12 +1300,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       )}
                     />
                   </FormControl>
-                  {(isSelectedLiabilityAccount || isSelectedEmployeeLoanAccount) && (
+                  {(isSelectedLiabilityAccount || isSelectedReceivableAssetAccount) && (
                     <Alert status="info" borderRadius="md" py={2}>
                       <AlertIcon />
                       <AlertDescription fontSize="sm">
-                        {isSelectedEmployeeLoanAccount
-                          ? 'PPh withholding dimatikan karena akun yang dipilih adalah Pinjaman Karyawan. Form ini mencatat pencairan pinjaman, bukan beban kena potong.'
+                        {isSelectedReceivableAssetAccount
+                          ? 'PPh withholding dimatikan karena akun yang dipilih adalah akun aset/piutang. Form ini mencatat mutasi piutang, bukan beban kena potong.'
                           : 'PPh withholding dimatikan karena akun yang dipilih adalah liability. Untuk setoran hutang PPh, gunakan nominal pembayaran saja tanpa potongan PPh tambahan.'}
                       </AlertDescription>
                     </Alert>
@@ -1415,7 +1470,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                 >
                   <HStack justify="space-between">
                     <Text fontSize="sm" color={textColor}>
-                      Selected Expense / Liability Account:
+                      COA transaksi terpilih:
                     </Text>
                     <Badge colorScheme="blue">
                       {selectedAccount.code} - {selectedAccount.name}

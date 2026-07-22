@@ -408,6 +408,18 @@ export interface SalesResult {
   total_pages: number;
 }
 
+interface PaginatedApiResponse<T> {
+  data?: T;
+  meta?: {
+    pagination?: {
+      page?: number;
+      limit?: number;
+      total?: number;
+      total_pages?: number;
+    };
+  };
+}
+
 export interface SalesSummary {
   total_sales: number;
   total_amount: number;
@@ -529,7 +541,28 @@ class SalesService {
     });
 
     const response = await api.get(`${API_ENDPOINTS.SALES}?${params}`);
-    return response.data;
+    const payload = response.data as SalesResult | PaginatedApiResponse<Sale[]>;
+    const pagination = (payload as PaginatedApiResponse<Sale[]>).meta?.pagination;
+
+    if (pagination) {
+      const data = Array.isArray((payload as PaginatedApiResponse<Sale[]>).data)
+        ? (payload as PaginatedApiResponse<Sale[]>).data || []
+        : [];
+      const limit = Number(pagination.limit || filter.limit || 10);
+      const total = Number(pagination.total || data.length || 0);
+
+      return {
+        data,
+        total,
+        page: Number(pagination.page || filter.page || 1),
+        limit,
+        total_pages: Number(
+          pagination.total_pages || Math.max(1, Math.ceil(total / limit)),
+        ),
+      };
+    }
+
+    return payload as SalesResult;
   }
 
   async getSale(id: number): Promise<Sale> {

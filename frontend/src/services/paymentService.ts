@@ -910,7 +910,7 @@ class PaymentService {
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
-        description: data.description || 'Expense Payment',
+        description: data.description || 'COA / Non-Invoice Payment',
         payment_type: 'EXPENSE',
         auto_create_journal: data.auto_create_journal ?? true,
         require_director_approval: !!data.require_director_approval,

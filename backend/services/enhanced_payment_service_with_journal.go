@@ -248,16 +248,37 @@ func isEmployeeLoanReceivableAccount(account models.Account) bool {
 	return strings.Contains(name, "pinjaman") && strings.Contains(name, "karyawan")
 }
 
+func isIntercompanyReceivableAccount(account models.Account) bool {
+	if account.Type != models.AccountTypeAsset {
+		return false
+	}
+	label := strings.ToLower(strings.TrimSpace(account.Code + " " + account.Name))
+	return strings.Contains(label, "intercompany") ||
+		(strings.Contains(label, "antar") && strings.Contains(label, "perusahaan")) ||
+		(strings.Contains(label, "piutang") && strings.Contains(label, "afiliasi"))
+}
+
+func isAllowedDirectPaymentAssetAccount(account models.Account) bool {
+	return isEmployeeLoanReceivableAccount(account) ||
+		isIntercompanyReceivableAccount(account)
+}
+
 func isAllowedExpensePaymentAccount(account models.Account) bool {
+	if account.IsHeader {
+		return false
+	}
 	return account.Type == models.AccountTypeExpense ||
 		account.Type == models.AccountTypeLiability ||
-		isEmployeeLoanReceivableAccount(account)
+		isAllowedDirectPaymentAssetAccount(account)
 }
 
 func validateExpensePaymentAccountUsage(account models.Account, amount, pphAmount float64, allowLiabilityOverpayment bool) error {
-	if isEmployeeLoanReceivableAccount(account) {
+	if account.Type == models.AccountTypeAsset {
+		if !isAllowedDirectPaymentAssetAccount(account) {
+			return fmt.Errorf("akun aset %s - %s tidak dapat dipakai sebagai COA transaksi pembayaran non-invoice; gunakan akun piutang intercompany atau pinjaman karyawan", account.Code, account.Name)
+		}
 		if pphAmount > 0 {
-			return fmt.Errorf("PPh withholding tidak berlaku untuk pencairan Pinjaman Karyawan")
+			return fmt.Errorf("PPh withholding tidak berlaku untuk pembayaran ke akun aset/piutang")
 		}
 		return nil
 	}
@@ -318,7 +339,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 		req.Method = models.PaymentMethodBankTransfer
 	}
 	if req.Description == "" {
-		req.Description = "Expense Payment"
+		req.Description = "COA / Non-Invoice Payment"
 	}
 	if req.ExpenseAccountID == 0 {
 		defaultExpenseAccountID, err := findDefaultExpenseAccountID(eps.db)
@@ -352,7 +373,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			return fmt.Errorf("expense account not found: %w", err)
 		}
 		if !isAllowedExpensePaymentAccount(expenseAccount) {
-			return fmt.Errorf("expense payment account must be EXPENSE, LIABILITY, or PINJAMAN KARYAWAN asset, got %s", expenseAccount.Type)
+			return fmt.Errorf("COA transaksi pembayaran non-invoice harus akun beban, kewajiban, pinjaman karyawan, atau piutang intercompany; got %s", expenseAccount.Type)
 		}
 		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
 			return err
@@ -482,13 +503,13 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 					AccountID:    uint64(expenseAccount.ID),
 					DebitAmount:  grossAmount,
 					CreditAmount: decimal.Zero,
-					Description:  fmt.Sprintf("Expense Payment %s - %s", payment.Code, req.Description),
+					Description:  fmt.Sprintf("COA Payment %s - %s", payment.Code, req.Description),
 				},
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
 					CreditAmount: bankCreditAmount,
-					Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
+					Description:  fmt.Sprintf("COA Payment %s - Cash/Bank", payment.Code),
 				},
 			}
 		}
@@ -555,7 +576,7 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			return fmt.Errorf("expense account not found: %w", err)
 		}
 		if !isAllowedExpensePaymentAccount(expenseAccount) {
-			return fmt.Errorf("expense payment account must be EXPENSE, LIABILITY, or PINJAMAN KARYAWAN asset, got %s", expenseAccount.Type)
+			return fmt.Errorf("COA transaksi pembayaran non-invoice harus akun beban, kewajiban, pinjaman karyawan, atau piutang intercompany; got %s", expenseAccount.Type)
 		}
 		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
 			return err
@@ -716,7 +737,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 			return fmt.Errorf("expense account not found: %w", err)
 		}
 		if !isAllowedExpensePaymentAccount(expenseAccount) {
-			return fmt.Errorf("expense payment account must be EXPENSE, LIABILITY, or PINJAMAN KARYAWAN asset, got %s", expenseAccount.Type)
+			return fmt.Errorf("COA transaksi pembayaran non-invoice harus akun beban, kewajiban, pinjaman karyawan, atau piutang intercompany; got %s", expenseAccount.Type)
 		}
 		allowLiabilityOverpayment := models.HasExpenseLiabilityOverpaymentReference(payment.Reference)
 		if err := validateExpensePaymentAccountUsage(expenseAccount, payment.Amount, payment.PPHAmount, allowLiabilityOverpayment); err != nil {
@@ -775,13 +796,13 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 					AccountID:    uint64(expenseAccount.ID),
 					DebitAmount:  grossAmount,
 					CreditAmount: decimal.Zero,
-					Description:  fmt.Sprintf("Expense Payment %s - %s", payment.Code, expenseAccount.Name),
+					Description:  fmt.Sprintf("COA Payment %s - %s", payment.Code, expenseAccount.Name),
 				},
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
 					CreditAmount: bankCreditAmount,
-					Description:  fmt.Sprintf("Expense Payment %s - Cash/Bank", payment.Code),
+					Description:  fmt.Sprintf("COA Payment %s - Cash/Bank", payment.Code),
 				},
 			}
 		}
@@ -796,7 +817,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 			SourceID:    uint64(payment.ID),
 			Reference:   payment.Code,
 			EntryDate:   payment.Date,
-			Description: fmt.Sprintf("Expense Payment approved - %s", payment.Code),
+			Description: fmt.Sprintf("COA payment approved - %s", payment.Code),
 			Lines:       journalLines,
 			AutoPost:    true,
 			CreatedBy:   uint64(approverUserID),

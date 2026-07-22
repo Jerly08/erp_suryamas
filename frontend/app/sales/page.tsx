@@ -71,6 +71,8 @@ import {
   FiSettings,
   FiChevronLeft,
   FiChevronRight,
+  FiChevronsLeft,
+  FiChevronsRight,
   FiHash,
   FiSave,
   FiX,
@@ -347,6 +349,22 @@ const SalesPageContent: React.FC = () => {
 
   const handlePageSizeChange = (limit: number) => {
     loadSales({ limit, page: 1 });
+  };
+
+  const getVisiblePageNumbers = () => {
+    const totalPages = Math.max(state.pagination.totalPages, 1);
+    const currentPage = Math.min(Math.max(state.pagination.page, 1), totalPages);
+    const maxButtons = 5;
+    const startPage = Math.max(
+      1,
+      Math.min(currentPage - Math.floor(maxButtons / 2), totalPages - maxButtons + 1),
+    );
+    const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+
+    return Array.from(
+      { length: endPage - startPage + 1 },
+      (_, index) => startPage + index,
+    );
   };
 
   const handleOpenSalesCounter = () => {
@@ -931,15 +949,22 @@ const SalesPageContent: React.FC = () => {
             direction={{ base: "column", md: "row" }}
             gap={3}
           >
-            <Text fontSize="sm" color={textColor}>
-              Menampilkan{" "}
-              {(state.pagination.page - 1) * state.pagination.limit + 1}-
-              {Math.min(
-                state.pagination.page * state.pagination.limit,
-                state.pagination.total,
-              )}{" "}
-              dari {state.pagination.total} sales
-            </Text>
+            <VStack align={{ base: "stretch", md: "start" }} spacing={0}>
+              <Text fontSize="sm" color={textColor}>
+                Menampilkan{" "}
+                {(state.pagination.page - 1) * state.pagination.limit + 1}-
+                {Math.min(
+                  state.pagination.page * state.pagination.limit,
+                  state.pagination.total,
+                )}{" "}
+                dari {state.pagination.total} sales
+              </Text>
+              {state.pagination.totalPages > 1 && (
+                <Text fontSize="xs" color={textColor}>
+                  Total {state.pagination.totalPages} halaman penjualan.
+                </Text>
+              )}
+            </VStack>
             <Flex align="center" gap={2} wrap="wrap">
               <Text fontSize="sm" color={textColor}>
                 Rows
@@ -958,15 +983,38 @@ const SalesPageContent: React.FC = () => {
               <Button
                 size="sm"
                 variant="outline"
+                leftIcon={<FiChevronsLeft />}
+                onClick={() => handlePageChange(1)}
+                isDisabled={state.loading || state.pagination.page <= 1}
+              >
+                Awal
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 leftIcon={<FiChevronLeft />}
                 onClick={() => handlePageChange(state.pagination.page - 1)}
                 isDisabled={state.loading || state.pagination.page <= 1}
               >
                 Prev
               </Button>
-              <Text fontSize="sm" color={textColor}>
-                Halaman {state.pagination.page} / {state.pagination.totalPages}
-              </Text>
+              {getVisiblePageNumbers().map((pageNumber) => (
+                <Button
+                  key={pageNumber}
+                  size="sm"
+                  variant={
+                    pageNumber === state.pagination.page ? "solid" : "outline"
+                  }
+                  colorScheme={
+                    pageNumber === state.pagination.page ? "blue" : undefined
+                  }
+                  onClick={() => handlePageChange(pageNumber)}
+                  isDisabled={state.loading}
+                  minW="36px"
+                >
+                  {pageNumber}
+                </Button>
+              ))}
               <Button
                 size="sm"
                 variant="outline"
@@ -978,6 +1026,18 @@ const SalesPageContent: React.FC = () => {
                 }
               >
                 Next
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                rightIcon={<FiChevronsRight />}
+                onClick={() => handlePageChange(state.pagination.totalPages)}
+                isDisabled={
+                  state.loading ||
+                  state.pagination.page >= state.pagination.totalPages
+                }
+              >
+                Akhir
               </Button>
             </Flex>
           </Flex>

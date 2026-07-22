@@ -99,6 +99,30 @@ func TestEmployeeLoanReceivableAccountRejectsPPhWithholding(t *testing.T) {
 	require.Contains(t, err.Error(), "PPh withholding")
 }
 
+func TestIntercompanyReceivableAccountIsAllowedForDirectCOAPayment(t *testing.T) {
+	account := models.Account{
+		Code: "1107-002",
+		Name: "PIUTANG INTERCOMPANY",
+		Type: models.AccountTypeAsset,
+	}
+
+	require.True(t, isAllowedExpensePaymentAccount(account))
+	require.NoError(t, validateExpensePaymentAccountUsage(account, 350000000, 0, false))
+}
+
+func TestIntercompanyReceivableAccountRejectsPPhWithholding(t *testing.T) {
+	account := models.Account{
+		Code: "1107-002",
+		Name: "PIUTANG INTERCOMPANY",
+		Type: models.AccountTypeAsset,
+	}
+
+	err := validateExpensePaymentAccountUsage(account, 350000000, 1000, false)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PPh withholding")
+}
+
 func TestOtherAssetAccountIsNotAllowedForExpensePayment(t *testing.T) {
 	account := models.Account{
 		Code: "1102-001",
