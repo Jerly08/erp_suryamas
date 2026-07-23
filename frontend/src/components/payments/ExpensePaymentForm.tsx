@@ -765,9 +765,19 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="xl" closeOnOverlayClick={false}>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      size="xl"
+      closeOnOverlayClick={false}
+      scrollBehavior="inside"
+    >
       <ModalOverlay />
-      <ModalContent bg={bgColor}>
+      <ModalContent
+        bg={bgColor}
+        maxH={{ base: 'calc(100dvh - 1rem)', md: 'calc(100vh - 3rem)' }}
+        overflow="hidden"
+      >
         <ModalHeader>
           <HStack>
             <Icon as={FiBriefcase} />
@@ -776,8 +786,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         </ModalHeader>
         <ModalCloseButton />
 
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <ModalBody>
+        <Box
+          as="form"
+          onSubmit={handleSubmit(onSubmit)}
+          display="flex"
+          flexDirection="column"
+          flex="1"
+          minH={0}
+        >
+          <ModalBody overflowY="auto" overscrollBehavior="contain" flex="1">
             <VStack spacing={4}>
               {/* Info Alert */}
               <Alert status="info" borderRadius="md">
@@ -1481,7 +1498,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
             </VStack>
           </ModalBody>
 
-          <ModalFooter>
+          <ModalFooter borderTopWidth="1px" borderColor={borderColor}>
             <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={loading}>
               {t('common.cancel')}
             </Button>
@@ -1495,7 +1512,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               {isFinanceManagerSubmitter ? t('payments.form.createExpensePayment') : 'Submit for Approval'}
             </Button>
           </ModalFooter>
-        </form>
+        </Box>
       </ModalContent>
     </Modal>
   );
