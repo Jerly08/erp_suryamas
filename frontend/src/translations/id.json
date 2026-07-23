@@ -1246,12 +1246,12 @@
     },
     "stats": {
       "totalSales": "Total Penjualan",
-      "totalRevenue": "Total Pendapatan",
+      "totalRevenue": "Nilai Penjualan",
       "outstanding": "Belum Dibayar",
       "avgOrderValue": "Rata-rata Nilai Order",
       "transactionsThisPeriod": "Transaksi periode ini",
-      "grossRevenue": "Pendapatan kotor",
-      "unpaidInvoices": "Invoice belum dibayar",
+      "grossRevenue": "Total nilai transaksi",
+      "unpaidInvoices": "Nilai belum dibayar",
       "perTransaction": "Per transaksi"
     },
     "table": {

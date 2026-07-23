@@ -1477,12 +1477,12 @@
     },
     "stats": {
       "totalSales": "Total Sales",
-      "totalRevenue": "Total Revenue",
+      "totalRevenue": "Sales Value",
       "outstanding": "Outstanding",
       "avgOrderValue": "Avg Order Value",
       "transactionsThisPeriod": "Transactions this period",
-      "grossRevenue": "Gross revenue",
-      "unpaidInvoices": "Unpaid invoices",
+      "grossRevenue": "Total transaction value",
+      "unpaidInvoices": "Outstanding amount",
       "perTransaction": "Per transaction"
     },
     "table": {

@@ -2381,7 +2381,7 @@ func (s *SalesServiceV2) applySalesSummaryFilter(query *gorm.DB, filter models.S
 			query = query.Where("sales.status = ?", filter.Status)
 		}
 	} else {
-		query = query.Where("sales.status IN ?", []string{models.SaleStatusInvoiced, models.SaleStatusOverdue, models.SaleStatusPaid})
+		query = query.Where("sales.status <> ?", models.SaleStatusCancelled)
 	}
 
 	if filter.CustomerID != "" {
