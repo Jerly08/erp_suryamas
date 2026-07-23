@@ -588,27 +588,16 @@ const AccountsPage = () => {
                       <Divider />
 
                       <Box>
-                        <Text fontWeight="semibold" color="purple.600" mb={2}>🔧 {t('accounts.guide.ifDeleted')}</Text>
-                        <Text fontSize="sm" mb={2} color="red.600">
-                          ⚠️ <strong>{t('accounts.guide.hardcodedWarning')}</strong>
+                        <Text fontWeight="semibold" color="purple.600" mb={2}>🔧 {t('accounts.guide.operationalMapping')}</Text>
+                        <Text fontSize="sm" mb={2}>
+                          {t('accounts.guide.mappingIntro')}
                         </Text>
-                        <Text fontSize="sm" fontWeight="semibold" mb={1}>{t('accounts.guide.hardcodedAccounts')}</Text>
-                        <UnorderedList spacing={1} fontSize="sm" mb={2}>
-                          <ListItem><Code>1101 - {t('accounts.guide.cash')}</Code> (Asset, type: Asset)</ListItem>
-                          <ListItem><Code>1101-003 - BANK GIRO</Code> (Asset, type: Asset)</ListItem>
-                          <ListItem><Code>1102 - PIUTANG USAHA</Code> (Asset, type: Asset)</ListItem>
-                          <ListItem><Code>1105-005 - {t('accounts.guide.vatInput')}</Code> (Asset, type: Asset)</ListItem>
-                          <ListItem><Code>2102-001 - {t('accounts.guide.vatOutput')}</Code> (Liability, type: Liability)</ListItem>
-                          <ListItem><Code>4101 - {t('accounts.guide.salesRevenue')}</Code> (Revenue, type: Revenue)</ListItem>
-                          <ListItem><Code>5101 - {t('accounts.guide.costOfGoodsSold')}</Code> (Expense, type: Expense)</ListItem>
-                        </UnorderedList>
-                        <Text fontSize="sm" fontWeight="semibold" mb={1}>{t('accounts.guide.howToRecreate')}</Text>
-                        <UnorderedList spacing={1} fontSize="sm" mt={1}>
-                          <ListItem>{t('accounts.guide.recreate1')}</ListItem>
-                          <ListItem>{t('accounts.guide.recreate2')}</ListItem>
-                          <ListItem>{t('accounts.guide.recreate3')}</ListItem>
-                          <ListItem>{t('accounts.guide.recreate4')}</ListItem>
-                          <ListItem>{t('accounts.guide.recreate5')}</ListItem>
+                        <UnorderedList spacing={1} fontSize="sm">
+                          <ListItem>{t('accounts.guide.taxMappingTip')}</ListItem>
+                          <ListItem>{t('accounts.guide.cashBankMappingTip')}</ListItem>
+                          <ListItem>{t('accounts.guide.assetMappingTip')}</ListItem>
+                          <ListItem>{t('accounts.guide.payrollMappingTip')}</ListItem>
+                          <ListItem>{t('accounts.guide.deactivateInsteadDelete')}</ListItem>
                         </UnorderedList>
                       </Box>
 
@@ -674,10 +663,10 @@ const AccountsPage = () => {
           </Flex>
 
           {/* Info Banner */}
-          <Alert status="warning" mb={4} borderRadius="md" variant="left-accent">
+          <Alert status="info" mb={4} borderRadius="md" variant="left-accent">
             <AlertIcon />
             <Box flex="1">
-              <AlertTitle fontSize="sm" mb={1}>⚠️ {t('accounts.guide.warningTitle')}</AlertTitle>
+              <AlertTitle fontSize="sm" mb={1}>{t('accounts.guide.warningTitle')}</AlertTitle>
               <AlertDescription fontSize="xs">
                 {t('accounts.guide.warningDesc')}
               </AlertDescription>

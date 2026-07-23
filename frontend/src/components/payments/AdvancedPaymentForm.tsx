@@ -1045,6 +1045,15 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                         </Alert>
                       )}
 
+                      {type === 'payable' && (
+                        <Alert status="info" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="sm">
+                            {t('payments.form.payableInvoicePaymentDescription')}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
                       {/* Contact Selection */}
                       <Card>
                         <CardBody>
@@ -1207,6 +1216,11 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                                 ))}
                               </Select>
                               <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
+                              {type === 'payable' && (
+                                <Text fontSize="xs" color={textColor} mt={2}>
+                                  {t('payments.form.payableCashBankHelper')}
+                                </Text>
+                              )}
                               {/* Real-time Balance Warning */}
                               {watchedCashBankId && (() => {
                                 const selectedAccount = cashBankAccounts.find(account => account.id === watchedCashBankId);
@@ -1540,7 +1554,6 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 };
 
 export default AdvancedPaymentForm;
-
 
 
 

@@ -152,6 +152,35 @@ export interface PayrollRun {
   documents?: PayrollDocument[];
 }
 
+export interface PayrollRunsSummary {
+  total_count: number;
+  total_salary: number;
+  total_bonus: number;
+  total_pph: number;
+  total_bpjs: number;
+  total_bpjs_employer?: number;
+  total_bpjs_employee?: number;
+  total_bpjs_ketenagakerjaan?: number;
+  total_bpjs_kesehatan?: number;
+  total_employee_loan_deduction?: number;
+  total_overall: number;
+}
+
+export interface PayrollRunsResult {
+  data: PayrollRun[];
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+  summary: PayrollRunsSummary;
+}
+
+export interface PayrollRunsFilter {
+  status?: string;
+  page?: number;
+  limit?: number;
+}
+
 export interface PayrollCreatePayload {
   period_start: string;
   period_end: string;
@@ -199,6 +228,19 @@ interface ApiEnvelope<T> {
   message?: string;
 }
 
+interface PayrollRunsApiResponse {
+  data?: PayrollRun[];
+  summary?: PayrollRunsSummary;
+  meta?: {
+    pagination?: {
+      page?: number;
+      limit?: number;
+      total?: number;
+      total_pages?: number;
+    };
+  };
+}
+
 const unwrapData = <T>(response: AxiosResponse<ApiEnvelope<T> | T>): T => {
   const body = response.data;
   if (body && typeof body === 'object' && 'data' in body) {
@@ -208,11 +250,75 @@ const unwrapData = <T>(response: AxiosResponse<ApiEnvelope<T> | T>): T => {
 };
 
 const payrollService = {
-  async getPayrollRuns(status?: string): Promise<PayrollRun[]> {
+  async getPayrollRuns(filter: PayrollRunsFilter = {}): Promise<PayrollRunsResult> {
+    const params: Record<string, string | number> = {
+      page: filter.page || 1,
+      limit: filter.limit || 10,
+    };
+    if (filter.status && filter.status !== 'ALL') {
+      params.status = filter.status;
+    }
+
     const response = await api.get('/api/v1/payroll', {
-      params: status && status !== 'ALL' ? { status } : undefined,
+      params,
     });
-    return unwrapData<PayrollRun[]>(response) || [];
+    const body = response.data as PayrollRunsApiResponse | PayrollRun[];
+    const data = Array.isArray(body)
+      ? body
+      : Array.isArray(body?.data)
+        ? body.data || []
+        : [];
+    const pagination = !Array.isArray(body) ? body.meta?.pagination : undefined;
+    const total = Number(pagination?.total ?? data.length);
+    const limit = Number(pagination?.limit ?? filter.limit ?? 10);
+    const page = Number(pagination?.page ?? filter.page ?? 1);
+    const totalPages = Number(
+      pagination?.total_pages ?? Math.max(1, Math.ceil(total / Math.max(limit, 1))),
+    );
+
+    return {
+      data,
+      page,
+      limit,
+      total,
+      total_pages: Math.max(1, totalPages),
+      summary: !Array.isArray(body) && body.summary
+        ? body.summary
+        : {
+          total_count: total,
+          total_salary: data.reduce((sum, payroll) => sum + Number(payroll.total_salary || 0), 0),
+          total_bonus: data.reduce((sum, payroll) => sum + Number(payroll.total_bonus || 0), 0),
+          total_pph: data.reduce((sum, payroll) => sum + Number(payroll.total_pph || 0), 0),
+          total_bpjs: data.reduce((sum, payroll) => sum + Number(payroll.total_bpjs || 0), 0),
+          total_bpjs_employer: data.reduce((sum, payroll) => sum + Number(payroll.total_bpjs_employer || 0), 0),
+          total_bpjs_employee: data.reduce((sum, payroll) => sum + Number(payroll.total_bpjs_employee || 0), 0),
+          total_bpjs_ketenagakerjaan: data.reduce((sum, payroll) => sum + Number(payroll.total_bpjs_ketenagakerjaan || 0), 0),
+          total_bpjs_kesehatan: data.reduce((sum, payroll) => sum + Number(payroll.total_bpjs_kesehatan || 0), 0),
+          total_employee_loan_deduction: data.reduce((sum, payroll) => sum + Number(payroll.total_employee_loan_deduction || 0), 0),
+          total_overall: data.reduce((sum, payroll) => sum + Number(payroll.total_overall || 0), 0),
+        },
+    };
+  },
+
+  async getAllPayrollRuns(filter: Omit<PayrollRunsFilter, 'page'> = {}): Promise<PayrollRun[]> {
+    const limit = Math.min(Math.max(filter.limit || 100, 1), 100);
+    const firstPage = await payrollService.getPayrollRuns({
+      ...filter,
+      page: 1,
+      limit,
+    });
+    const allRuns = [...firstPage.data];
+
+    for (let page = 2; page <= firstPage.total_pages; page += 1) {
+      const result = await payrollService.getPayrollRuns({
+        ...filter,
+        page,
+        limit,
+      });
+      allRuns.push(...result.data);
+    }
+
+    return allRuns;
   },
 
   async getPayrollRun(id: number): Promise<PayrollRun> {

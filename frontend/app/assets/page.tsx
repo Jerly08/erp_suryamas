@@ -1618,16 +1618,23 @@ const AssetsPage = () => {
               isOpen={isModalOpen}
               onClose={handleCloseModal}
               size="6xl"
+              scrollBehavior="inside"
             >
               <ModalOverlay />
-              <ModalContent bg={modalBg} borderWidth="1px" borderColor={modalBorderColor}>
-                <form onSubmit={handleSubmit}>
+              <ModalContent
+                bg={modalBg}
+                borderWidth="1px"
+                borderColor={modalBorderColor}
+                maxH={{ base: 'calc(100vh - 16px)', md: 'calc(100vh - 48px)' }}
+                overflow="hidden"
+              >
+                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', minHeight: 0, maxHeight: 'inherit' }}>
                   <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor}>
                     {selectedAsset?.id ? t('assets.editAsset') : 'Record Existing Asset (Opening Balance)'}
                   </ModalHeader>
                   <ModalCloseButton color={textColor} />
 
-                  <ModalBody pb={6}>
+                  <ModalBody pb={6} overflowY="auto" flex="1" minH={0}>
                     {/* Information Banner */}
                     <Alert status="info" borderRadius="md" bg={infoAlertBg} border="1px solid" borderColor={infoAlertBorder}>
                       <AlertIcon color="blue.500" />
@@ -2157,7 +2164,7 @@ const AssetsPage = () => {
                     </VStack>
                   </ModalBody>
 
-                  <ModalFooter pb={6} bg={modalFooterBg} borderTopWidth="1px" borderColor={modalBorderColor}>
+                  <ModalFooter pb={6} bg={modalFooterBg} borderTopWidth="1px" borderColor={modalBorderColor} flexShrink={0}>
                     <HStack justify="flex-end" spacing={4}>
                       <Button
                         leftIcon={<FiX />}

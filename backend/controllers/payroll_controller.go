@@ -1138,20 +1138,91 @@ func (c *PayrollController) GetPayrollRuns(ctx *gin.Context) {
 	role := ctx.GetString("role")
 	detailAllowed := canViewPayrollDetail(role)
 
-	query := c.db.Model(&models.PayrollRun{}).
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	status := strings.ToUpper(strings.TrimSpace(ctx.Query("status")))
+	applyFilters := func(query *gorm.DB) *gorm.DB {
+		if status != "" && status != "ALL" {
+			query = query.Where("status = ?", status)
+		}
+		return query
+	}
+
+	var total int64
+	if err := applyFilters(c.db.Model(&models.PayrollRun{})).Count(&total).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count payroll data"})
+		return
+	}
+
+	type payrollRunsSummary struct {
+		TotalCount                 int64   `json:"total_count"`
+		TotalSalary                float64 `json:"total_salary"`
+		TotalBonus                 float64 `json:"total_bonus"`
+		TotalPPh                   float64 `json:"total_pph"`
+		TotalBPJS                  float64 `json:"total_bpjs"`
+		TotalBPJSEmployer          float64 `json:"total_bpjs_employer"`
+		TotalBPJSEmployee          float64 `json:"total_bpjs_employee"`
+		TotalBPJSKetenagakerjaan   float64 `json:"total_bpjs_ketenagakerjaan"`
+		TotalBPJSKesehatan         float64 `json:"total_bpjs_kesehatan"`
+		TotalEmployeeLoanDeduction float64 `json:"total_employee_loan_deduction"`
+		TotalOverall               float64 `json:"total_overall"`
+	}
+
+	var summary payrollRunsSummary
+	if err := applyFilters(c.db.Model(&models.PayrollRun{})).
+		Select(`
+			? AS total_count,
+			COALESCE(SUM(total_salary), 0) AS total_salary,
+			COALESCE(SUM(total_bonus), 0) AS total_bonus,
+			COALESCE(SUM(total_pph), 0) AS total_pph,
+			COALESCE(SUM(total_bpjs), 0) AS total_bpjs,
+			COALESCE(SUM(total_bpjs_employer), 0) AS total_bpjs_employer,
+			COALESCE(SUM(total_bpjs_employee), 0) AS total_bpjs_employee,
+			COALESCE(SUM(CASE
+				WHEN total_bpjs_ketenagakerjaan > 0 THEN total_bpjs_ketenagakerjaan
+				WHEN total_bpjs - total_bpjs_kesehatan > 0 THEN total_bpjs - total_bpjs_kesehatan
+				ELSE 0
+			END), 0) AS total_bpjs_ketenagakerjaan,
+			COALESCE(SUM(total_bpjs_kesehatan), 0) AS total_bpjs_kesehatan,
+			COALESCE(SUM(total_employee_loan_deduction), 0) AS total_employee_loan_deduction,
+			COALESCE(SUM(total_overall), 0) AS total_overall
+		`, total).
+		Scan(&summary).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to summarize payroll data"})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	offset := (page - 1) * limit
+
+	query := applyFilters(c.db.Model(&models.PayrollRun{})).
 		Preload("CreatedBy").
 		Preload("ApprovedBy").
 		Preload("RejectedBy").
 		Preload("EmployeeLoanAccount").
-		Order("created_at DESC")
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(limit)
 	if detailAllowed {
 		query = query.Preload("Documents", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at ASC")
 		}).Preload("Documents.Uploader")
-	}
-
-	if status := strings.TrimSpace(ctx.Query("status")); status != "" {
-		query = query.Where("status = ?", strings.ToUpper(status))
 	}
 
 	var runs []models.PayrollRun
@@ -1165,7 +1236,18 @@ func (c *PayrollController) GetPayrollRuns(ctx *gin.Context) {
 		responses = append(responses, payrollResponse(run, detailAllowed))
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"data": responses})
+	ctx.JSON(http.StatusOK, gin.H{
+		"data":    responses,
+		"summary": summary,
+		"meta": gin.H{
+			"pagination": gin.H{
+				"page":        page,
+				"limit":       limit,
+				"total":       total,
+				"total_pages": totalPages,
+			},
+		},
+	})
 }
 
 func (c *PayrollController) GetPayrollRun(ctx *gin.Context) {
