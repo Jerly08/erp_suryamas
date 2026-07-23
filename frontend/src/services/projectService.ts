@@ -45,12 +45,51 @@ export interface ProjectUpdateRequest {
     manager_id?: number;
 }
 
+export interface ProjectListParams {
+    page?: number;
+    limit?: number;
+    search?: string;
+}
+
+export interface ProjectListResult {
+    data: Project[];
+    page: number;
+    limit: number;
+    total: number;
+    total_pages: number;
+}
+
 const BASE_URL = '/api/v1/projects';
 
 export const projectService = {
     getAll: async (): Promise<Project[]> => {
         const response = await api.get(BASE_URL);
         return response.data.data;
+    },
+
+    getList: async (params: ProjectListParams = {}): Promise<ProjectListResult> => {
+        const query = new URLSearchParams();
+        query.set('page', String(params.page || 1));
+        query.set('limit', String(params.limit || 10));
+        if (params.search?.trim()) {
+            query.set('search', params.search.trim());
+        }
+
+        const response = await api.get(`${BASE_URL}?${query.toString()}`);
+        const data = response.data?.data || [];
+        const pagination = response.data?.meta?.pagination || {};
+        const total = Number(pagination.total ?? data.length);
+        const limit = Number(pagination.limit ?? params.limit ?? 10);
+
+        return {
+            data,
+            page: Number(pagination.page ?? params.page ?? 1),
+            limit,
+            total,
+            total_pages: Number(
+                pagination.total_pages ?? Math.max(1, Math.ceil(total / Math.max(limit, 1))),
+            ),
+        };
     },
 
     getById: async (id: number): Promise<Project> => {

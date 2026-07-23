@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
   Modal,
@@ -59,6 +59,7 @@ import searchableSelectService, { Contact as SelectContact } from '@/services/se
 import closingHistoryService from '@/services/closingHistoryService';
 import { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
+import SearchableSelect from '@/components/common/SearchableSelect';
 import { useAuth } from '@/contexts/AuthContext';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { useModulePermissions } from '@/hooks/usePermissions';
@@ -295,7 +296,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
     let active = true;
     setLoadingPayrollPPh(true);
-    payrollService.getPayrollRuns('APPROVED')
+    payrollService.getAllPayrollRuns({ status: 'APPROVED', limit: 100 })
       .then((runs) => {
         if (!active) return;
         const openRuns = runs.filter((run) => Number(run.total_pph || 0) - Number(run.pph_paid_amount || 0) > 0.01);
@@ -347,6 +348,49 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const endingBookBalanceIDR = Math.max(0, availableBookBalance - bankBookOutAmount);
   // Show all cash/bank accounts (no filtering by payment method)
   const filteredCashBanks = cashBanks;
+  const contactOptions = useMemo(
+    () => contacts.map(contact => ({
+      id: contact.id,
+      code: contact.code,
+      name: `${contact.name} (${contact.type || 'Contact'})`,
+      active: contact.is_active,
+    })),
+    [contacts],
+  );
+  const transactionAccountOptions = useMemo(() => {
+    const toOption = (account: AccountCatalogItem, groupLabel: string) => ({
+      id: account.id,
+      code: account.code,
+      name: `${account.name} (${groupLabel})${typeof account.balance === 'number' ? ` | Saldo: ${formatIDR(Number(account.balance || 0))}` : ''}`,
+      active: account.active ?? account.is_active ?? true,
+    });
+
+    return [
+      ...expenseAccounts.map(account => toOption(account, t('payments.form.expenseAccounts'))),
+      ...liabilityAccounts.map(account => toOption(account, t('payments.form.liabilityAccounts'))),
+      ...employeeLoanAccounts.map(account => toOption(account, 'Pinjaman Karyawan')),
+      ...intercompanyReceivableAccounts.map(account => toOption(account, t('payments.form.receivableAssetAccounts'))),
+    ];
+  }, [
+    expenseAccounts,
+    liabilityAccounts,
+    employeeLoanAccounts,
+    intercompanyReceivableAccounts,
+    t,
+  ]);
+  const cashBankOptions = useMemo(
+    () => filteredCashBanks.map(cb => {
+      const frozen = cb.frozen_amount || 0;
+      const available = cb.balance - frozen;
+      return {
+        id: cb.id,
+        code: cb.code,
+        name: `${cb.name} (${cb.type}) - Tersedia: ${formatCashBankBalance(available > 0 ? available : 0, cb.currency)}${frozen > 0 ? ` [Terblokir: ${formatCashBankBalance(frozen, cb.currency)}]` : ''}`,
+        active: cb.is_active,
+      };
+    }),
+    [filteredCashBanks],
+  );
 
   const parseDraftReference = (reference?: string) => {
     if (!reference) {
@@ -765,10 +809,23 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="xl" closeOnOverlayClick={false}>
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      size="xl"
+      closeOnOverlayClick={false}
+      scrollBehavior="inside"
+    >
       <ModalOverlay />
-      <ModalContent bg={bgColor}>
-        <ModalHeader>
+      <ModalContent
+        bg={bgColor}
+        h={{ base: 'calc(100vh - 16px)', md: 'calc(100vh - 48px)' }}
+        maxH={{ base: 'calc(100vh - 16px)', md: 'calc(100vh - 48px)' }}
+        display="flex"
+        flexDirection="column"
+        overflow="hidden"
+      >
+        <ModalHeader flexShrink={0}>
           <HStack>
             <Icon as={FiBriefcase} />
             <Text>{t('payments.form.createExpensePayment')}</Text>
@@ -776,8 +833,22 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         </ModalHeader>
         <ModalCloseButton />
 
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <ModalBody>
+        <Box
+          as="form"
+          onSubmit={handleSubmit(onSubmit)}
+          display="flex"
+          flexDirection="column"
+          flex="1"
+          minH={0}
+          overflow="hidden"
+        >
+          <ModalBody
+            overflowY="auto"
+            overscrollBehavior="contain"
+            flex="1"
+            minH={0}
+            sx={{ WebkitOverflowScrolling: 'touch' }}
+          >
             <VStack spacing={4}>
               {/* Info Alert */}
               <Alert status="info" borderRadius="md">
@@ -819,17 +890,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       name="contact_id"
                       control={control}
                       render={({ field }) => (
-                        <Select
-                          {...field}
+                        <SearchableSelect
+                          options={contactOptions}
+                          value={field.value || ''}
+                          onChange={(value) => field.onChange(value ? Number(value) : 0)}
                           placeholder="Tanpa kontak (opsional)"
-                          borderColor={borderColor}
-                        >
-                          {contacts.map(contact => (
-                            <option key={contact.id} value={contact.id}>
-                              {contact.name} ({contact.type || 'Contact'})
-                            </option>
-                          ))}
-                        </Select>
+                          isLoading={loadingAccounts}
+                          allowClear
+                          size="md"
+                        />
                       )}
                     />
                     <FormHelperText color={textColor}>
@@ -860,60 +929,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                           : false,
                       }}
                       render={({ field }) => (canSelectExpenseAccountFromCOA ? (
-                        <Select
-                          {...field}
+                        <SearchableSelect
+                          options={transactionAccountOptions}
+                          value={field.value || ''}
+                          onChange={(value) => field.onChange(value ? Number(value) : 0)}
                           placeholder={t('payments.form.selectAccount')}
-                          borderColor={borderColor}
-                        >
-                          {expenseAccounts.length > 0 && (
-                            <>
-                              <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
-                                ── {t('payments.form.expenseAccounts')} ──
-                              </option>
-                              {expenseAccounts.map(account => (
-                                <option key={account.id} value={account.id}>
-                                  {account.code} - {account.name}
-                                </option>
-                              ))}
-                            </>
-                          )}
-                          {liabilityAccounts.length > 0 && (
-                            <>
-                              <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
-                                ── {t('payments.form.liabilityAccounts')} ──
-                              </option>
-                              {liabilityAccounts.map(account => (
-                                <option key={account.id} value={account.id}>
-                                  {account.code} - {account.name} | Saldo: {formatIDR(Number(account.balance || 0))}
-                                </option>
-                              ))}
-                            </>
-                          )}
-                          {employeeLoanAccounts.length > 0 && (
-                            <>
-                              <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
-                                ── Pinjaman Karyawan ──
-                              </option>
-                              {employeeLoanAccounts.map(account => (
-                                <option key={account.id} value={account.id}>
-                                  {account.code} - {account.name} | Saldo: {formatIDR(Number(account.balance || 0))}
-                                </option>
-                              ))}
-                            </>
-                          )}
-                          {intercompanyReceivableAccounts.length > 0 && (
-                            <>
-                              <option disabled style={{ fontWeight: 'bold', color: '#666' }}>
-                                ── {t('payments.form.receivableAssetAccounts')} ──
-                              </option>
-                              {intercompanyReceivableAccounts.map(account => (
-                                <option key={account.id} value={account.id}>
-                                  {account.code} - {account.name} | Saldo: {formatIDR(Number(account.balance || 0))}
-                                </option>
-                              ))}
-                            </>
-                          )}
-                        </Select>
+                          isLoading={loadingAccounts}
+                          allowClear
+                          size="md"
+                        />
                       ) : (
                         <Box
                           borderWidth="1px"
@@ -1056,17 +1080,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       control={control}
                       rules={{ required: t('payments.form.paymentFromRequired') }}
                       render={({ field }) => (
-                        <Select {...field} placeholder={t('payments.form.selectAccount')} borderColor={borderColor}>
-                          {filteredCashBanks.map(cb => {
-                            const frozen = cb.frozen_amount || 0;
-                            const available = cb.balance - frozen;
-                            return (
-                            <option key={cb.id} value={cb.id}>
-                              {cb.name} ({cb.type}) - Tersedia: {formatCashBankBalance(available > 0 ? available : 0, cb.currency)}{frozen > 0 ? ` [Terblokir: ${formatCashBankBalance(frozen, cb.currency)}]` : ''}
-                            </option>
-                            );
-                          })}
-                        </Select>
+                        <SearchableSelect
+                          options={cashBankOptions}
+                          value={field.value || ''}
+                          onChange={(value) => field.onChange(value ? Number(value) : 0)}
+                          placeholder={t('payments.form.selectAccount')}
+                          isLoading={loadingAccounts}
+                          allowClear
+                          size="md"
+                        />
                       )}
                     />
                     <FormErrorMessage>{errors.cash_bank_id?.message}</FormErrorMessage>
@@ -1080,11 +1102,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
                   <HStack width="full" spacing={4} alignItems="flex-start">
                     {/* Payment Date */}
-                    <FormControl isInvalid={!!errors.date || isDateClosed} isRequired flex={1}>
+                    <FormControl isInvalid={!!errors.date || isDateClosed} flex={1}>
                       <FormLabel color={labelColor}>
-                        <HStack spacing={1}>
+                        <HStack spacing={1} align="center">
                           <Icon as={FiCalendar} />
                           <Text>{t('payments.form.paymentDate')}</Text>
+                          <Text as="span" color="red.400">*</Text>
                         </HStack>
                       </FormLabel>
                       <Input
@@ -1102,8 +1125,13 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     </FormControl>
 
                     {/* Payment Method */}
-                    <FormControl isInvalid={!!errors.method} isRequired flex={1}>
-                      <FormLabel color={labelColor}>{t('payments.form.paymentMethod')}</FormLabel>
+                    <FormControl isInvalid={!!errors.method} flex={1}>
+                      <FormLabel color={labelColor}>
+                        <HStack spacing={1} align="center">
+                          <Text>{t('payments.form.paymentMethod')}</Text>
+                          <Text as="span" color="red.400">*</Text>
+                        </HStack>
+                      </FormLabel>
                       <Controller
                         name="method"
                         control={control}
@@ -1481,7 +1509,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
             </VStack>
           </ModalBody>
 
-          <ModalFooter>
+          <ModalFooter borderTopWidth="1px" borderColor={borderColor} flexShrink={0}>
             <Button variant="ghost" mr={3} onClick={handleClose} isDisabled={loading}>
               {t('common.cancel')}
             </Button>
@@ -1495,7 +1523,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               {isFinanceManagerSubmitter ? t('payments.form.createExpensePayment') : 'Submit for Approval'}
             </Button>
           </ModalFooter>
-        </form>
+        </Box>
       </ModalContent>
     </Modal>
   );

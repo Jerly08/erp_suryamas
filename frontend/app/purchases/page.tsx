@@ -5570,7 +5570,7 @@ const PurchasesPage: React.FC = () => {
             variant: "solid",
           }
         : {
-            text: "Waiting for Finance Manager Finalisasi",
+            text: "Menunggu Finalisasi",
             icon: <FiClock />,
             colorScheme: "purple",
             variant: "outline",
@@ -5680,7 +5680,14 @@ const PurchasesPage: React.FC = () => {
       (roleNorm === "admin" || roleNorm === "finance_staff");
 
     return (
-      <HStack spacing={2}>
+      <HStack
+        spacing={2}
+        justify="flex-end"
+        align="center"
+        flexWrap="wrap"
+        maxW="280px"
+        ml="auto"
+      >
         {canEditDraftPurchase && (
           <Button
             size="sm"
@@ -5704,6 +5711,10 @@ const PurchasesPage: React.FC = () => {
           variant={actionProps.variant}
           colorScheme={actionProps.colorScheme}
           leftIcon={actionProps.icon}
+          maxW="190px"
+          minH="36px"
+          whiteSpace="normal"
+          lineHeight="1.15"
           onClick={() => {
             // Draft purchases should be submitted first by non-approver roles.
             if (
@@ -8522,36 +8533,31 @@ const PurchasesPage: React.FC = () => {
                                 Vendor
                               </FormLabel>
                               <HStack spacing={2}>
-                                {loadingVendors ? (
-                                  <Spinner size="sm" />
-                                ) : (
-                                  <Select
-                                    placeholder="Select vendor"
+                                <Box flex={1}>
+                                  <SearchableSelect
+                                    options={vendors.map((vendor) => ({
+                                      id: vendor.id,
+                                      code: vendor.code,
+                                      name: vendor.name,
+                                      active: true,
+                                    }))}
+                                    placeholder="Cari / pilih vendor"
                                     value={formData.vendor_id}
-                                    onChange={(e) =>
-                                      setFormData({
-                                        ...formData,
-                                        vendor_id: e.target.value,
-                                      })
+                                    onChange={(value) =>
+                                      setFormData((prev) => ({
+                                        ...prev,
+                                        vendor_id: value ? value.toString() : "",
+                                      }))
+                                    }
+                                    isLoading={loadingVendors}
+                                    displayFormat={(vendor) =>
+                                      vendor.code
+                                        ? `${vendor.name} (${vendor.code})`
+                                        : vendor.name
                                     }
                                     size="sm"
-                                    flex={1}
-                                    bg={inputBg}
-                                    color={inputTextColor}
-                                    borderColor={inputBorderColor}
-                                    _hover={{ borderColor: inputHoverBorder }}
-                                    _focusVisible={fieldFocusStyles}
-                                    _placeholder={{
-                                      color: inputPlaceholderColor,
-                                    }}
-                                  >
-                                    {vendors.map((vendor) => (
-                                      <option key={vendor.id} value={vendor.id}>
-                                        {vendor.name} ({vendor.code})
-                                      </option>
-                                    ))}
-                                  </Select>
-                                )}
+                                  />
+                                </Box>
                                 <IconButton
                                   aria-label="Add new vendor"
                                   icon={<FiPlus />}

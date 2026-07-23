@@ -105,6 +105,7 @@ export interface PaymentFilters {
   contact_id?: number;
   status?: string;
   method?: string;
+  search?: string;
   start_date?: string;
   end_date?: string;
 }
@@ -185,6 +186,7 @@ class PaymentService {
       if (filters.contact_id) params.append('contact_id', filters.contact_id.toString());
       if (filters.status) params.append('status', filters.status);
       if (filters.method) params.append('method', filters.method);
+      if (filters.search) params.append('search', filters.search);
       if (filters.start_date) params.append('start_date', filters.start_date);
       if (filters.end_date) params.append('end_date', filters.end_date);
 

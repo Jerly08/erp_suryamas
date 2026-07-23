@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     Badge,
     Box,
@@ -40,7 +40,16 @@ import {
     useDisclosure,
     useToast,
 } from '@chakra-ui/react';
-import { FiEdit2, FiPlus, FiSearch, FiTrash2 } from 'react-icons/fi';
+import {
+    FiChevronLeft,
+    FiChevronRight,
+    FiChevronsLeft,
+    FiChevronsRight,
+    FiEdit2,
+    FiPlus,
+    FiSearch,
+    FiTrash2,
+} from 'react-icons/fi';
 import ProtectedModule from '@/components/common/ProtectedModule';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import Layout from '@/components/layout/Layout';
@@ -73,6 +82,8 @@ const defaultProjectForm: ProjectFormState = {
     total_budget: '0',
 };
 
+const PROJECTS_PER_PAGE = 10;
+
 const toDateInputValue = (value: string | null | undefined): string => {
     if (!value) {
         return '';
@@ -91,13 +102,34 @@ const isInvalidDateRange = (startDate: string, endDate: string): boolean => {
     return Boolean(startDate && endDate && endDate < startDate);
 };
 
-const extractErrorMessage = (error: any, fallback: string): string => {
-    return (
-        error?.response?.data?.error ||
-        error?.response?.data?.message ||
-        error?.message ||
-        fallback
-    );
+const extractErrorMessage = (error: unknown, fallback: string): string => {
+    if (typeof error !== 'object' || error === null) {
+        return fallback;
+    }
+
+    const candidate = error as {
+        response?: {
+            data?: {
+                error?: unknown;
+                message?: unknown;
+            };
+        };
+        message?: unknown;
+    };
+    const responseError = candidate.response?.data?.error;
+    const responseMessage = candidate.response?.data?.message;
+
+    if (typeof responseError === 'string' && responseError) {
+        return responseError;
+    }
+    if (typeof responseMessage === 'string' && responseMessage) {
+        return responseMessage;
+    }
+    if (typeof candidate.message === 'string' && candidate.message) {
+        return candidate.message;
+    }
+
+    return fallback;
 };
 
 const buildProjectForm = (project: Project): ProjectFormState => ({
@@ -114,6 +146,12 @@ export default function ProjectsPage() {
     const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [pagination, setPagination] = useState({
+        page: 1,
+        limit: PROJECTS_PER_PAGE,
+        total: 0,
+        totalPages: 1,
+    });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedProject, setSelectedProject] = useState<Project | null>(null);
     const [formData, setFormData] = useState<ProjectFormState>(defaultProjectForm);
@@ -153,12 +191,25 @@ export default function ProjectsPage() {
         }).format(value);
     };
 
-    const fetchProjects = async (showErrorToast = true): Promise<Project[]> => {
+    const fetchProjects = useCallback(async (
+        showErrorToast = true,
+        overrides: Partial<{ page: number; limit: number; search: string }> = {}
+    ): Promise<Project[]> => {
         try {
             setLoading(true);
-            const data = await projectService.getAll();
-            const nextProjects = data || [];
+            const result = await projectService.getList({
+                page: overrides.page ?? pagination.page,
+                limit: overrides.limit ?? pagination.limit,
+                search: overrides.search ?? searchQuery,
+            });
+            const nextProjects = result.data || [];
             setProjects(nextProjects);
+            setPagination({
+                page: result.page,
+                limit: result.limit,
+                total: result.total,
+                totalPages: result.total_pages,
+            });
             return nextProjects;
         } catch (error) {
             if (showErrorToast) {
@@ -174,7 +225,7 @@ export default function ProjectsPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [pagination.limit, pagination.page, searchQuery, toast]);
 
     const refreshSelectedProject = async (projectId: number, showErrorToast = true): Promise<Project | null> => {
         try {
@@ -205,7 +256,7 @@ export default function ProjectsPage() {
 
     useEffect(() => {
         fetchProjects();
-    }, []);
+    }, [fetchProjects]);
 
     const handleInputChange = (
         event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -271,7 +322,8 @@ export default function ProjectsPage() {
             });
             onCreateClose();
             setFormData(defaultProjectForm);
-            await fetchProjects(false);
+            setPagination((prev) => ({ ...prev, page: 1 }));
+            await fetchProjects(false, { page: 1 });
         } catch (error) {
             toast({
                 title: 'Gagal membuat proyek',
@@ -356,7 +408,11 @@ export default function ProjectsPage() {
             });
             onDeleteClose();
             setSelectedProject(null);
-            await fetchProjects(false);
+            const nextPage = projects.length === 1 && pagination.page > 1
+                ? pagination.page - 1
+                : pagination.page;
+            setPagination((prev) => ({ ...prev, page: nextPage }));
+            await fetchProjects(false, { page: nextPage });
         } catch (error) {
             toast({
                 title: 'Gagal menghapus proyek',
@@ -373,13 +429,38 @@ export default function ProjectsPage() {
         }
     };
 
-    const filteredProjects = projects.filter((project) => {
-        const query = searchQuery.toLowerCase();
-        return (
-            project.name.toLowerCase().includes(query) ||
-            project.code.toLowerCase().includes(query)
+    const displayedProjects = projects;
+
+    const handlePageChange = (page: number) => {
+        const safePage = Math.min(Math.max(page, 1), pagination.totalPages);
+        setPagination((prev) => ({ ...prev, page: safePage }));
+    };
+
+    const handleLimitChange = (value: string) => {
+        const nextLimit = Number(value) || PROJECTS_PER_PAGE;
+        setPagination((prev) => ({
+            ...prev,
+            page: 1,
+            limit: nextLimit,
+        }));
+    };
+
+    const visiblePageNumbers = (() => {
+        const totalPages = pagination.totalPages;
+        const current = pagination.page;
+        const start = Math.max(1, current - 2);
+        const end = Math.min(totalPages, start + 4);
+        const adjustedStart = Math.max(1, end - 4);
+
+        return Array.from(
+            { length: end - adjustedStart + 1 },
+            (_, index) => adjustedStart + index,
         );
-    });
+    })();
+    const paginationStart = pagination.total === 0
+        ? 0
+        : (pagination.page - 1) * pagination.limit + 1;
+    const paginationEnd = Math.min(pagination.page * pagination.limit, pagination.total);
 
     const getStatusBadge = (status: string) => {
         const statusMap: Record<string, { color: string; label: string }> = {
@@ -419,7 +500,10 @@ export default function ProjectsPage() {
                                 <Input
                                     placeholder="Cari nama atau kode proyek..."
                                     value={searchQuery}
-                                    onChange={(event) => setSearchQuery(event.target.value)}
+                                    onChange={(event) => {
+                                        setSearchQuery(event.target.value);
+                                        setPagination((prev) => ({ ...prev, page: 1 }));
+                                    }}
                                     bg={inputBg}
                                     borderColor={inputBorderColor}
                                     color={textColor}
@@ -452,14 +536,14 @@ export default function ProjectsPage() {
                                                 Memuat data...
                                             </Td>
                                         </Tr>
-                                    ) : filteredProjects.length === 0 ? (
+                                    ) : displayedProjects.length === 0 ? (
                                         <Tr>
                                             <Td colSpan={9} textAlign="center" py={4}>
                                                 Tidak ada data proyek
                                             </Td>
                                         </Tr>
                                     ) : (
-                                        filteredProjects.map((project) => (
+                                        displayedProjects.map((project) => (
                                             <Tr key={project.id} _hover={{ bg: tableRowHoverBg }}>
                                                 <Td fontWeight="bold">{project.code}</Td>
                                                 <Td>
@@ -532,6 +616,92 @@ export default function ProjectsPage() {
                                 </Tbody>
                             </Table>
                         </Box>
+
+                        {pagination.total > 0 && (
+                            <Flex
+                                px={4}
+                                py={3}
+                                borderTopWidth="1px"
+                                borderColor={borderColor}
+                                align="center"
+                                justify="space-between"
+                                gap={3}
+                                wrap="wrap"
+                            >
+                                <Flex align="center" gap={3} wrap="wrap">
+                                    <Text fontSize="sm" color={mutedTextColor}>
+                                        Baris per halaman
+                                    </Text>
+                                    <Select
+                                        size="sm"
+                                        maxW="90px"
+                                        value={pagination.limit}
+                                        onChange={(event) => handleLimitChange(event.target.value)}
+                                        bg={inputBg}
+                                        borderColor={inputBorderColor}
+                                        color={textColor}
+                                        isDisabled={loading}
+                                    >
+                                        <option value={10}>10</option>
+                                        <option value={25}>25</option>
+                                        <option value={50}>50</option>
+                                    </Select>
+                                    <Text fontSize="sm" color={mutedTextColor}>
+                                        Menampilkan {paginationStart}-{paginationEnd} dari {pagination.total} proyek
+                                    </Text>
+                                </Flex>
+
+                                <Flex align="center" gap={2} wrap="wrap">
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        leftIcon={<FiChevronsLeft />}
+                                        onClick={() => handlePageChange(1)}
+                                        isDisabled={loading || pagination.page <= 1}
+                                    >
+                                        Awal
+                                    </Button>
+                                    <IconButton
+                                        aria-label="Halaman sebelumnya"
+                                        icon={<FiChevronLeft />}
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handlePageChange(pagination.page - 1)}
+                                        isDisabled={loading || pagination.page <= 1}
+                                    />
+                                    {visiblePageNumbers.map((pageNumber) => (
+                                        <Button
+                                            key={pageNumber}
+                                            size="sm"
+                                            minW="36px"
+                                            variant={pageNumber === pagination.page ? 'solid' : 'outline'}
+                                            colorScheme={pageNumber === pagination.page ? 'blue' : 'gray'}
+                                            onClick={() => handlePageChange(pageNumber)}
+                                            isDisabled={loading}
+                                        >
+                                            {pageNumber}
+                                        </Button>
+                                    ))}
+                                    <IconButton
+                                        aria-label="Halaman berikutnya"
+                                        icon={<FiChevronRight />}
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handlePageChange(pagination.page + 1)}
+                                        isDisabled={loading || pagination.page >= pagination.totalPages}
+                                    />
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        rightIcon={<FiChevronsRight />}
+                                        onClick={() => handlePageChange(pagination.totalPages)}
+                                        isDisabled={loading || pagination.page >= pagination.totalPages}
+                                    >
+                                        Akhir
+                                    </Button>
+                                </Flex>
+                            </Flex>
+                        )}
                     </Box>
                 </Box>
 

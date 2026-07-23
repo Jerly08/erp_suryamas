@@ -6,7 +6,7 @@ import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import cashBankService, { CashBank } from '@/services/cashbankService';
-import payrollService, { PayrollBPJSPaymentStatus, PayrollImportPreview, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollSalaryPaymentStatus, PayrollStatus } from '@/services/payrollService';
+import payrollService, { PayrollBPJSPaymentStatus, PayrollImportPreview, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollRunsSummary, PayrollSalaryPaymentStatus, PayrollStatus } from '@/services/payrollService';
 import { isAccountingRole, isFinanceManagerRole, isFinanceStaffRole, isHRRole, normalizeRole } from '@/utils/roles';
 import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/utils/accountFilters';
 import accountService from '@/services/accountService';
@@ -57,7 +57,7 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react';
-import { FiCheckCircle, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiPaperclip, FiRefreshCw, FiUpload, FiUsers, FiX, FiXCircle } from 'react-icons/fi';
+import { FiCheckCircle, FiChevronLeft, FiChevronRight, FiChevronsLeft, FiChevronsRight, FiDollarSign, FiDownload, FiEye, FiFileText, FiLock, FiPaperclip, FiRefreshCw, FiUpload, FiUsers, FiX, FiXCircle } from 'react-icons/fi';
 
 const ACCEPTED_DOCUMENT_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.webp';
 const MAX_DOCUMENT_SIZE_MB = 50;
@@ -444,6 +444,13 @@ export default function PayrollPage() {
   const canSeeEmployeeDetail = isAdmin || isHR || isFinanceManager;
 
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
+  const [payrollSummary, setPayrollSummary] = useState<PayrollRunsSummary | null>(null);
+  const [payrollPagination, setPayrollPagination] = useState({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+  });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -507,8 +514,20 @@ export default function PayrollPage() {
   const loadPayroll = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await payrollService.getPayrollRuns(statusFilter);
-      setPayrollRuns(data);
+      const result = await payrollService.getPayrollRuns({
+        status: statusFilter,
+        page: payrollPagination.page,
+        limit: payrollPagination.limit,
+      });
+      setPayrollRuns(result.data);
+      setPayrollSummary(result.summary);
+      setPayrollPagination((prev) => ({
+        ...prev,
+        page: result.page || prev.page,
+        limit: result.limit || prev.limit,
+        total: result.total || 0,
+        totalPages: Math.max(1, result.total_pages || Math.ceil((result.total || 0) / Math.max(result.limit || prev.limit, 1)) || 1),
+      }));
     } catch (error: unknown) {
       toast({
         title: 'Gagal memuat payroll',
@@ -520,7 +539,7 @@ export default function PayrollPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, toast]);
+  }, [payrollPagination.limit, payrollPagination.page, statusFilter, toast]);
 
   useEffect(() => {
     loadPayroll();
@@ -579,7 +598,7 @@ export default function PayrollPage() {
     }
   }, []);
 
-  const totals = payrollRuns.reduce(
+  const currentPageTotals = payrollRuns.reduce(
     (acc, payroll) => ({
       salary: acc.salary + Number(payroll.total_salary || 0),
       bonus: acc.bonus + Number(payroll.total_bonus || 0),
@@ -605,6 +624,49 @@ export default function PayrollPage() {
       overall: 0,
     },
   );
+
+  const totals = payrollSummary
+    ? {
+        salary: Number(payrollSummary.total_salary || 0),
+        bonus: Number(payrollSummary.total_bonus || 0),
+        pph: Number(payrollSummary.total_pph || 0),
+        bpjs: Number(payrollSummary.total_bpjs || 0),
+        bpjsEmployer: Number(payrollSummary.total_bpjs_employer || 0),
+        bpjsEmployee: Number(payrollSummary.total_bpjs_employee || 0),
+        bpjsKetenagakerjaan: Number(payrollSummary.total_bpjs_ketenagakerjaan || 0),
+        bpjsKesehatan: Number(payrollSummary.total_bpjs_kesehatan || 0),
+        employeeLoan: Number(payrollSummary.total_employee_loan_deduction || 0),
+        overall: Number(payrollSummary.total_overall || 0),
+      }
+    : currentPageTotals;
+
+  const handlePayrollPageChange = (page: number) => {
+    const totalPages = Math.max(1, payrollPagination.totalPages);
+    const nextPage = Math.min(Math.max(1, page), totalPages);
+    if (nextPage === payrollPagination.page || loading) return;
+    setPayrollPagination((prev) => ({ ...prev, page: nextPage }));
+  };
+
+  const handlePayrollPageSizeChange = (limit: number) => {
+    if (!Number.isFinite(limit) || limit < 1 || loading) return;
+    setPayrollPagination((prev) => ({
+      ...prev,
+      page: 1,
+      limit,
+    }));
+  };
+
+  const getVisiblePayrollPageNumbers = () => {
+    const totalPages = Math.max(1, payrollPagination.totalPages);
+    const currentPage = Math.min(Math.max(1, payrollPagination.page), totalPages);
+    const maxButtons = 5;
+    const startPage = Math.max(
+      1,
+      Math.min(currentPage - Math.floor(maxButtons / 2), totalPages - maxButtons + 1),
+    );
+    const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+    return Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+  };
 
   const updateImportPreviewItem = (index: number, field: keyof PayrollItem, value: string | number) => {
     setImportPreview((prev) => {
@@ -1284,17 +1346,25 @@ export default function PayrollPage() {
 
             <Card bg={cardBg} borderWidth="1px" borderColor={borderColor} overflow="hidden">
               <CardBody p={0}>
-                <Flex p={4} justify="space-between" align={{ base: 'stretch', md: 'center' }} gap={3} direction={{ base: 'column', md: 'row' }}>
-                  <Box>
-                    <Heading size="md">Payroll Runs</Heading>
-                    <Text color={mutedText} fontSize="sm">
-                      {payrollRuns.length} payroll ditampilkan
-                    </Text>
-                  </Box>
-                  <Select maxW={{ base: '100%', md: '240px' }} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} bg={inputBg}>
-                    <option value="ALL">Semua Status</option>
-                    <option value="PENDING_APPROVAL">Menunggu Approval</option>
-                    <option value="APPROVED">Approved</option>
+	                <Flex p={4} justify="space-between" align={{ base: 'stretch', md: 'center' }} gap={3} direction={{ base: 'column', md: 'row' }}>
+	                  <Box>
+	                    <Heading size="md">Payroll Runs</Heading>
+	                    <Text color={mutedText} fontSize="sm">
+	                      {payrollPagination.total} payroll terfilter
+	                    </Text>
+	                  </Box>
+	                  <Select
+	                    maxW={{ base: '100%', md: '240px' }}
+	                    value={statusFilter}
+	                    onChange={(event) => {
+	                      setStatusFilter(event.target.value);
+	                      setPayrollPagination((prev) => ({ ...prev, page: 1 }));
+	                    }}
+	                    bg={inputBg}
+	                  >
+	                    <option value="ALL">Semua Status</option>
+	                    <option value="PENDING_APPROVAL">Menunggu Approval</option>
+	                    <option value="APPROVED">Approved</option>
                     <option value="REJECTED">Rejected</option>
                   </Select>
                 </Flex>
@@ -1303,126 +1373,218 @@ export default function PayrollPage() {
                   <Flex justify="center" align="center" minH="260px">
                     <Spinner size="xl" thickness="4px" color="blue.500" />
                   </Flex>
-                ) : (
-                  <TableContainer>
-                    <Table variant="simple">
-                      <Thead bg={tableHeaderBg}>
-                        <Tr>
-                          <Th>No Payroll</Th>
-                          <Th>Periode</Th>
-                          <Th>Tgl Bayar</Th>
-                          <Th isNumeric>Total Salary</Th>
-                          <Th isNumeric>Total Bonus</Th>
-                          <Th isNumeric>PPh21 Terutang</Th>
-                          <Th>Status PPh21</Th>
-                          <Th isNumeric>Total BPJS</Th>
-                          <Th>Status BPJS</Th>
-                          <Th isNumeric>Pinjaman Karyawan</Th>
-                          <Th isNumeric>Net Salary</Th>
-                          <Th>Status Gaji</Th>
-                          <Th>Status</Th>
-                          {canSeeEmployeeDetail && <Th>Aksi</Th>}
-                        </Tr>
-                      </Thead>
-                      <Tbody>
-                        {payrollRuns.map((payroll) => (
-                          <Tr key={payroll.id}>
-                            <Td fontWeight="semibold">{payroll.payroll_number}</Td>
-                            <Td>
-                              {formatDate(payroll.period_start)} - {formatDate(payroll.period_end)}
-                            </Td>
-                            <Td>{formatDate(payroll.payment_date)}</Td>
-                            <Td isNumeric>{formatCurrency(payroll.total_salary)}</Td>
-                            <Td isNumeric>{formatCurrency(payroll.total_bonus)}</Td>
-                            <Td isNumeric>{formatCurrency(payroll.total_pph)}</Td>
-                            <Td>
-                              <VStack align="start" spacing={1}>
-                                <Badge colorScheme={pphPaymentStatusColor(getPPhPaymentStatus(payroll))}>{pphPaymentStatusLabel(getPPhPaymentStatus(payroll))}</Badge>
-                                {Number(payroll.total_pph || 0) > 0 && (
-                                  <Text fontSize="xs" color={mutedText}>
-                                    Dibayar {formatCurrency(Number(payroll.pph_paid_amount || 0))}
-                                  </Text>
-                                )}
-                              </VStack>
-                            </Td>
-                            <Td isNumeric>
-                              <VStack align="end" spacing={1}>
-                                <Text fontWeight="semibold">{formatCurrency(payroll.total_bpjs)}</Text>
-                                <Text fontSize="xs" color={mutedText}>
-                                  TK {formatCurrency(getPayrollRunBPJSKetenagakerjaan(payroll))} | Kes. {formatCurrency(getPayrollRunBPJSKesehatan(payroll))}
-                                </Text>
-                              </VStack>
-                            </Td>
-                            <Td>
-                              <VStack align="start" spacing={1}>
-                                <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(payroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(payroll))}</Badge>
-                                {Number(payroll.total_bpjs || 0) > 0 && (
-                                  <Text fontSize="xs" color={mutedText}>
-                                    Dibayar {formatCurrency(Number(payroll.bpjs_paid_amount || 0))}
-                                  </Text>
-                                )}
-                              </VStack>
-                            </Td>
-                            <Td isNumeric>{formatCurrency(Number(payroll.total_employee_loan_deduction || 0))}</Td>
-                            <Td isNumeric fontWeight="bold" color="blue.600">
-                              {formatCurrency(payroll.total_overall)}
-                            </Td>
-                            <Td>
-                              <VStack align="start" spacing={1}>
-                                <Badge colorScheme={salaryPaymentStatusColor(getSalaryPaymentStatus(payroll))}>{salaryPaymentStatusLabel(getSalaryPaymentStatus(payroll))}</Badge>
-                                <Text fontSize="xs" color={mutedText}>Dibayar {formatCurrency(Number(payroll.salary_paid_amount || 0))}</Text>
-                              </VStack>
-                            </Td>
-                            <Td>
-                              <Badge colorScheme={statusColor(payroll.status)}>{statusLabel(payroll.status)}</Badge>
-                            </Td>
-                            {canSeeEmployeeDetail && (
-                              <Td>
-                                <HStack spacing={2}>
-                                  <IconButton aria-label="Lihat detail payroll" icon={<FiEye />} size="sm" variant="ghost" colorScheme="blue" onClick={() => openDetail(payroll)} />
-                                  <IconButton
-                                    aria-label="Download pengajuan payroll Excel"
-                                    icon={<FiDownload />}
-                                    size="sm"
-                                    variant="ghost"
-                                    colorScheme="teal"
-                                    onClick={() => downloadPayrollRunExcel(payroll)}
-                                    isLoading={downloadingPayrollId === payroll.id}
-                                  />
-                                  {canApprovePayroll && payroll.status === 'APPROVED' && getSalaryRemainingAmount(payroll) > 0 && (
-                                    <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="blue" variant="outline" onClick={() => openPaySalary(payroll)}>
-                                      Pay Salary
-                                    </Button>
-                                  )}
-                                  {canApprovePayroll && payroll.status === 'APPROVED' && getBPJSRemainingAmount(payroll) > 0 && (
-                                    <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="purple" variant="outline" onClick={() => openPayBPJS(payroll)}>
-                                      Pay BPJS
-                                    </Button>
-                                  )}
-                                  {canApprovePayroll && payroll.status === 'APPROVED' && getPPhRemainingAmount(payroll) > 0 && (
-                                    <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="orange" variant="outline" onClick={() => openPayPPh(payroll)}>
-                                      Pay PPh
-                                    </Button>
-                                  )}
-                                </HStack>
-                              </Td>
-                            )}
-                          </Tr>
-                        ))}
-                        {payrollRuns.length === 0 && (
-                          <Tr>
-                            <Td colSpan={canSeeEmployeeDetail ? 14 : 13}>
-                              <Flex py={10} align="center" justify="center" direction="column" gap={2} color={mutedText}>
-                                <Icon as={FiFileText} boxSize={8} />
-                                <Text>Belum ada data payroll untuk filter ini.</Text>
-                              </Flex>
-                            </Td>
-                          </Tr>
-                        )}
-                      </Tbody>
-                    </Table>
-                  </TableContainer>
-                )}
+	                ) : (
+	                  <>
+	                    <TableContainer>
+	                      <Table variant="simple">
+	                        <Thead bg={tableHeaderBg}>
+	                          <Tr>
+	                            <Th>No Payroll</Th>
+	                            <Th>Periode</Th>
+	                            <Th>Tgl Bayar</Th>
+	                            <Th isNumeric>Total Salary</Th>
+	                            <Th isNumeric>Total Bonus</Th>
+	                            <Th isNumeric>PPh21 Terutang</Th>
+	                            <Th>Status PPh21</Th>
+	                            <Th isNumeric>Total BPJS</Th>
+	                            <Th>Status BPJS</Th>
+	                            <Th isNumeric>Pinjaman Karyawan</Th>
+	                            <Th isNumeric>Net Salary</Th>
+	                            <Th>Status Gaji</Th>
+	                            <Th>Status</Th>
+	                            {canSeeEmployeeDetail && <Th>Aksi</Th>}
+	                          </Tr>
+	                        </Thead>
+	                        <Tbody>
+	                          {payrollRuns.map((payroll) => (
+	                            <Tr key={payroll.id}>
+	                              <Td fontWeight="semibold">{payroll.payroll_number}</Td>
+	                              <Td>
+	                                {formatDate(payroll.period_start)} - {formatDate(payroll.period_end)}
+	                              </Td>
+	                              <Td>{formatDate(payroll.payment_date)}</Td>
+	                              <Td isNumeric>{formatCurrency(payroll.total_salary)}</Td>
+	                              <Td isNumeric>{formatCurrency(payroll.total_bonus)}</Td>
+	                              <Td isNumeric>{formatCurrency(payroll.total_pph)}</Td>
+	                              <Td>
+	                                <VStack align="start" spacing={1}>
+	                                  <Badge colorScheme={pphPaymentStatusColor(getPPhPaymentStatus(payroll))}>{pphPaymentStatusLabel(getPPhPaymentStatus(payroll))}</Badge>
+	                                  {Number(payroll.total_pph || 0) > 0 && (
+	                                    <Text fontSize="xs" color={mutedText}>
+	                                      Dibayar {formatCurrency(Number(payroll.pph_paid_amount || 0))}
+	                                    </Text>
+	                                  )}
+	                                </VStack>
+	                              </Td>
+	                              <Td isNumeric>
+	                                <VStack align="end" spacing={1}>
+	                                  <Text fontWeight="semibold">{formatCurrency(payroll.total_bpjs)}</Text>
+	                                  <Text fontSize="xs" color={mutedText}>
+	                                    TK {formatCurrency(getPayrollRunBPJSKetenagakerjaan(payroll))} | Kes. {formatCurrency(getPayrollRunBPJSKesehatan(payroll))}
+	                                  </Text>
+	                                </VStack>
+	                              </Td>
+	                              <Td>
+	                                <VStack align="start" spacing={1}>
+	                                  <Badge colorScheme={bpjsPaymentStatusColor(getBPJSPaymentStatus(payroll))}>{bpjsPaymentStatusLabel(getBPJSPaymentStatus(payroll))}</Badge>
+	                                  {Number(payroll.total_bpjs || 0) > 0 && (
+	                                    <Text fontSize="xs" color={mutedText}>
+	                                      Dibayar {formatCurrency(Number(payroll.bpjs_paid_amount || 0))}
+	                                    </Text>
+	                                  )}
+	                                </VStack>
+	                              </Td>
+	                              <Td isNumeric>{formatCurrency(Number(payroll.total_employee_loan_deduction || 0))}</Td>
+	                              <Td isNumeric fontWeight="bold" color="blue.600">
+	                                {formatCurrency(payroll.total_overall)}
+	                              </Td>
+	                              <Td>
+	                                <VStack align="start" spacing={1}>
+	                                  <Badge colorScheme={salaryPaymentStatusColor(getSalaryPaymentStatus(payroll))}>{salaryPaymentStatusLabel(getSalaryPaymentStatus(payroll))}</Badge>
+	                                  <Text fontSize="xs" color={mutedText}>Dibayar {formatCurrency(Number(payroll.salary_paid_amount || 0))}</Text>
+	                                </VStack>
+	                              </Td>
+	                              <Td>
+	                                <Badge colorScheme={statusColor(payroll.status)}>{statusLabel(payroll.status)}</Badge>
+	                              </Td>
+	                              {canSeeEmployeeDetail && (
+	                                <Td>
+	                                  <HStack spacing={2}>
+	                                    <IconButton aria-label="Lihat detail payroll" icon={<FiEye />} size="sm" variant="ghost" colorScheme="blue" onClick={() => openDetail(payroll)} />
+	                                    <IconButton
+	                                      aria-label="Download pengajuan payroll Excel"
+	                                      icon={<FiDownload />}
+	                                      size="sm"
+	                                      variant="ghost"
+	                                      colorScheme="teal"
+	                                      onClick={() => downloadPayrollRunExcel(payroll)}
+	                                      isLoading={downloadingPayrollId === payroll.id}
+	                                    />
+	                                    {canApprovePayroll && payroll.status === 'APPROVED' && getSalaryRemainingAmount(payroll) > 0 && (
+	                                      <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="blue" variant="outline" onClick={() => openPaySalary(payroll)}>
+	                                        Pay Salary
+	                                      </Button>
+	                                    )}
+	                                    {canApprovePayroll && payroll.status === 'APPROVED' && getBPJSRemainingAmount(payroll) > 0 && (
+	                                      <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="purple" variant="outline" onClick={() => openPayBPJS(payroll)}>
+	                                        Pay BPJS
+	                                      </Button>
+	                                    )}
+	                                    {canApprovePayroll && payroll.status === 'APPROVED' && getPPhRemainingAmount(payroll) > 0 && (
+	                                      <Button leftIcon={<FiDollarSign />} size="sm" colorScheme="orange" variant="outline" onClick={() => openPayPPh(payroll)}>
+	                                        Pay PPh
+	                                      </Button>
+	                                    )}
+	                                  </HStack>
+	                                </Td>
+	                              )}
+	                            </Tr>
+	                          ))}
+	                          {payrollRuns.length === 0 && (
+	                            <Tr>
+	                              <Td colSpan={canSeeEmployeeDetail ? 14 : 13}>
+	                                <Flex py={10} align="center" justify="center" direction="column" gap={2} color={mutedText}>
+	                                  <Icon as={FiFileText} boxSize={8} />
+	                                  <Text>Belum ada data payroll untuk filter ini.</Text>
+	                                </Flex>
+	                              </Td>
+	                            </Tr>
+	                          )}
+	                        </Tbody>
+	                      </Table>
+	                    </TableContainer>
+	                    {payrollPagination.total > 0 && (
+	                      <Flex
+	                        px={4}
+	                        py={3}
+	                        borderTopWidth="1px"
+	                        borderColor={borderColor}
+	                        align={{ base: 'stretch', md: 'center' }}
+	                        justify="space-between"
+	                        gap={3}
+	                        direction={{ base: 'column', lg: 'row' }}
+	                      >
+	                        <VStack align={{ base: 'stretch', md: 'start' }} spacing={0}>
+	                          <Text fontSize="sm" color={mutedText}>
+	                            Menampilkan {(payrollPagination.page - 1) * payrollPagination.limit + 1}-
+	                            {Math.min(payrollPagination.page * payrollPagination.limit, payrollPagination.total)} dari {payrollPagination.total} payroll
+	                          </Text>
+	                          {payrollPagination.totalPages > 1 && (
+	                            <Text fontSize="xs" color={mutedText}>
+	                              Halaman {payrollPagination.page} dari {payrollPagination.totalPages}
+	                            </Text>
+	                          )}
+	                        </VStack>
+	                        <Flex align="center" gap={2} wrap="wrap">
+	                          <Text fontSize="sm" color={mutedText}>
+	                            Rows
+	                          </Text>
+	                          <Select
+	                            size="sm"
+	                            maxW="90px"
+	                            value={payrollPagination.limit}
+	                            onChange={(event) => handlePayrollPageSizeChange(Number(event.target.value))}
+	                            isDisabled={loading}
+	                            bg={inputBg}
+	                          >
+	                            <option value={10}>10</option>
+	                            <option value={25}>25</option>
+	                            <option value={50}>50</option>
+	                          </Select>
+	                          <Button
+	                            size="sm"
+	                            variant="outline"
+	                            leftIcon={<FiChevronsLeft />}
+	                            onClick={() => handlePayrollPageChange(1)}
+	                            isDisabled={loading || payrollPagination.page <= 1}
+	                          >
+	                            Awal
+	                          </Button>
+	                          <Button
+	                            size="sm"
+	                            variant="outline"
+	                            leftIcon={<FiChevronLeft />}
+	                            onClick={() => handlePayrollPageChange(payrollPagination.page - 1)}
+	                            isDisabled={loading || payrollPagination.page <= 1}
+	                          >
+	                            Prev
+	                          </Button>
+	                          {getVisiblePayrollPageNumbers().map((pageNumber) => (
+	                            <Button
+	                              key={pageNumber}
+	                              size="sm"
+	                              minW="36px"
+	                              variant={pageNumber === payrollPagination.page ? 'solid' : 'outline'}
+	                              colorScheme={pageNumber === payrollPagination.page ? 'blue' : undefined}
+	                              onClick={() => handlePayrollPageChange(pageNumber)}
+	                              isDisabled={loading}
+	                            >
+	                              {pageNumber}
+	                            </Button>
+	                          ))}
+	                          <Button
+	                            size="sm"
+	                            variant="outline"
+	                            rightIcon={<FiChevronRight />}
+	                            onClick={() => handlePayrollPageChange(payrollPagination.page + 1)}
+	                            isDisabled={loading || payrollPagination.page >= payrollPagination.totalPages}
+	                          >
+	                            Next
+	                          </Button>
+	                          <Button
+	                            size="sm"
+	                            variant="outline"
+	                            rightIcon={<FiChevronsRight />}
+	                            onClick={() => handlePayrollPageChange(payrollPagination.totalPages)}
+	                            isDisabled={loading || payrollPagination.page >= payrollPagination.totalPages}
+	                          >
+	                            Akhir
+	                          </Button>
+	                        </Flex>
+	                      </Flex>
+	                    )}
+	                  </>
+	                )}
               </CardBody>
             </Card>
           </VStack>
