@@ -73,11 +73,15 @@ import {
   FiMoreVertical,
   FiFileText,
   FiChevronDown,
+  FiChevronLeft,
+  FiChevronsLeft,
+  FiChevronRight,
+  FiChevronsRight,
   FiArrowDown,
   FiArrowRight,
   FiBriefcase
 } from 'react-icons/fi';
-import paymentService, { Payment, PaymentFilters } from '@/services/paymentService';
+import paymentService, { Payment, PaymentFilters, PaymentResult } from '@/services/paymentService';
 import AdvancedPaymentForm from '@/components/payments/AdvancedPaymentForm';
 import PaymentDetailModal from '@/components/payments/PaymentDetailModal';
 import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
@@ -193,6 +197,7 @@ const PaymentsPage: React.FC = () => {
   const [selectedPaymentForRejection, setSelectedPaymentForRejection] = useState<Payment | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
+  const hasMountedSearchEffect = useRef(false);
 
   // Permission-based access control
   const { canCreate, canEdit, canDelete, canExport } = useModulePermissions('payments');
@@ -697,15 +702,22 @@ const PaymentsPage: React.FC = () => {
       setError(null);
 
       const currentFilters = newFilters ? { ...filters, ...newFilters } : filters;
+      const page = Math.max(1, Number(currentFilters.page) || 1);
+      const limit = Math.max(1, Number(currentFilters.limit) || ITEMS_PER_PAGE);
+      const searchTerm =
+        typeof currentFilters.search === 'string'
+          ? currentFilters.search.trim()
+          : searchInput.trim();
 
       // Prepare filters for API request
       const apiFilters: PaymentFilters = {
-        page: currentFilters.page,
-        limit: currentFilters.limit
+        page,
+        limit
       };
 
-      // NOTE: Search is handled client-side, so we don't send search to API
-      // Other filters (status, method, date) still use server-side filtering
+      if (searchTerm) {
+        apiFilters.search = searchTerm;
+      }
 
       // Add status filter if selected
       if (statusFilter !== 'ALL') {
@@ -728,24 +740,38 @@ const PaymentsPage: React.FC = () => {
 
       // Make API call
       const result = await paymentService.getPayments(apiFilters);
+      const normalizedResult = result as PaymentResult & { totalPages?: number };
 
-      // Store all payments for client-side filtering
+      const totalItems = Number(result?.total || 0);
+      const totalPages = Math.max(
+        1,
+        Number(
+          normalizedResult?.total_pages ||
+          normalizedResult?.totalPages ||
+          Math.ceil(totalItems / limit) ||
+          1
+        )
+      );
+      const resultPage = Math.min(
+        Math.max(1, Number(result?.page || page)),
+        totalPages
+      );
+      const resultLimit = Math.max(1, Number(result?.limit || limit));
+
+      // Store current server page for display and page-level summary.
       const paymentData = result?.data || [];
       setAllPayments(paymentData);
-
-      // Apply client-side search filter if search input exists
-      if (searchInput && searchInput.trim()) {
-        const filtered = filterPaymentsBySearch(paymentData, searchInput);
-        setPayments(filtered);
-      } else {
-        setPayments(paymentData);
-      }
-
-      setFilters({ ...currentFilters, page: result?.page || currentFilters.page });
+      setPayments(paymentData);
+      setFilters({
+        ...currentFilters,
+        page: resultPage,
+        limit: resultLimit,
+        search: searchTerm || undefined
+      });
       setPagination({
-        current: result?.page || 1,
-        total: result?.total_pages || 1,
-        totalItems: result?.total || 0
+        current: resultPage,
+        total: totalPages,
+        totalItems
       });
 
     } catch (err: any) {
@@ -821,65 +847,56 @@ const PaymentsPage: React.FC = () => {
     }
   }, [statusFilter, methodFilter, startDate, endDate]);
 
-  // Apply client-side search when allPayments changes
+  // Server-side search keeps transactions from other pages searchable.
   useEffect(() => {
-    if (searchInput) {
-      handleSearch(searchInput);
-    }
-  }, [allPayments]);
+    if (!token) return;
 
-  // Helper function to filter payments by search term (client-side)
-  const filterPaymentsBySearch = (paymentsToFilter: Payment[], searchTerm: string) => {
-    if (!searchTerm.trim()) return paymentsToFilter;
-
-    const term = searchTerm.toLowerCase();
-    return paymentsToFilter.filter(payment => {
-      // Search in payment code
-      if (payment.code?.toLowerCase().includes(term)) return true;
-
-      // Search in contact name (handle PPN tax payments - show "Negara")
-      if (payment.payment_type === 'TAX_PPN' ||
-        payment.payment_type === 'TAX_PPN_INPUT' ||
-        payment.payment_type === 'TAX_PPN_OUTPUT' ||
-        payment.code?.startsWith('SETOR-PPN')) {
-        if ('negara'.includes(term)) return true;
-      } else if (payment.contact?.name?.toLowerCase().includes(term)) {
-        return true;
-      }
-
-      // Search in payment reference
-      if (payment.reference?.toLowerCase().includes(term)) return true;
-
-      // Search in notes
-      if (payment.notes?.toLowerCase().includes(term)) return true;
-
-      return false;
-    });
-  };
-
-  // Handle page change
-  const handlePageChange = (page: number) => {
-    setFilters(prev => ({
-      ...prev,
-      page: page
-    }));
-    loadPayments({ page });
-  };
-
-  // Client-side search handler (instant, no API call)
-  const handleSearch = (value: string) => {
-    setSearchInput(value);
-
-    // Client-side filtering - no API call
-    if (!value.trim()) {
-      // If search is empty, show all payments
-      setPayments(allPayments);
+    if (!hasMountedSearchEffect.current) {
+      hasMountedSearchEffect.current = true;
       return;
     }
 
-    // Filter payments based on search term
-    const filtered = filterPaymentsBySearch(allPayments, value);
-    setPayments(filtered);
+    const timer = window.setTimeout(() => {
+      loadPayments({
+        page: 1,
+        search: searchInput.trim() || undefined
+      });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+    // loadPayments intentionally reads the latest filter state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput, token]);
+
+  // Handle page change
+  const handlePageChange = (page: number) => {
+    const totalPages = Math.max(1, pagination.total);
+    const nextPage = Math.min(Math.max(1, page), totalPages);
+    if (nextPage === pagination.current || loading) return;
+    loadPayments({ page: nextPage });
+  };
+
+  const handlePageSizeChange = (limit: number) => {
+    loadPayments({
+      page: 1,
+      limit
+    });
+  };
+
+  const getVisiblePaymentPageNumbers = () => {
+    const totalPages = Math.max(1, pagination.total);
+    const currentPage = Math.min(Math.max(1, pagination.current), totalPages);
+    const maxButtons = 5;
+    const startPage = Math.max(
+      1,
+      Math.min(currentPage - Math.floor(maxButtons / 2), totalPages - maxButtons + 1)
+    );
+    const endPage = Math.min(totalPages, startPage + maxButtons - 1);
+    return Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index);
+  };
+
+  const handleSearch = (value: string) => {
+    setSearchInput(value);
   };
 
   // Handle filter change
@@ -907,18 +924,26 @@ const PaymentsPage: React.FC = () => {
 
   // Reset filters
   const resetFilters = () => {
+    const hadActiveFilters =
+      statusFilter !== 'ALL' ||
+      methodFilter !== 'ALL' ||
+      !!startDate ||
+      !!endDate ||
+      !!searchInput.trim();
+
     setStatusFilter('ALL');
     setMethodFilter('ALL');
     setStartDate('');
     setEndDate('');
-    setSearchInput(''); // Clear search input
-    setPayments(allPayments); // Reset to show all payments
+    setSearchInput('');
     setFilters({
       page: 1,
       limit: ITEMS_PER_PAGE
     });
-    // Reload data from server with reset filters
-    loadPayments({ page: 1 });
+
+    if (!hadActiveFilters) {
+      loadPayments({ page: 1, limit: ITEMS_PER_PAGE, search: undefined });
+    }
   };
 
   // Note: handleDelete (window.confirm) removed — delete uses AlertDialog flow via handleDeletePayment + confirmDeletePayment
@@ -1340,7 +1365,9 @@ const PaymentsPage: React.FC = () => {
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardHeader>
                   <Flex justify="space-between" align="center">
-                    <Heading size="md" color={headingColor}>{t('payments.paymentTransactions')} ({payments?.length || 0})</Heading>
+                    <Heading size="md" color={headingColor}>
+                      {t('payments.paymentTransactions')} ({pagination.totalItems || payments?.length || 0})
+                    </Heading>
                   </Flex>
                 </CardHeader>
                 <CardBody>
@@ -1354,9 +1381,107 @@ const PaymentsPage: React.FC = () => {
                       data={payments || []}
                       keyField="id"
                       searchable={false}
-                      pagination={true}
-                      pageSize={ITEMS_PER_PAGE}
+                      pagination={false}
                     />
+                  )}
+                  {!loading && pagination.totalItems > 0 && (
+                    <Flex
+                      mt={4}
+                      px={4}
+                      py={3}
+                      borderWidth="1px"
+                      borderColor={borderColor}
+                      borderRadius="md"
+                      bg={cardBg}
+                      align={{ base: 'stretch', md: 'center' }}
+                      justify="space-between"
+                      direction={{ base: 'column', md: 'row' }}
+                      gap={3}
+                    >
+                      <VStack align={{ base: 'stretch', md: 'start' }} spacing={0}>
+                        <Text fontSize="sm" color={textSecondary}>
+                          Menampilkan {(pagination.current - 1) * (filters.limit || ITEMS_PER_PAGE) + 1}-
+                          {Math.min(
+                            pagination.current * (filters.limit || ITEMS_PER_PAGE),
+                            pagination.totalItems
+                          )}{' '}
+                          dari {pagination.totalItems} transaksi pembayaran
+                        </Text>
+                        {pagination.total > 1 && (
+                          <Text fontSize="xs" color={textSecondary}>
+                            Halaman {pagination.current} dari {pagination.total}
+                          </Text>
+                        )}
+                      </VStack>
+
+                      <Flex align="center" gap={2} wrap="wrap">
+                        <Text fontSize="sm" color={textSecondary}>
+                          Rows
+                        </Text>
+                        <Select
+                          size="sm"
+                          maxW="90px"
+                          value={filters.limit || ITEMS_PER_PAGE}
+                          onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                          isDisabled={loading}
+                          bg={inputBg}
+                          borderColor={borderColor}
+                        >
+                          <option value={10}>10</option>
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                        </Select>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          leftIcon={<FiChevronsLeft />}
+                          onClick={() => handlePageChange(1)}
+                          isDisabled={loading || pagination.current <= 1}
+                        >
+                          Awal
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          leftIcon={<FiChevronLeft />}
+                          onClick={() => handlePageChange(pagination.current - 1)}
+                          isDisabled={loading || pagination.current <= 1}
+                        >
+                          Prev
+                        </Button>
+                        {getVisiblePaymentPageNumbers().map((pageNumber) => (
+                          <Button
+                            key={pageNumber}
+                            size="sm"
+                            minW="36px"
+                            variant={pageNumber === pagination.current ? 'solid' : 'outline'}
+                            colorScheme={pageNumber === pagination.current ? 'blue' : undefined}
+                            onClick={() => handlePageChange(pageNumber)}
+                            isDisabled={loading}
+                          >
+                            {pageNumber}
+                          </Button>
+                        ))}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          rightIcon={<FiChevronRight />}
+                          onClick={() => handlePageChange(pagination.current + 1)}
+                          isDisabled={loading || pagination.current >= pagination.total}
+                        >
+                          Next
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          rightIcon={<FiChevronsRight />}
+                          onClick={() => handlePageChange(pagination.total)}
+                          isDisabled={loading || pagination.current >= pagination.total}
+                        >
+                          Akhir
+                        </Button>
+                      </Flex>
+                    </Flex>
                   )}
                 </CardBody>
               </Card>
