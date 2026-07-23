@@ -1181,7 +1181,6 @@ func (c *PayrollController) GetPayrollRuns(ctx *gin.Context) {
 	var summary payrollRunsSummary
 	if err := applyFilters(c.db.Model(&models.PayrollRun{})).
 		Select(`
-			? AS total_count,
 			COALESCE(SUM(total_salary), 0) AS total_salary,
 			COALESCE(SUM(total_bonus), 0) AS total_bonus,
 			COALESCE(SUM(total_pph), 0) AS total_pph,
@@ -1196,11 +1195,12 @@ func (c *PayrollController) GetPayrollRuns(ctx *gin.Context) {
 			COALESCE(SUM(total_bpjs_kesehatan), 0) AS total_bpjs_kesehatan,
 			COALESCE(SUM(total_employee_loan_deduction), 0) AS total_employee_loan_deduction,
 			COALESCE(SUM(total_overall), 0) AS total_overall
-		`, total).
+		`).
 		Scan(&summary).Error; err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to summarize payroll data"})
 		return
 	}
+	summary.TotalCount = total
 
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
 	if totalPages < 1 {
