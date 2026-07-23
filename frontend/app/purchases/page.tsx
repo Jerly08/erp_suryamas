@@ -5570,7 +5570,7 @@ const PurchasesPage: React.FC = () => {
             variant: "solid",
           }
         : {
-            text: "Waiting for Finance Manager Finalisasi",
+            text: "Menunggu Finalisasi",
             icon: <FiClock />,
             colorScheme: "purple",
             variant: "outline",
@@ -5680,7 +5680,14 @@ const PurchasesPage: React.FC = () => {
       (roleNorm === "admin" || roleNorm === "finance_staff");
 
     return (
-      <HStack spacing={2}>
+      <HStack
+        spacing={2}
+        justify="flex-end"
+        align="center"
+        flexWrap="wrap"
+        maxW="280px"
+        ml="auto"
+      >
         {canEditDraftPurchase && (
           <Button
             size="sm"
@@ -5704,6 +5711,10 @@ const PurchasesPage: React.FC = () => {
           variant={actionProps.variant}
           colorScheme={actionProps.colorScheme}
           leftIcon={actionProps.icon}
+          maxW="190px"
+          minH="36px"
+          whiteSpace="normal"
+          lineHeight="1.15"
           onClick={() => {
             // Draft purchases should be submitted first by non-approver roles.
             if (

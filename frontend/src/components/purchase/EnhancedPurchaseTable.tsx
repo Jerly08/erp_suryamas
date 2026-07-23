@@ -184,7 +184,7 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
           </Box>
         ) : (
           <Box overflowX="auto">
-            <Table variant="simple" size="md" className="table">
+            <Table variant="simple" size="md" className="table" minW="1520px">
               <Thead bg={theadBg}>
                 <Tr>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.purchaseNumber', 'PURCHASE #')}</Th>
@@ -197,7 +197,17 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.status', 'STATUS')}</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">STATUS PPH</Th>
                   <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold">{translateOrFallback('purchases.table.approvalStatus', 'APPROVAL STATUS')}</Th>
-                  <Th color={textColor} borderColor={borderColor} fontSize="xs" fontWeight="bold" textAlign="center">{translateOrFallback('purchases.table.actions', 'ACTIONS')}</Th>
+                  <Th
+                    color={textColor}
+                    borderColor={borderColor}
+                    fontSize="xs"
+                    fontWeight="bold"
+                    textAlign="center"
+                    minW="280px"
+                    w="280px"
+                  >
+                    {translateOrFallback('purchases.table.actions', 'ACTIONS')}
+                  </Th>
                 </Tr>
               </Thead>
               <Tbody>
@@ -336,7 +346,13 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
                         {getApprovalStatusLabel(purchase.approval_status)}
                       </Badge>
                     </Td>
-                    <Td borderColor={borderColor} py={3} textAlign="center">
+                    <Td
+                      borderColor={borderColor}
+                      py={3}
+                      textAlign="right"
+                      minW="280px"
+                      w="280px"
+                    >
                       {renderActions ? (
                         renderActions(purchase)
                       ) : (

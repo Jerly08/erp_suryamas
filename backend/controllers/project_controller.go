@@ -4,8 +4,10 @@ import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/services"
 	"app-sistem-akuntansi/utils"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,6 +21,52 @@ func NewProjectController(service services.ProjectService) *ProjectController {
 }
 
 func (c *ProjectController) GetAll(ctx *gin.Context) {
+	hasPaginationQuery := ctx.Query("page") != "" || ctx.Query("limit") != "" || ctx.Query("search") != ""
+	if hasPaginationQuery {
+		page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+		limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 {
+			limit = 10
+		}
+		if limit > 100 {
+			limit = 100
+		}
+
+		projects, total, err := c.service.GetProjects(models.ProjectFilter{
+			Page:   page,
+			Limit:  limit,
+			Search: strings.TrimSpace(ctx.Query("search")),
+		})
+		if err != nil {
+			c.respondError(ctx, err, "Failed to load projects")
+			return
+		}
+
+		totalPages := int(math.Ceil(float64(total) / float64(limit)))
+		if totalPages < 1 {
+			totalPages = 1
+		}
+		if page > totalPages {
+			page = totalPages
+		}
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"data": projects,
+			"meta": gin.H{
+				"pagination": gin.H{
+					"page":        page,
+					"limit":       limit,
+					"total":       total,
+					"total_pages": totalPages,
+				},
+			},
+		})
+		return
+	}
+
 	projects, err := c.service.GetAllProjects()
 	if err != nil {
 		c.respondError(ctx, err, "Failed to load projects")

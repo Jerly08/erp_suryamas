@@ -65,3 +65,9 @@ type ProjectUpdateRequest struct {
 	TotalBudget    *float64   `json:"total_budget"`
 	ManagerID      *uint      `json:"manager_id"`
 }
+
+type ProjectFilter struct {
+	Page   int
+	Limit  int
+	Search string
+}

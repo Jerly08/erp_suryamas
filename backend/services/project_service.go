@@ -14,6 +14,7 @@ import (
 
 type ProjectService interface {
 	GetAllProjects() ([]models.Project, error)
+	GetProjects(filter models.ProjectFilter) ([]models.Project, int64, error)
 	GetProjectByID(id uint) (*models.Project, error)
 	CreateProject(req models.ProjectCreateRequest) (*models.Project, error)
 	UpdateProject(id uint, req models.ProjectUpdateRequest) (*models.Project, error)
@@ -30,6 +31,10 @@ func NewProjectService(repo repositories.ProjectRepository) ProjectService {
 
 func (s *projectService) GetAllProjects() ([]models.Project, error) {
 	return s.repo.FindAll()
+}
+
+func (s *projectService) GetProjects(filter models.ProjectFilter) ([]models.Project, int64, error) {
+	return s.repo.FindWithFilter(filter)
 }
 
 func (s *projectService) GetProjectByID(id uint) (*models.Project, error) {

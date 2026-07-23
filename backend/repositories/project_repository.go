@@ -3,12 +3,14 @@ package repositories
 import (
 	"app-sistem-akuntansi/models"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
 
 type ProjectRepository interface {
 	FindAll() ([]models.Project, error)
+	FindWithFilter(filter models.ProjectFilter) ([]models.Project, int64, error)
 	FindByID(id uint) (*models.Project, error)
 	Create(project *models.Project) error
 	Update(project *models.Project) error
@@ -42,6 +44,59 @@ func (r *projectRepository) FindAll() ([]models.Project, error) {
 	}
 
 	return projects, nil
+}
+
+func (r *projectRepository) FindWithFilter(filter models.ProjectFilter) ([]models.Project, int64, error) {
+	page := filter.Page
+	limit := filter.Limit
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := r.db.Model(&models.Project{})
+	if search := strings.TrimSpace(filter.Search); search != "" {
+		term := "%" + strings.ToLower(search) + "%"
+		query = query.Where(
+			"LOWER(code) LIKE ? OR LOWER(name) LIKE ? OR LOWER(description) LIKE ?",
+			term,
+			term,
+			term,
+		)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	totalPages := int64(1)
+	if total > 0 {
+		totalPages = (total + int64(limit) - 1) / int64(limit)
+	}
+	if int64(page) > totalPages {
+		page = int(totalPages)
+	}
+
+	var projects []models.Project
+	if err := query.
+		Preload("Manager").
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset((page - 1) * limit).
+		Find(&projects).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := r.fillProjectMetrics(projects); err != nil {
+		return nil, 0, err
+	}
+
+	return projects, total, nil
 }
 
 func (r *projectRepository) FindByID(id uint) (*models.Project, error) {
