@@ -78,6 +78,13 @@ func (s *CashBankService) canApproveCashBankTransfer(userID uint, role string) (
 	return defaultPermission != nil && defaultPermission.CanApprove, nil
 }
 
+// canViewAllCashBankTransfers deliberately remains separate from approval rights.
+// Finance Staff and Accounting need a shared operational history, while only users
+// with CanApprove may approve or reject a transfer.
+func canViewAllCashBankTransfers(role string) bool {
+	return models.IsFinanceTeamRole(role)
+}
+
 type transferExecutionPlan struct {
 	sourceAccount            *models.CashBank
 	destAccount              *models.CashBank
@@ -1133,11 +1140,7 @@ func (s *CashBankService) GetTransfers(userID uint, role string, status string, 
 		query = query.Where("status = ?", normalizedStatus)
 	}
 
-	canApprove, err := s.canApproveCashBankTransfer(userID, role)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve cash bank approval permission: %w", err)
-	}
-	if !canApprove {
+	if !canViewAllCashBankTransfers(role) {
 		query = query.Where("user_id = ?", userID)
 	}
 

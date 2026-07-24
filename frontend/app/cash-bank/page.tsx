@@ -1629,7 +1629,7 @@ const CashBankPage: React.FC = () => {
                     <Text fontSize="sm" color={mutedTextColor} mt={1}>
                       {canApproveTransferRequests
                         ? "Review transfer antar bank yang diajukan selain finance manager sebelum saldo dipindahkan."
-                        : "Pantau status transfer antar bank yang Anda buat dari halaman cash & bank."}
+                        : "Pantau status transfer antar bank dari halaman cash & bank."}
                     </Text>
                   </Box>
                   <HStack spacing={3}>

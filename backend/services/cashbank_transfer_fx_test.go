@@ -85,6 +85,92 @@ func TestCashBankTransferApprovalUsesManagedPermission(t *testing.T) {
 	require.True(t, allowed, "managed grant must override employee default")
 }
 
+func TestGetTransfers_FinanceTeamSeesSharedHistoryWithoutApprovalRights(t *testing.T) {
+	db := setupCashBankTransferFXTestDB(t)
+	service := NewCashBankService(
+		db,
+		repositories.NewCashBankRepository(db),
+		repositories.NewAccountRepository(db),
+	)
+
+	financeStaffOne := models.User{
+		Username: "transfer-history-finance-staff-one",
+		Email:    "transfer-history-finance-staff-one@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceStaff,
+		IsActive: true,
+	}
+	financeStaffTwo := models.User{
+		Username: "transfer-history-finance-staff-two",
+		Email:    "transfer-history-finance-staff-two@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceStaff,
+		IsActive: true,
+	}
+	accounting := models.User{
+		Username: "transfer-history-accounting",
+		Email:    "transfer-history-accounting@test.local",
+		Password: "secret",
+		Role:     models.RoleAccounting,
+		IsActive: true,
+	}
+	employee := models.User{
+		Username: "transfer-history-employee",
+		Email:    "transfer-history-employee@test.local",
+		Password: "secret",
+		Role:     models.RoleEmployee,
+		IsActive: true,
+	}
+
+	for _, user := range []*models.User{&financeStaffOne, &financeStaffTwo, &accounting, &employee} {
+		require.NoError(t, db.Create(user).Error)
+	}
+
+	createTransfer := func(number string, userID uint) CashBankTransfer {
+		transfer := CashBankTransfer{
+			TransferNumber:   number,
+			FromAccountID:    1,
+			ToAccountID:      2,
+			Date:             time.Now(),
+			Amount:           100000,
+			Status:           TransferStatusPendingApproval,
+			UserID:           userID,
+			ApprovalRequired: true,
+		}
+		require.NoError(t, db.Create(&transfer).Error)
+		return transfer
+	}
+
+	firstTransfer := createTransfer("TRF-SHARED-001", financeStaffOne.ID)
+	createTransfer("TRF-SHARED-002", accounting.ID)
+	createTransfer("TRF-SHARED-003", employee.ID)
+
+	financeStaffHistory, err := service.GetTransfers(financeStaffTwo.ID, financeStaffTwo.Role, "", 20)
+	require.NoError(t, err)
+	require.Len(t, financeStaffHistory, 3)
+
+	accountingHistory, err := service.GetTransfers(accounting.ID, accounting.Role, "", 20)
+	require.NoError(t, err)
+	require.Len(t, accountingHistory, 3)
+
+	employeeHistory, err := service.GetTransfers(employee.ID, employee.Role, "", 20)
+	require.NoError(t, err)
+	require.Len(t, employeeHistory, 1)
+	require.Equal(t, "TRF-SHARED-003", employeeHistory[0].TransferNumber)
+
+	for _, user := range []models.User{financeStaffTwo, accounting} {
+		canApprove, err := service.canApproveCashBankTransfer(user.ID, user.Role)
+		require.NoError(t, err)
+		require.False(t, canApprove)
+
+		_, err = service.ApproveTransfer(firstTransfer.ID, user.ID, user.Role)
+		require.EqualError(t, err, "you do not have permission to approve transfers")
+
+		_, err = service.RejectTransfer(firstTransfer.ID, user.ID, user.Role, "not authorized")
+		require.EqualError(t, err, "you do not have permission to reject transfers")
+	}
+}
+
 func ensureCashBankTransferApprovalColumns(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
