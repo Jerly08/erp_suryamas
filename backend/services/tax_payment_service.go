@@ -339,7 +339,7 @@ func (s *TaxPaymentService) generatePaymentCode(prefix string, tx *gorm.DB) stri
 func (s *TaxPaymentService) GetPPNPaymentsByType(paymentType string, startDate, endDate time.Time) ([]models.Payment, error) {
 	var payments []models.Payment
 
-	query := s.db.Preload("Contact").Preload("User").Preload("TaxAccount").Preload("CashBank").
+	query := s.db.Preload("Contact").Preload("User").Preload("CashBank").
 		Where("payment_type = ?", paymentType)
 
 	if !startDate.IsZero() {

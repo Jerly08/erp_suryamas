@@ -7750,9 +7750,14 @@ const PurchasesPage: React.FC = () => {
               </Modal>
 
               {/* Edit Purchase Modal */}
-              <Modal isOpen={isEditOpen} onClose={onEditClose} size="2xl">
+              <Modal
+                isOpen={isEditOpen}
+                onClose={onEditClose}
+                size="2xl"
+                scrollBehavior="inside"
+              >
                 <ModalOverlay />
-                <ModalContent bg={modalContentBg}>
+                <ModalContent bg={modalContentBg} maxW="95vw" maxH="95vh">
                   <ModalHeader
                     bg={modalHeaderBg}
                     borderBottomWidth={1}
@@ -7761,8 +7766,67 @@ const PurchasesPage: React.FC = () => {
                     Edit Purchase - {selectedPurchase?.code}
                   </ModalHeader>
                   <ModalCloseButton />
-                  <ModalBody>
+                  <ModalBody overflowY="auto" px={{ base: 4, md: 6 }} pb={2}>
                     <VStack spacing={4} align="stretch">
+                      <Card>
+                        <CardHeader pb={3}>
+                          <Text
+                            fontSize="md"
+                            fontWeight="semibold"
+                            color={textPrimary}
+                          >
+                            Informasi Transaksi
+                          </Text>
+                        </CardHeader>
+                        <CardBody pt={0}>
+                          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                            <FormControl isRequired>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Tanggal Pembelian
+                              </FormLabel>
+                              <Input
+                                type="date"
+                                size="sm"
+                                value={formData.date}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    date: e.target.value,
+                                  })
+                                }
+                                bg={inputBg}
+                                color={inputTextColor}
+                                borderColor={inputBorderColor}
+                                _hover={{ borderColor: inputHoverBorder }}
+                                _focusVisible={fieldFocusStyles}
+                              />
+                            </FormControl>
+
+                            <FormControl>
+                              <FormLabel fontSize="sm" fontWeight="medium">
+                                Tanggal Jatuh Tempo
+                              </FormLabel>
+                              <Input
+                                type="date"
+                                size="sm"
+                                value={formData.due_date}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    due_date: e.target.value,
+                                  })
+                                }
+                                bg={inputBg}
+                                color={inputTextColor}
+                                borderColor={inputBorderColor}
+                                _hover={{ borderColor: inputHoverBorder }}
+                                _focusVisible={fieldFocusStyles}
+                              />
+                            </FormControl>
+                          </SimpleGrid>
+                        </CardBody>
+                      </Card>
+
                       {/* Tax Configuration Section */}
                       <Card>
                         <CardHeader pb={3}>
