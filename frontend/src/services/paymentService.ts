@@ -52,6 +52,7 @@ export interface Payment {
   book_amount_idr?: number;
   forex_gain_loss_amount?: number;
   forex_gain_loss_type?: string;
+  legacy_non_invoice_eligible?: boolean;
   method: string;
   reference: string;
   status: 'PENDING' | 'PENDING_ACCOUNTING' | 'PENDING_FINAL_REVIEW' | 'COMPLETED' | 'FAILED' | 'DRAFT' | 'REJECTED' | 'REVERSED';

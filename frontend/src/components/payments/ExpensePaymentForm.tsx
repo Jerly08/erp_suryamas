@@ -181,6 +181,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const isFinanceManagerSubmitter = isFinanceManagerRole(userRole);
   const canRequestDirectorApproval = isFinanceManagerRole(userRole);
   const isAccountingCOAReview = initialData?.status === 'PENDING_ACCOUNTING';
+  const isLegacyNonInvoiceAccountingReview =
+    isAccountingCOAReview && Boolean(initialData?.legacy_non_invoice_eligible);
   const isNewNonInvoiceAccountingReview =
     isAccountingCOAReview && !initialData?.expense_account_id;
   const canSelectExpenseAccountFromCOA =
@@ -799,7 +801,13 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         <ModalHeader flexShrink={0}>
           <HStack>
             <Icon as={FiBriefcase} />
-            <Text>{isNewNonInvoiceAccountingReview ? 'Lengkapi COA Kontra' : t('payments.form.createExpensePayment')}</Text>
+            <Text>
+              {isLegacyNonInvoiceAccountingReview
+                ? 'Lengkapi COA Kontra (Legacy)'
+                : isNewNonInvoiceAccountingReview
+                  ? 'Lengkapi COA Kontra'
+                  : t('payments.form.createExpensePayment')}
+            </Text>
           </HStack>
         </ModalHeader>
         <ModalCloseButton />
@@ -826,7 +834,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                 <AlertIcon />
                 <AlertDescription fontSize="sm">
                   {isNewNonInvoiceAccountingReview
-                    ? 'Accounting melengkapi COA kontra dan perlakuan PPh. Detail pembayaran serta kas/bank ditetapkan oleh Finance dan tidak dapat diubah pada tahap ini.'
+                    ? isLegacyNonInvoiceAccountingReview
+                      ? 'Transaksi lama ini belum memiliki jurnal, alokasi invoice/bill, tautan purchase, atau mutasi kas/bank. Accounting dapat melengkapi COA kontra untuk mengirimkannya ke review akhir Finance Manager.'
+                      : 'Accounting melengkapi COA kontra dan perlakuan PPh. Detail pembayaran serta kas/bank ditetapkan oleh Finance dan tidak dapat diubah pada tahap ini.'
                     : 'Gunakan form ini untuk pembayaran non-invoice seperti beban langsung, pelunasan kewajiban, pinjaman karyawan, atau piutang intercompany.'}
                 </AlertDescription>
               </Alert>

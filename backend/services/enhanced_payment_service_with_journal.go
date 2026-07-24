@@ -74,7 +74,14 @@ type ExpensePaymentAccountingReviewRequest struct {
 
 // ListPayments returns paginated payments with filters (SSOT-compatible)
 func (eps *EnhancedPaymentServiceWithJournal) ListPayments(filter repositories.PaymentFilter) (*repositories.PaymentResult, error) {
-	return eps.paymentRepo.FindWithFilter(filter)
+	result, err := eps.paymentRepo.FindWithFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	if err := eps.markLegacyNonInvoiceEligibilityForPayments(result.Data); err != nil {
+		return nil, fmt.Errorf("evaluate legacy payment eligibility: %w", err)
+	}
+	return result, nil
 }
 
 // NewEnhancedPaymentServiceWithJournal creates a new instance with journal integration
@@ -651,14 +658,31 @@ func (eps *EnhancedPaymentServiceWithJournal) CompleteExpensePaymentAccountingRe
 	actorUserID uint,
 	req ExpensePaymentAccountingReviewRequest,
 ) (*models.Payment, error) {
+	return eps.completeExpensePaymentAccountingReview(paymentID, actorUserID, req, false)
+}
+
+// CompleteLegacyNonInvoicePaymentAccountingReview bridges a single eligible
+// legacy record into the normal non-invoice flow. The eligibility is rechecked
+// inside the transaction so the client cannot reclassify linked or posted data.
+func (eps *EnhancedPaymentServiceWithJournal) CompleteLegacyNonInvoicePaymentAccountingReview(
+	paymentID uint,
+	actorUserID uint,
+	req ExpensePaymentAccountingReviewRequest,
+) (*models.Payment, error) {
+	return eps.completeExpensePaymentAccountingReview(paymentID, actorUserID, req, true)
+}
+
+func (eps *EnhancedPaymentServiceWithJournal) completeExpensePaymentAccountingReview(
+	paymentID uint,
+	actorUserID uint,
+	req ExpensePaymentAccountingReviewRequest,
+	allowLegacy bool,
+) (*models.Payment, error) {
 	var payment models.Payment
 
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&payment, paymentID).Error; err != nil {
 			return fmt.Errorf("payment not found: %w", err)
-		}
-		if payment.PaymentType != models.PaymentTypeExpense {
-			return fmt.Errorf("only non-invoice payments can be reviewed through this workflow")
 		}
 		if payment.Status != models.PaymentStatusPendingAccounting {
 			return fmt.Errorf("payment is not waiting for accounting COA (current: %s)", payment.Status)
@@ -668,6 +692,19 @@ func (eps *EnhancedPaymentServiceWithJournal) CompleteExpensePaymentAccountingRe
 		}
 		if payment.ExpenseAccountID != nil {
 			return fmt.Errorf("this payment already has a contra COA; legacy payments are not changed by the new workflow")
+		}
+		if payment.PaymentType != models.PaymentTypeExpense {
+			if !allowLegacy {
+				return fmt.Errorf("only non-invoice payments can be reviewed through this workflow")
+			}
+			eligible, err := eps.isLegacyNonInvoicePaymentEligible(tx, &payment)
+			if err != nil {
+				return err
+			}
+			if !eligible {
+				return fmt.Errorf("legacy payment is not eligible for non-invoice COA completion")
+			}
+			payment.PaymentType = models.PaymentTypeExpense
 		}
 		if req.ExpenseAccountID == 0 {
 			return fmt.Errorf("COA transaksi wajib dipilih oleh Accounting")
@@ -1774,6 +1811,9 @@ func (eps *EnhancedPaymentServiceWithJournal) GetPaymentWithJournal(paymentID ui
 		Preload("CashBank.Account").
 		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
+	}
+	if err := eps.markLegacyNonInvoiceEligibility(&payment); err != nil {
+		return nil, fmt.Errorf("evaluate legacy payment eligibility: %w", err)
 	}
 
 	response := &PaymentWithJournalResponse{

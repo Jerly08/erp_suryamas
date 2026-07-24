@@ -9,18 +9,21 @@ import (
 )
 
 type Payment struct {
-	ID                       uint       `json:"id" gorm:"primaryKey"`
-	Code                     string     `json:"code" gorm:"unique;not null;size:30"`
-	ContactID                uint       `json:"contact_id" gorm:"not null;index"`
-	UserID                   uint       `json:"user_id" gorm:"not null;index"`
-	Date                     time.Time  `json:"date"`
-	Amount                   float64    `json:"amount" gorm:"type:decimal(15,2);default:0"`
-	NativeAmount             float64    `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
-	Currency                 string     `json:"currency" gorm:"size:5;default:'IDR';not null"`
-	ExchangeRate             float64    `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
-	BookAmountIDR            float64    `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
-	ForexGainLossAmount      float64    `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
-	ForexGainLossType        string     `json:"forex_gain_loss_type" gorm:"size:10"`
+	ID                  uint      `json:"id" gorm:"primaryKey"`
+	Code                string    `json:"code" gorm:"unique;not null;size:30"`
+	ContactID           uint      `json:"contact_id" gorm:"not null;index"`
+	UserID              uint      `json:"user_id" gorm:"not null;index"`
+	Date                time.Time `json:"date"`
+	Amount              float64   `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	NativeAmount        float64   `json:"native_amount" gorm:"type:decimal(20,6);default:0"`
+	Currency            string    `json:"currency" gorm:"size:5;default:'IDR';not null"`
+	ExchangeRate        float64   `json:"exchange_rate" gorm:"type:decimal(15,6);default:1;not null"`
+	BookAmountIDR       float64   `json:"book_amount_idr" gorm:"type:decimal(20,2);default:0;not null"`
+	ForexGainLossAmount float64   `json:"forex_gain_loss_amount" gorm:"type:decimal(20,2);default:0"`
+	ForexGainLossType   string    `json:"forex_gain_loss_type" gorm:"size:10"`
+	// LegacyNonInvoiceEligible is calculated by the payment service. It is never
+	// persisted and only exposes the narrowly-scoped compatibility action to Accounting.
+	LegacyNonInvoiceEligible bool       `json:"legacy_non_invoice_eligible" gorm:"-"`
 	Method                   string     `json:"method" gorm:"size:20"` // CASH, BANK_TRANSFER, CHECK, etc.
 	Reference                string     `json:"reference" gorm:"size:50"`
 	Status                   string     `json:"status" gorm:"size:20"`             // DRAFT, COMPLETED, FAILED, REVERSED (PENDING is legacy transitional data)

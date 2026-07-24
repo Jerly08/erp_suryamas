@@ -400,7 +400,7 @@ const PaymentsPage: React.FC = () => {
       return;
     }
 
-    if (payment.payment_type === 'EXPENSE') {
+    if (payment.payment_type === 'EXPENSE' || payment.legacy_non_invoice_eligible) {
       setSelectedPayment(payment);
       setShowExpensePayment(true);
       return;
@@ -671,6 +671,8 @@ const PaymentsPage: React.FC = () => {
                 {row.status === 'PENDING_ACCOUNTING'
                   ? row.payment_type === 'EXPENSE' && !row.expense_account_id
                     ? 'Set COA Kontra'
+                    : row.legacy_non_invoice_eligible
+                      ? 'Lengkapi COA Kontra (Legacy)'
                     : 'Set COA / Pembayaran'
                   : row.status === 'PENDING_FINAL_REVIEW'
                     ? 'Ubah / Review COA'

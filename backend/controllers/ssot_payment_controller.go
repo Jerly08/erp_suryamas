@@ -480,25 +480,37 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can revise COA before journal posting"})
 		return
 	}
+	isNativeNonInvoiceReview := currentPayment.PaymentType == models.PaymentTypeExpense
+	isLegacyNonInvoiceReview := currentPayment.LegacyNonInvoiceEligible
 	if currentPayment.Status == models.PaymentStatusPendingAccounting &&
-		currentPayment.PaymentType == models.PaymentTypeExpense &&
+		(isNativeNonInvoiceReview || isLegacyNonInvoiceReview) &&
 		currentPayment.ExpenseAccountID == nil {
 		if reqData.ExpenseAccountID == nil || *reqData.ExpenseAccountID == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "COA transaksi wajib dipilih oleh Accounting"})
 			return
 		}
 
-		payment, err := ctrl.enhancedPaymentService.CompleteExpensePaymentAccountingReview(
-			uint(paymentID),
-			actorUserID,
-			services.ExpensePaymentAccountingReviewRequest{
-				ExpenseAccountID:          *reqData.ExpenseAccountID,
-				PPHType:                   reqData.PPHType,
-				PPHRate:                   reqData.PPHRate,
-				PPHAmount:                 reqData.PPHAmount,
-				AllowLiabilityOverpayment: reqData.AllowOverpayment,
-			},
-		)
+		reviewRequest := services.ExpensePaymentAccountingReviewRequest{
+			ExpenseAccountID:          *reqData.ExpenseAccountID,
+			PPHType:                   reqData.PPHType,
+			PPHRate:                   reqData.PPHRate,
+			PPHAmount:                 reqData.PPHAmount,
+			AllowLiabilityOverpayment: reqData.AllowOverpayment,
+		}
+		var payment *models.Payment
+		if isLegacyNonInvoiceReview {
+			payment, err = ctrl.enhancedPaymentService.CompleteLegacyNonInvoicePaymentAccountingReview(
+				uint(paymentID),
+				actorUserID,
+				reviewRequest,
+			)
+		} else {
+			payment, err = ctrl.enhancedPaymentService.CompleteExpensePaymentAccountingReview(
+				uint(paymentID),
+				actorUserID,
+				reviewRequest,
+			)
+		}
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":   "Failed to complete accounting COA",
