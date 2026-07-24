@@ -669,7 +669,9 @@ const PaymentsPage: React.FC = () => {
             {canEditPaymentBeforePosting(row) && (
               <MenuItem icon={<FiEdit />} onClick={() => handleEditPayment(row)}>
                 {row.status === 'PENDING_ACCOUNTING'
-                  ? 'Set COA / Pembayaran'
+                  ? row.payment_type === 'EXPENSE' && !row.expense_account_id
+                    ? 'Set COA Kontra'
+                    : 'Set COA / Pembayaran'
                   : row.status === 'PENDING_FINAL_REVIEW'
                     ? 'Ubah / Review COA'
                     : t('payments.edit')}

@@ -61,8 +61,7 @@ import { AccountCatalogItem } from '@/types/account';
 import CurrencyInput from '@/components/common/CurrencyInput';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import { useAuth } from '@/contexts/AuthContext';
-import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
-import { useModulePermissions } from '@/hooks/usePermissions';
+import { isAccountingRole, isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import {
   filterActiveLeafAccounts,
   filterOperationalCashBankAccounts,
@@ -125,7 +124,7 @@ interface ExpensePaymentFormProps {
 
 interface ExpensePaymentFormData {
   contact_id: number;
-  expense_account_id: number;
+  expense_account_id?: number;
   cash_bank_id: number;
   date: string;
   amount: number;
@@ -176,14 +175,16 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const { token, user } = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
-  const { canView: canViewAccounts } = useModulePermissions('accounts');
 
-  // Finance manager can submit directly; other roles go through approval.
+  // Finance records payment facts. Accounting owns the contra COA and PPh stage.
   const userRole = normalizeRole(user?.role);
   const isFinanceManagerSubmitter = isFinanceManagerRole(userRole);
   const canRequestDirectorApproval = isFinanceManagerRole(userRole);
+  const isAccountingCOAReview = initialData?.status === 'PENDING_ACCOUNTING';
+  const isNewNonInvoiceAccountingReview =
+    isAccountingCOAReview && !initialData?.expense_account_id;
   const canSelectExpenseAccountFromCOA =
-    canViewAccounts || isFinanceManagerSubmitter;
+    isAccountingCOAReview && (isAccountingRole(userRole) || userRole === 'admin');
 
   // Color mode values
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -202,8 +203,6 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
   const [liabilityAccounts, setLiabilityAccounts] = useState<AccountCatalogItem[]>([]);
   const [employeeLoanAccounts, setEmployeeLoanAccounts] = useState<AccountCatalogItem[]>([]);
   const [intercompanyReceivableAccounts, setIntercompanyReceivableAccounts] = useState<AccountCatalogItem[]>([]);
-  const [defaultExpenseAccountId, setDefaultExpenseAccountId] = useState<number | null>(null);
-  const [defaultExpenseAccountLabel, setDefaultExpenseAccountLabel] = useState('');
   const [cashBanks, setCashBanks] = useState<CashBank[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [checkingClosedPeriod, setCheckingClosedPeriod] = useState(false);
@@ -629,15 +628,6 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         (account) => isIntercompanyReceivableAccount(account) && !isEmployeeLoanAccount(account),
       );
 
-      const fallbackExpenseAccount =
-        activeExpenseAccounts[0] || activeLiabilityAccounts[0] || null;
-      setDefaultExpenseAccountId(fallbackExpenseAccount?.id || null);
-      setDefaultExpenseAccountLabel(
-        fallbackExpenseAccount
-          ? `${fallbackExpenseAccount.code} - ${fallbackExpenseAccount.name}`
-          : '',
-      );
-
       setExpenseAccounts(
         canSelectExpenseAccountFromCOA ? activeExpenseAccounts : [],
       );
@@ -670,23 +660,6 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
       setLoadingAccounts(false);
     }
   };
-
-  useEffect(() => {
-    if (
-      isOpen &&
-      !canSelectExpenseAccountFromCOA &&
-      defaultExpenseAccountId &&
-      (!selectedAccountId || Number(selectedAccountId) <= 0)
-    ) {
-      setValue('expense_account_id', defaultExpenseAccountId);
-    }
-  }, [
-    isOpen,
-    canSelectExpenseAccountFromCOA,
-    defaultExpenseAccountId,
-    selectedAccountId,
-    setValue,
-  ]);
 
   const onSubmit = async (data: ExpensePaymentFormData) => {
     setLoading(true);
@@ -744,7 +717,9 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
 
       const payload: any = {
         contact_id: data.contact_id ? Number(data.contact_id) : 0,
-        expense_account_id: Number(data.expense_account_id || defaultExpenseAccountId || 0),
+        expense_account_id: isAccountingCOAReview && data.expense_account_id
+          ? Number(data.expense_account_id)
+          : undefined,
         cash_bank_id: Number(data.cash_bank_id),
         date: data.date,
         amount: data.amount,
@@ -754,35 +729,31 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         notes:
           data.notes ||
           data.description ||
-          `Payment for ${selectedAccount?.code || ''} ${selectedAccount?.name || 'Expense'}`.trim(),
+          `Pembayaran non-invoice${selectedAccount ? ` untuk ${selectedAccount.code} - ${selectedAccount.name}` : ''}`,
         description: data.description || selectedAccount?.name || 'COA / Non-Invoice Payment',
-        auto_create_journal: true,
+        auto_create_journal: false,
         require_director_approval: !!data.require_director_approval,
-        allow_liability_overpayment: isLiabilityOverpayment && !!data.allow_liability_overpayment,
-        pph_type: data.enable_pph ? data.pph_type : '',
-        pph_rate: data.enable_pph ? data.pph_rate : 0,
-        pph_amount: data.enable_pph ? pphAmount : 0,
+        allow_liability_overpayment: isAccountingCOAReview && isLiabilityOverpayment && !!data.allow_liability_overpayment,
+        pph_type: isAccountingCOAReview && data.enable_pph ? data.pph_type : '',
+        pph_rate: isAccountingCOAReview && data.enable_pph ? data.pph_rate : 0,
+        pph_amount: isAccountingCOAReview && data.enable_pph ? pphAmount : 0,
       };
 
       if (initialData?.id) {
-        // Update existing draft
         await paymentService.updateDraftPayment(initialData.id, payload);
         toast({
           title: 'Success',
-          description: 'Expense payment draft has been updated successfully',
+          description: isAccountingCOAReview
+            ? 'COA kontra disimpan dan dikirim ke Finance Manager untuk review akhir'
+            : 'Expense payment draft has been updated successfully',
           status: 'success',
           duration: 3000,
         });
       } else {
-        // Create new expense payment via unified PaymentService
-        const createdPayment = await paymentService.createExpensePayment(payload);
+        await paymentService.createExpensePayment(payload);
         toast({
           title: 'Success',
-          description: createdPayment?.status === 'DRAFT'
-            ? 'Expense payment submitted for finance manager approval'
-            : createdPayment?.status === 'PENDING'
-              ? 'Expense payment submitted for director approval'
-              : 'Expense payment has been created successfully',
+          description: 'Pembayaran non-invoice dikirim ke Finance Manager untuk approval.',
           status: 'success',
           duration: 3000,
         });
@@ -828,7 +799,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
         <ModalHeader flexShrink={0}>
           <HStack>
             <Icon as={FiBriefcase} />
-            <Text>{t('payments.form.createExpensePayment')}</Text>
+            <Text>{isNewNonInvoiceAccountingReview ? 'Lengkapi COA Kontra' : t('payments.form.createExpensePayment')}</Text>
           </HStack>
         </ModalHeader>
         <ModalCloseButton />
@@ -854,16 +825,17 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               <Alert status="info" borderRadius="md">
                 <AlertIcon />
                 <AlertDescription fontSize="sm">
-                  {t('payments.form.expensePaymentDescription')}
+                  {isNewNonInvoiceAccountingReview
+                    ? 'Accounting melengkapi COA kontra dan perlakuan PPh. Detail pembayaran serta kas/bank ditetapkan oleh Finance dan tidak dapat diubah pada tahap ini.'
+                    : 'Gunakan form ini untuk pembayaran non-invoice seperti beban langsung, pelunasan kewajiban, pinjaman karyawan, atau piutang intercompany.'}
                 </AlertDescription>
               </Alert>
 
-              {/* Draft warning for non-finance roles */}
-              {!isFinanceManagerSubmitter && (
+              {!isAccountingCOAReview && (
                 <Alert status="warning" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription fontSize="sm">
-                    Pembayaran ini akan disimpan sebagai <strong>DRAFT</strong> dan perlu disetujui oleh <strong>Finance Manager</strong> sebelum jurnal dibuat.
+                    Finance mengisi detail pembayaran dan akun kas/bank. <strong>COA kontra</strong> serta <strong>PPh</strong> akan dilengkapi Accounting setelah approval Finance Manager.
                   </AlertDescription>
                 </Alert>
               )}
@@ -896,6 +868,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                           onChange={(value) => field.onChange(value ? Number(value) : 0)}
                           placeholder="Tanpa kontak (opsional)"
                           isLoading={loadingAccounts}
+                          isDisabled={isNewNonInvoiceAccountingReview}
                           allowClear
                           size="md"
                         />
@@ -906,65 +879,44 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     </FormHelperText>
                   </FormControl>
 
-                  {/* Contra account selection */}
-                  <FormControl
-                    isInvalid={!!errors.expense_account_id}
-                    isRequired={canSelectExpenseAccountFromCOA}
-                  >
-                    <FormLabel color={labelColor}>
-                      <HStack spacing={1}>
-                        <Icon as={FiBookOpen} />
-                        <Text>{t('payments.form.transactionCOA')}</Text>
-                        <Tooltip label={t('payments.form.expenseAccountTooltip')}>
-                          <Icon as={FiInfo} boxSize={3} color={textColor} />
-                        </Tooltip>
-                      </HStack>
-                    </FormLabel>
-                    <Controller
-                      name="expense_account_id"
-                      control={control}
-                      rules={{
-                        required: canSelectExpenseAccountFromCOA
-                          ? t('payments.form.accountRequired')
-                          : false,
-                      }}
-                      render={({ field }) => (canSelectExpenseAccountFromCOA ? (
-                        <SearchableSelect
-                          options={transactionAccountOptions}
-                          value={field.value || ''}
-                          onChange={(value) => field.onChange(value ? Number(value) : 0)}
-                          placeholder={t('payments.form.selectAccount')}
-                          isLoading={loadingAccounts}
-                          allowClear
-                          size="md"
-                        />
-                      ) : (
-                        <Box
-                          borderWidth="1px"
-                          borderColor={borderColor}
-                          borderRadius="md"
-                          p={3}
-                          bg={selectedAccountBg}
-                        >
-                          <Text fontSize="sm" fontWeight="semibold">
-                            Default COA Sistem
-                          </Text>
-                          <Text fontSize="sm" color={textColor}>
-                            {defaultExpenseAccountLabel ||
-                              'Akun beban default sistem akan dipakai saat payment disimpan.'}
-                          </Text>
-                        </Box>
-                      ))}
-                    />
-                    <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
-                    <FormHelperText color={textColor}>
-                      {canSelectExpenseAccountFromCOA
-                        ? 'Pilih akun lawan kas/bank: beban, kewajiban, pinjaman karyawan, atau piutang intercompany untuk pembayaran non-invoice.'
-                        : 'User ini tidak memilih COA manual. Sistem akan memakai akun beban default.'}
-                    </FormHelperText>
-                  </FormControl>
+                  {isAccountingCOAReview && (
+                    <FormControl
+                      isInvalid={!!errors.expense_account_id}
+                      isRequired
+                    >
+                      <FormLabel color={labelColor}>
+                        <HStack spacing={1}>
+                          <Icon as={FiBookOpen} />
+                          <Text>{t('payments.form.transactionCOA')}</Text>
+                          <Tooltip label={t('payments.form.expenseAccountTooltip')}>
+                            <Icon as={FiInfo} boxSize={3} color={textColor} />
+                          </Tooltip>
+                        </HStack>
+                      </FormLabel>
+                      <Controller
+                        name="expense_account_id"
+                        control={control}
+                        rules={{ required: t('payments.form.accountRequired') }}
+                        render={({ field }) => (
+                          <SearchableSelect
+                            options={transactionAccountOptions}
+                            value={field.value || ''}
+                            onChange={(value) => field.onChange(value ? Number(value) : 0)}
+                            placeholder={t('payments.form.selectAccount')}
+                            isLoading={loadingAccounts}
+                            allowClear
+                            size="md"
+                          />
+                        )}
+                      />
+                      <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
+                      <FormHelperText color={textColor}>
+                        Pilih akun lawan kas/bank: beban, kewajiban, pinjaman karyawan, atau piutang intercompany.
+                      </FormHelperText>
+                    </FormControl>
+                  )}
 
-                  {isSelectedLiabilityAccount && (
+                  {isAccountingCOAReview && isSelectedLiabilityAccount && (
                     <Box width="full" p={3} borderRadius="md" bg={selectedAccountBg} borderWidth={1} borderColor={borderColor}>
                       <VStack spacing={2} align="stretch" fontSize="sm">
                         <HStack justify="space-between">
@@ -1030,7 +982,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     </Box>
                   )}
 
-                  {isSelectedEmployeeLoanAccount && (
+                  {isAccountingCOAReview && isSelectedEmployeeLoanAccount && (
                     <Box width="full" p={3} borderRadius="md" bg={selectedAccountBg} borderWidth={1} borderColor={borderColor}>
                       <VStack spacing={2} align="stretch" fontSize="sm">
                         <HStack justify="space-between">
@@ -1047,7 +999,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                     </Box>
                   )}
 
-                  {selectedIntercompanyReceivableAccount && (
+                  {isAccountingCOAReview && selectedIntercompanyReceivableAccount && (
                     <Box width="full" p={3} borderRadius="md" bg={selectedAccountBg} borderWidth={1} borderColor={borderColor}>
                       <VStack spacing={2} align="stretch" fontSize="sm">
                         <HStack justify="space-between">
@@ -1086,6 +1038,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                           onChange={(value) => field.onChange(value ? Number(value) : 0)}
                           placeholder={t('payments.form.selectAccount')}
                           isLoading={loadingAccounts}
+                          isDisabled={isNewNonInvoiceAccountingReview}
                           allowClear
                           size="md"
                         />
@@ -1114,7 +1067,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                         type="date"
                         {...register('date', { required: t('payments.form.dateRequired') })}
                         borderColor={borderColor}
-                        isDisabled={checkingClosedPeriod}
+                        isDisabled={checkingClosedPeriod || isNewNonInvoiceAccountingReview}
                       />
                       <FormErrorMessage>
                         {errors.date?.message ||
@@ -1145,6 +1098,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                               field.onChange(newMethod);
                               // No need to reset cash_bank_id — we show all accounts regardless of method
                             }}
+                            isDisabled={isNewNonInvoiceAccountingReview}
                           >
                             {PAYMENT_METHODS.map(method => (
                               <option key={method.value} value={method.value}>
@@ -1178,12 +1132,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                           value={field.value}
                           onChange={field.onChange}
                           placeholder="Enter payment amount"
+                          isDisabled={isNewNonInvoiceAccountingReview}
                         />
                       )}
                     />
                     <FormErrorMessage>{errors.amount?.message}</FormErrorMessage>
                     <FormHelperText color={textColor}>
-                      Nilai yang diinput tetap dalam IDR sebagai beban bruto. Jika ada PPh, kas/bank yang keluar mengikuti nilai neto.
+                      {isNewNonInvoiceAccountingReview
+                        ? 'Nilai pembayaran ditetapkan oleh Finance. Accounting menentukan COA kontra dan perlakuan PPh.'
+                        : 'Nilai pembayaran ditetapkan oleh Finance. COA kontra dan perlakuan PPh akan ditentukan Accounting setelah approval Finance Manager.'}
                     </FormHelperText>
                   </FormControl>
 
@@ -1209,6 +1166,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                             }}
                             placeholder="Contoh: 16880.270000"
                             borderColor={borderColor}
+                            isDisabled={isNewNonInvoiceAccountingReview}
                           />
                           <FormHelperText color={textColor}>
                             Kurs ini dipakai untuk menghitung USD yang keluar dari rekening dan realized FX saat nilai buku bank USD berbeda dari kurs pembayaran.
@@ -1292,12 +1250,15 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       {...register('reference')}
                       placeholder="e.g., Invoice number, receipt number"
                       borderColor={borderColor}
+                      isDisabled={isNewNonInvoiceAccountingReview}
                     />
                     <FormHelperText color={textColor}>
                       Optional: External reference number for this payment
                     </FormHelperText>
                   </FormControl>
 
+                  {isAccountingCOAReview && (
+                    <>
                   {/* === PPh Tax Configuration === */}
                   <Divider />
                   <FormControl display="flex" alignItems="center">
@@ -1451,6 +1412,8 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       </VStack>
                     </Box>
                   )}
+                    </>
+                  )}
 
                   {/* Description */}
                   <FormControl>
@@ -1459,6 +1422,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       {...register('description')}
                       placeholder="Brief description of the expense"
                       borderColor={borderColor}
+                      isDisabled={isNewNonInvoiceAccountingReview}
                     />
                   </FormControl>
 
@@ -1470,6 +1434,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       placeholder="Additional notes or details"
                       borderColor={borderColor}
                       rows={3}
+                      isDisabled={isNewNonInvoiceAccountingReview}
                     />
                   </FormControl>
 
@@ -1487,7 +1452,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
               )}
 
               {/* Display selected account info */}
-              {selectedAccount && (
+              {isAccountingCOAReview && selectedAccount && (
                 <Box
                   width="full"
                   p={3}
@@ -1515,12 +1480,12 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
             </Button>
             <Button
               type="submit"
-              colorScheme={isFinanceManagerSubmitter ? 'blue' : 'orange'}
+              colorScheme={isAccountingCOAReview ? 'purple' : 'orange'}
               isLoading={loading}
               isDisabled={loadingAccounts || isDateClosed || checkingClosedPeriod}
               leftIcon={<FiDollarSign />}
             >
-              {isFinanceManagerSubmitter ? t('payments.form.createExpensePayment') : 'Submit for Approval'}
+              {isAccountingCOAReview ? 'Simpan COA & Kirim ke FM' : 'Kirim ke Approval FM'}
             </Button>
           </ModalFooter>
         </Box>

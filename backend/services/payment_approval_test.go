@@ -5,11 +5,171 @@ import (
 	"time"
 
 	"app-sistem-akuntansi/models"
+	"app-sistem-akuntansi/repositories"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestNewNonInvoicePaymentDefersContraCOAToAccounting(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Skipf("sqlite test unavailable: %v", err)
+	}
+
+	require.NoError(t, db.AutoMigrate(
+		&models.User{},
+		&models.Contact{},
+		&models.Account{},
+		&models.CashBank{},
+		&models.Payment{},
+		&models.AccountingPeriod{},
+	))
+
+	financeStaff := models.User{
+		Username: "finance-staff-non-invoice",
+		Email:    "finance-staff-non-invoice@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceStaff,
+	}
+	financeManager := models.User{
+		Username: "finance-manager-non-invoice",
+		Email:    "finance-manager-non-invoice@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceManager,
+	}
+	accounting := models.User{
+		Username: "accounting-non-invoice",
+		Email:    "accounting-non-invoice@test.local",
+		Password: "secret",
+		Role:     models.RoleAccounting,
+	}
+	require.NoError(t, db.Create(&financeStaff).Error)
+	require.NoError(t, db.Create(&financeManager).Error)
+	require.NoError(t, db.Create(&accounting).Error)
+
+	cashGL := models.Account{
+		Code:     "1101-TEST-NON-INVOICE",
+		Name:     "Bank Test Non-Invoice",
+		Type:     models.AccountTypeAsset,
+		IsActive: true,
+	}
+	contraAccount := models.Account{
+		Code:     "6101-TEST-NON-INVOICE",
+		Name:     "Beban Test Non-Invoice",
+		Type:     models.AccountTypeExpense,
+		IsActive: true,
+	}
+	pph23Payable := models.Account{
+		Code:     "2102-004",
+		Name:     "Hutang PPh Pasal 23",
+		Type:     models.AccountTypeLiability,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&cashGL).Error)
+	require.NoError(t, db.Create(&contraAccount).Error)
+	require.NoError(t, db.Create(&pph23Payable).Error)
+
+	cashBank := models.CashBank{
+		Code:      "BANK-NON-INVOICE",
+		Name:      "Bank Non-Invoice",
+		Type:      models.CashBankTypeBank,
+		AccountID: cashGL.ID,
+		Currency:  "IDR",
+		Balance:   500000,
+		IsActive:  true,
+		UserID:    financeStaff.ID,
+	}
+	require.NoError(t, db.Create(&cashBank).Error)
+
+	service := &EnhancedPaymentServiceWithJournal{
+		db:           db,
+		cashBankRepo: repositories.NewCashBankRepository(db),
+	}
+
+	payment, err := service.CreateExpensePayment(&ExpensePaymentRequest{
+		UserID:                    financeStaff.ID,
+		CashBankID:                cashBank.ID,
+		ExpenseAccountID:          contraAccount.ID,
+		Date:                      time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC),
+		Amount:                    150000,
+		Method:                    models.PaymentMethodBankTransfer,
+		Reference:                 "NON-INVOICE-001",
+		PPHType:                   "PPH_23",
+		PPHRate:                   2,
+		PPHAmount:                 3000,
+		AllowLiabilityOverpayment: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.PaymentStatusDraft, payment.Status)
+	require.Equal(t, models.PaymentApprovalStageFinanceManager, payment.ApprovalStage)
+	require.Nil(t, payment.ExpenseAccountID)
+	require.Empty(t, payment.PPHType)
+	require.Zero(t, payment.PPHRate)
+	require.Zero(t, payment.PPHAmount)
+	require.Nil(t, payment.JournalEntryID)
+
+	payment, err = service.ApproveExpensePayment(payment.ID, financeManager.ID, false)
+	require.NoError(t, err)
+	require.Equal(t, models.PaymentStatusPendingAccounting, payment.Status)
+	require.Equal(t, models.PaymentApprovalStageAccounting, payment.ApprovalStage)
+	require.Nil(t, payment.ExpenseAccountID)
+	require.Nil(t, payment.JournalEntryID)
+	require.NotNil(t, payment.FinanceManagerApprovedBy)
+	require.Equal(t, financeManager.ID, *payment.FinanceManagerApprovedBy)
+
+	payment, err = service.CompleteExpensePaymentAccountingReview(
+		payment.ID,
+		accounting.ID,
+		ExpensePaymentAccountingReviewRequest{
+			ExpenseAccountID: contraAccount.ID,
+			PPHType:          "PPH_23",
+			PPHRate:          2,
+			PPHAmount:        3000,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PaymentStatusPendingFinalReview, payment.Status)
+	require.Equal(t, models.PaymentApprovalStageFinanceManagerFinal, payment.ApprovalStage)
+	require.NotNil(t, payment.ExpenseAccountID)
+	require.Equal(t, contraAccount.ID, *payment.ExpenseAccountID)
+	require.NotNil(t, payment.AccountingReviewedBy)
+	require.Equal(t, accounting.ID, *payment.AccountingReviewedBy)
+	require.Equal(t, "PPH_23", payment.PPHType)
+	require.Equal(t, 2.0, payment.PPHRate)
+	require.Equal(t, 3000.0, payment.PPHAmount)
+	require.Equal(t, 147000.0, payment.NativeAmount)
+	require.Equal(t, 147000.0, payment.BookAmountIDR)
+	require.Nil(t, payment.JournalEntryID)
+
+	legacyPayment := models.Payment{
+		Code:             "PAY-LEGACY-NON-INVOICE",
+		UserID:           financeStaff.ID,
+		Date:             time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC),
+		Amount:           50000,
+		Method:           models.PaymentMethodBankTransfer,
+		PaymentType:      models.PaymentTypeExpense,
+		Status:           models.PaymentStatusPendingAccounting,
+		ApprovalStage:    models.PaymentApprovalStageAccounting,
+		ExpenseAccountID: &contraAccount.ID,
+		CashBankID:       &cashBank.ID,
+	}
+	require.NoError(t, db.Create(&legacyPayment).Error)
+
+	_, err = service.CompleteExpensePaymentAccountingReview(
+		legacyPayment.ID,
+		accounting.ID,
+		ExpensePaymentAccountingReviewRequest{ExpenseAccountID: contraAccount.ID},
+	)
+	require.ErrorContains(t, err, "legacy payments are not changed")
+
+	var persistedLegacy models.Payment
+	require.NoError(t, db.First(&persistedLegacy, legacyPayment.ID).Error)
+	require.Equal(t, models.PaymentStatusPendingAccounting, persistedLegacy.Status)
+	require.NotNil(t, persistedLegacy.ExpenseAccountID)
+	require.Equal(t, contraAccount.ID, *persistedLegacy.ExpenseAccountID)
+}
 
 func TestRejectPaymentStoresApprovalTrail(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})

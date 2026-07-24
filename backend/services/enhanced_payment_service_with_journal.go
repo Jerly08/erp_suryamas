@@ -27,7 +27,8 @@ type EnhancedPaymentServiceWithJournal struct {
 	statusValidator *StatusValidationHelper // NEW: Konsistensi dengan SalesJournalServiceV2
 }
 
-// ExpensePaymentRequest represents a direct expense payment mapped from COA.
+// ExpensePaymentRequest represents a new non-invoice payment request.
+// Finance records the payment facts first; Accounting classifies the contra COA later.
 // Contact is optional — for bulk payments like salaries, no specific contact is needed.
 type ExpensePaymentRequest struct {
 	ContactID         uint      `json:"contact_id"`
@@ -59,6 +60,16 @@ type ExpensePaymentRequest struct {
 	// AllowLiabilityOverpayment permits paying a LIABILITY account beyond its
 	// current credit balance, intentionally creating a debit-balance overpayment.
 	AllowLiabilityOverpayment bool `json:"allow_liability_overpayment"`
+}
+
+// ExpensePaymentAccountingReviewRequest contains the accounting-only fields
+// that are completed after Finance Manager approval and before journal posting.
+type ExpensePaymentAccountingReviewRequest struct {
+	ExpenseAccountID          uint
+	PPHType                   string
+	PPHRate                   float64
+	PPHAmount                 float64
+	AllowLiabilityOverpayment bool
 }
 
 // ListPayments returns paginated payments with filters (SSOT-compatible)
@@ -311,15 +322,10 @@ func validateExpensePaymentAccountUsage(account models.Account, amount, pphAmoun
 	)
 }
 
-// CreateExpensePayment creates a direct expense payment (Expense/Liability from COA) with SSOT journal integration.
-// It records a row in payments table (PaymentTypeExpense) AND posts a journal entry:
-//
-//	Debit:  expense account (from COA)
-//	Credit: cash/bank GL account linked to selected CashBank.
-//
-// It also updates CashBank balance & history via applyCashBankMovement.
-// If req.SaveAsDraft is true, the payment is saved with status DRAFT and no journal is created.
-// Finance role must call ApproveExpensePayment to post the journal and set status COMPLETED.
+// CreateExpensePayment records a new non-invoice payment as a DRAFT.
+// The transaction is intentionally created without a contra COA or PPh setup:
+// Finance records the payment facts, Finance Manager approves it, Accounting
+// classifies it, then Finance Manager performs the final journal posting.
 func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpensePaymentRequest) (*models.Payment, error) {
 	// Basic validation
 	if req.Amount <= 0 {
@@ -341,16 +347,18 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	if req.Description == "" {
 		req.Description = "COA / Non-Invoice Payment"
 	}
-	if req.ExpenseAccountID == 0 {
-		defaultExpenseAccountID, err := findDefaultExpenseAccountID(eps.db)
-		if err != nil {
-			return nil, fmt.Errorf("expense account ID is required: %w", err)
-		}
-		req.ExpenseAccountID = uint(defaultExpenseAccountID)
-	}
 
-	// DRAFT MODE: save payment without creating journal — for employee role submissions
-	if req.SaveAsDraft || (req.RequestedByFinanceManager && req.RequireDirectorApproval) {
+	// New non-invoice payments must never be classified or posted at creation.
+	// Do not trust client-provided COA/PPh fields here: they belong to Accounting.
+	req.SaveAsDraft = true
+	req.RequestedByFinanceManager = false
+	req.ExpenseAccountID = 0
+	req.PPHType = ""
+	req.PPHRate = 0
+	req.PPHAmount = 0
+	req.AllowLiabilityOverpayment = false
+
+	if req.SaveAsDraft {
 		return eps.createExpensePaymentDraft(req)
 	}
 
@@ -558,8 +566,8 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 	return payment, nil
 }
 
-// createExpensePaymentDraft saves an expense payment without creating a journal.
-// It supports both finance-manager review drafts and director-pending submissions.
+// createExpensePaymentDraft saves an unclassified non-invoice payment without a journal.
+// It is always routed to Finance Manager before Accounting can set the contra COA.
 func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *ExpensePaymentRequest) (*models.Payment, error) {
 	var payment *models.Payment
 
@@ -569,17 +577,8 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 		if err != nil {
 			return fmt.Errorf("cash/bank account not found: %w", err)
 		}
-
-		// Validate expense account exists
-		var expenseAccount models.Account
-		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
-			return fmt.Errorf("expense account not found: %w", err)
-		}
-		if !isAllowedExpensePaymentAccount(expenseAccount) {
-			return fmt.Errorf("COA transaksi pembayaran non-invoice harus akun beban, kewajiban, pinjaman karyawan, atau piutang intercompany; got %s", expenseAccount.Type)
-		}
-		if err := validateExpensePaymentAccountUsage(expenseAccount, req.Amount, req.PPHAmount, req.AllowLiabilityOverpayment); err != nil {
-			return err
+		if cashBank.AccountID == 0 {
+			return fmt.Errorf("cash/bank account %s has no linked GL account", cashBank.Name)
 		}
 
 		// Load contact name if provided
@@ -597,50 +596,25 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			return err
 		}
 
-		status := models.PaymentStatusDraft
-		approvalStage := models.PaymentApprovalStageFinanceManager
-		var financeManagerApprovedBy *uint
-		var financeManagerApprovedAt *time.Time
-		if req.RequestedByFinanceManager && req.RequireDirectorApproval {
-			status = models.PaymentStatusPending
-			approvalStage = models.PaymentApprovalStageDirector
-			now := time.Now()
-			financeManagerApprovedBy = &req.UserID
-			financeManagerApprovedAt = &now
-		}
-
-		reference := req.Reference
-		if req.AllowLiabilityOverpayment &&
-			expenseAccount.Type == models.AccountTypeLiability &&
-			req.Amount > expenseAccount.Balance+0.01 {
-			reference = models.MarkExpenseLiabilityOverpaymentReference(reference)
-		}
-
 		payment = &models.Payment{
-			ContactID:                req.ContactID,
-			UserID:                   req.UserID,
-			Date:                     req.Date,
-			Amount:                   req.Amount,
-			NativeAmount:             calculation.NativeCashOut,
-			Currency:                 calculation.NormalizedCurrency,
-			ExchangeRate:             calculation.AppliedExchangeRate,
-			BookAmountIDR:            calculation.BankBookOutIDR,
-			ForexGainLossAmount:      calculation.ForexGainLossAmount,
-			ForexGainLossType:        calculation.ForexGainLossType,
-			Method:                   req.Method,
-			ExpenseAccountID:         &req.ExpenseAccountID,
-			CashBankID:               &req.CashBankID,
-			Reference:                reference,
-			Status:                   status,
-			ApprovalStage:            approvalStage,
-			RequireDirectorApproval:  req.RequireDirectorApproval,
-			FinanceManagerApprovedBy: financeManagerApprovedBy,
-			FinanceManagerApprovedAt: financeManagerApprovedAt,
-			PaymentType:              models.PaymentTypeExpense,
-			Notes:                    fmt.Sprintf("%s [Contact: %s] [Beban: %s] [CashBank: %s]", req.Notes, contactName, expenseAccount.Name, cashBank.Name),
-			PPHType:                  req.PPHType,
-			PPHRate:                  req.PPHRate,
-			PPHAmount:                req.PPHAmount,
+			ContactID:               req.ContactID,
+			UserID:                  req.UserID,
+			Date:                    req.Date,
+			Amount:                  req.Amount,
+			NativeAmount:            calculation.NativeCashOut,
+			Currency:                calculation.NormalizedCurrency,
+			ExchangeRate:            calculation.AppliedExchangeRate,
+			BookAmountIDR:           calculation.BankBookOutIDR,
+			ForexGainLossAmount:     calculation.ForexGainLossAmount,
+			ForexGainLossType:       calculation.ForexGainLossType,
+			Method:                  req.Method,
+			CashBankID:              &req.CashBankID,
+			Reference:               models.StripInternalPaymentReference(req.Reference),
+			Status:                  models.PaymentStatusDraft,
+			ApprovalStage:           models.PaymentApprovalStageFinanceManager,
+			RequireDirectorApproval: req.RequireDirectorApproval,
+			PaymentType:             models.PaymentTypeExpense,
+			Notes:                   fmt.Sprintf("%s [Contact: %s] [CashBank: %s] [COA: menunggu Accounting]", req.Notes, contactName, cashBank.Name),
 		}
 		snapshot, snapshotErr := loadCashBankSnapshot(tx, req.CashBankID)
 		if snapshotErr != nil {
@@ -658,8 +632,8 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 			return fmt.Errorf("failed to create draft expense payment: %w", err)
 		}
 
-		log.Printf("Expense payment saved for approval: ID=%d, Code=%s, Status=%s, Amount=%.2f, ExpenseAcc=%s",
-			payment.ID, payment.Code, payment.Status, req.Amount, expenseAccount.Name)
+		log.Printf("Non-invoice payment saved for approval: ID=%d, Code=%s, Status=%s, Amount=%.2f, COA=pending-accounting",
+			payment.ID, payment.Code, payment.Status, req.Amount)
 		return nil
 	})
 
@@ -669,8 +643,140 @@ func (eps *EnhancedPaymentServiceWithJournal) createExpensePaymentDraft(req *Exp
 	return payment, nil
 }
 
-// ApproveExpensePayment processes expense payment approval.
-// Finance manager can either post directly or route to director; director finalizes routed payments.
+// CompleteExpensePaymentAccountingReview assigns the contra COA and optional
+// PPh treatment for a newly created non-invoice payment. Finance-owned payment
+// facts remain unchanged at this stage.
+func (eps *EnhancedPaymentServiceWithJournal) CompleteExpensePaymentAccountingReview(
+	paymentID uint,
+	actorUserID uint,
+	req ExpensePaymentAccountingReviewRequest,
+) (*models.Payment, error) {
+	var payment models.Payment
+
+	err := eps.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&payment, paymentID).Error; err != nil {
+			return fmt.Errorf("payment not found: %w", err)
+		}
+		if payment.PaymentType != models.PaymentTypeExpense {
+			return fmt.Errorf("only non-invoice payments can be reviewed through this workflow")
+		}
+		if payment.Status != models.PaymentStatusPendingAccounting {
+			return fmt.Errorf("payment is not waiting for accounting COA (current: %s)", payment.Status)
+		}
+		if payment.JournalEntryID != nil {
+			return fmt.Errorf("payment already has a journal entry and cannot be reclassified through this workflow")
+		}
+		if payment.ExpenseAccountID != nil {
+			return fmt.Errorf("this payment already has a contra COA; legacy payments are not changed by the new workflow")
+		}
+		if req.ExpenseAccountID == 0 {
+			return fmt.Errorf("COA transaksi wajib dipilih oleh Accounting")
+		}
+
+		var expenseAccount models.Account
+		if err := tx.First(&expenseAccount, req.ExpenseAccountID).Error; err != nil {
+			return fmt.Errorf("COA transaksi tidak ditemukan: %w", err)
+		}
+		if !isAllowedExpensePaymentAccount(expenseAccount) {
+			return fmt.Errorf("COA transaksi pembayaran non-invoice harus akun beban, kewajiban, pinjaman karyawan, atau piutang intercompany; got %s", expenseAccount.Type)
+		}
+		if payment.CashBankID == nil || *payment.CashBankID == 0 {
+			return fmt.Errorf("akun kas/bank pembayaran tidak ditemukan")
+		}
+
+		var cashBank models.CashBank
+		if err := tx.First(&cashBank, *payment.CashBankID).Error; err != nil {
+			return fmt.Errorf("cash/bank account not found: %w", err)
+		}
+		if cashBank.AccountID == 0 {
+			return fmt.Errorf("cash/bank account %s has no linked GL account", cashBank.Name)
+		}
+
+		pphType := strings.ToUpper(strings.TrimSpace(req.PPHType))
+		pphRate := req.PPHRate
+		pphAmount := req.PPHAmount
+		if pphRate < 0 || pphRate > 100 {
+			return fmt.Errorf("tarif PPh harus antara 0 dan 100")
+		}
+		if pphAmount < 0 || pphAmount >= payment.Amount {
+			return fmt.Errorf("nominal PPh harus lebih kecil dari nilai pembayaran")
+		}
+		if pphAmount > 0 {
+			if pphType == "" {
+				return fmt.Errorf("jenis PPh wajib dipilih bila ada potongan PPh")
+			}
+			if _, err := eps.resolvePPHAccountID(tx, pphType); err != nil {
+				return fmt.Errorf("akun hutang PPh tidak valid: %w", err)
+			}
+		} else {
+			pphType = ""
+			pphRate = 0
+		}
+
+		if err := validateExpensePaymentAccountUsage(expenseAccount, payment.Amount, pphAmount, req.AllowLiabilityOverpayment); err != nil {
+			return err
+		}
+		calculation, err := eps.calculateExpensePaymentAmounts(
+			&cashBank,
+			payment.Amount,
+			pphAmount,
+			payment.ExchangeRate,
+		)
+		if err != nil {
+			return err
+		}
+
+		payment.ExpenseAccountID = &expenseAccount.ID
+		payment.PPHType = pphType
+		payment.PPHRate = pphRate
+		payment.PPHAmount = pphAmount
+		payment.Currency = calculation.NormalizedCurrency
+		payment.ExchangeRate = calculation.AppliedExchangeRate
+		payment.NativeAmount = calculation.NativeCashOut
+		payment.BookAmountIDR = calculation.BankBookOutIDR
+		payment.ForexGainLossAmount = calculation.ForexGainLossAmount
+		payment.ForexGainLossType = calculation.ForexGainLossType
+		payment.Reference = models.StripInternalPaymentReference(payment.Reference)
+		if req.AllowLiabilityOverpayment {
+			payment.Reference = models.MarkExpenseLiabilityOverpaymentReference(payment.Reference)
+		}
+		payment.Status = models.PaymentStatusPendingFinalReview
+		payment.ApprovalStage = models.PaymentApprovalStageFinanceManagerFinal
+		now := time.Now()
+		payment.AccountingReviewedBy = &actorUserID
+		payment.AccountingReviewedAt = &now
+
+		if err := tx.Save(&payment).Error; err != nil {
+			return fmt.Errorf("failed to save accounting COA: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := eps.db.
+		Preload("Contact").
+		Preload("User").
+		Preload("FinanceManagerApprover").
+		Preload("DirectorApprover").
+		Preload("AccountingReviewer").
+		Preload("Approver").
+		Preload("Rejector").
+		Preload("ExpenseAccount").
+		Preload("CashBank").
+		Preload("CashBank.Account").
+		First(&payment, paymentID).Error; err != nil {
+		return nil, fmt.Errorf("failed to reload accounting-reviewed payment: %w", err)
+	}
+
+	return &payment, nil
+}
+
+// ApproveExpensePayment advances an expense payment through its approval stage.
+// New non-invoice payments route from Finance Manager to Accounting, then return
+// to Finance Manager for the final journal posting.
 func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID uint, approverUserID uint, requireDirectorApproval bool) (*models.Payment, error) {
 	var payment models.Payment
 	if err := eps.db.First(&payment, paymentID).Error; err != nil {

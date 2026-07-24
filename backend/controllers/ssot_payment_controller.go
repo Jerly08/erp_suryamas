@@ -158,7 +158,7 @@ func (ctrl *SSOTPaymentController) CreatePayablePayment(c *gin.Context) {
 	})
 }
 
-// CreateExpensePayment creates a direct expense payment (from COA) with SSOT journal integration
+// CreateExpensePayment creates a non-invoice payment request for the approval workflow.
 func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	var req services.ExpensePaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -177,16 +177,15 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	}
 	req.UserID = userID
 
-	// Only finance manager can post immediately; everyone else goes through draft approval.
-	role := ""
-	if r, exists := c.Get("role"); exists {
-		if rs, ok := r.(string); ok {
-			role = strings.ToLower(rs)
-		}
-	}
-	isFinanceManager := models.IsFinanceManagerRole(role)
-	req.SaveAsDraft = !isFinanceManager
-	req.RequestedByFinanceManager = isFinanceManager
+	// Finance owns the payment facts only. Contra COA and PPh are deliberately
+	// discarded here and can only be supplied by Accounting after FM approval.
+	req.SaveAsDraft = true
+	req.RequestedByFinanceManager = false
+	req.ExpenseAccountID = 0
+	req.PPHType = ""
+	req.PPHRate = 0
+	req.PPHAmount = 0
+	req.AllowLiabilityOverpayment = false
 
 	payment, err := ctrl.enhancedPaymentService.CreateExpensePayment(&req)
 	if err != nil {
@@ -198,17 +197,7 @@ func (ctrl *SSOTPaymentController) CreateExpensePayment(c *gin.Context) {
 	}
 
 	statusCode := http.StatusCreated
-	message := "Expense payment created successfully"
-	if payment.Status == models.PaymentStatusDraft {
-		message = "Expense payment submitted as DRAFT — waiting for finance approval"
-	}
-
-	if payment.Status == models.PaymentStatusDraft {
-		message = "Expense payment submitted for finance manager approval"
-	}
-	if payment.Status == models.PaymentStatusPending {
-		message = "Expense payment submitted for director approval"
-	}
+	message := "Pembayaran non-invoice tersimpan sebagai draft dan menunggu approval Finance Manager"
 
 	c.JSON(statusCode, gin.H{
 		"message": message,
@@ -489,6 +478,39 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		roleNorm != models.RoleAdmin &&
 		!models.IsFinanceManagerRole(roleNorm) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can revise COA before journal posting"})
+		return
+	}
+	if currentPayment.Status == models.PaymentStatusPendingAccounting &&
+		currentPayment.PaymentType == models.PaymentTypeExpense &&
+		currentPayment.ExpenseAccountID == nil {
+		if reqData.ExpenseAccountID == nil || *reqData.ExpenseAccountID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "COA transaksi wajib dipilih oleh Accounting"})
+			return
+		}
+
+		payment, err := ctrl.enhancedPaymentService.CompleteExpensePaymentAccountingReview(
+			uint(paymentID),
+			actorUserID,
+			services.ExpensePaymentAccountingReviewRequest{
+				ExpenseAccountID:          *reqData.ExpenseAccountID,
+				PPHType:                   reqData.PPHType,
+				PPHRate:                   reqData.PPHRate,
+				PPHAmount:                 reqData.PPHAmount,
+				AllowLiabilityOverpayment: reqData.AllowOverpayment,
+			},
+		)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Failed to complete accounting COA",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "COA kontra disimpan dan pembayaran dikirim ke Finance Manager untuk review akhir",
+			"data":    payment,
+		})
 		return
 	}
 
