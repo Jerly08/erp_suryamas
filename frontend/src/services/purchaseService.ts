@@ -1,5 +1,6 @@
 import api from "./api";
 import { API_ENDPOINTS } from "@/config/api";
+import { getDownloadFilename } from "@/utils/downloadFilename";
 
 export interface PurchaseItemRequest {
   product_id?: number;
@@ -595,13 +596,10 @@ class PurchaseService {
       ? API_ENDPOINTS.PURCHASE_REQUEST_PAYMENT_PROOF_DOWNLOAD(purchasePaymentId)
       : API_ENDPOINTS.PURCHASES_PAYMENT_PROOF_DOWNLOAD(purchasePaymentId);
     const response = await api.get(endpoint, { responseType: "blob" });
-    const disposition = response.headers?.["content-disposition"] || "";
-    const filenameMatch =
-      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-      disposition.match(/filename="?([^"]+)"?/i);
-    const filename = filenameMatch?.[1]
-      ? decodeURIComponent(filenameMatch[1])
-      : fallbackName;
+    const filename = getDownloadFilename(
+      response.headers?.["content-disposition"],
+      fallbackName,
+    );
 
     const url = window.URL.createObjectURL(response.data);
     const link = document.createElement("a");
@@ -620,13 +618,10 @@ class PurchaseService {
     const response = await api.get(API_ENDPOINTS.PURCHASES_DOCUMENT_DOWNLOAD(documentId), {
       responseType: "blob",
     });
-    const disposition = response.headers?.["content-disposition"] || "";
-    const filenameMatch =
-      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-      disposition.match(/filename="?([^"]+)"?/i);
-    const filename = filenameMatch?.[1]
-      ? decodeURIComponent(filenameMatch[1])
-      : fallbackName;
+    const filename = getDownloadFilename(
+      response.headers?.["content-disposition"],
+      fallbackName,
+    );
 
     const url = window.URL.createObjectURL(response.data);
     const link = document.createElement("a");

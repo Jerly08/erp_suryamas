@@ -86,6 +86,7 @@ import AdvancedPaymentForm from '@/components/payments/AdvancedPaymentForm';
 import PaymentDetailModal from '@/components/payments/PaymentDetailModal';
 import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
 import ExpensePaymentForm from '@/components/payments/ExpensePaymentForm';
+import { PostedTransactionCorrectionsQueueModal } from '@/components/corrections/PostedTransactionCorrections';
 import { exportPaymentsToPDF, PDFExportOptions } from '@/utils/pdfExport';
 import { isAccountingRole, isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { getPaymentPPhStatus } from '@/utils/taxPaymentStatus';
@@ -193,6 +194,7 @@ const PaymentsPage: React.FC = () => {
   const [showPPNPayment, setShowPPNPayment] = useState(false);
   const [ppnPaymentType, setPPNPaymentType] = useState<'INPUT' | 'OUTPUT'>('OUTPUT');
   const [showExpensePayment, setShowExpensePayment] = useState(false);
+  const [showCorrectionQueue, setShowCorrectionQueue] = useState(false);
   const [paymentDecisionLoadingId, setPaymentDecisionLoadingId] = useState<number | null>(null);
   const [selectedPaymentForRejection, setSelectedPaymentForRejection] = useState<Payment | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -1177,6 +1179,17 @@ const PaymentsPage: React.FC = () => {
                   >
                     {t('payments.refresh')}
                   </Button>
+                  {(isFinanceManagerApprover || isAccountingReviewer || roleNorm === 'finance_staff' || roleNorm === 'admin') && (
+                    <Button
+                      leftIcon={<FiEdit />}
+                      variant="outline"
+                      colorScheme="orange"
+                      size="md"
+                      onClick={() => setShowCorrectionQueue(true)}
+                    >
+                      Koreksi Transaksi
+                    </Button>
+                  )}
                   {canExport && (
                     <Menu>
                       <MenuButton
@@ -1602,6 +1615,11 @@ const PaymentsPage: React.FC = () => {
                 setShowPaymentDetail(false);
                 setSelectedPayment(null);
               }}
+            />
+
+            <PostedTransactionCorrectionsQueueModal
+              isOpen={showCorrectionQueue}
+              onClose={() => setShowCorrectionQueue(false)}
             />
 
             {/* PPN Payment Modal */}

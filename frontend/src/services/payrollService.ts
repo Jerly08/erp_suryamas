@@ -1,5 +1,6 @@
 import api from '@/services/api';
 import { API_ENDPOINTS } from '@/config/api';
+import { getDownloadFilename } from '@/utils/downloadFilename';
 import type { AxiosResponse } from 'axios';
 
 const PAYROLL_UPLOAD_TIMEOUT_MS = 120000;
@@ -380,13 +381,10 @@ const payrollService = {
     const response = await api.get(API_ENDPOINTS.PAYROLL_DOCUMENT_DOWNLOAD(documentId), {
       responseType: 'blob',
     });
-    const disposition = response.headers?.['content-disposition'] || '';
-    const filenameMatch =
-      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-      disposition.match(/filename="?([^"]+)"?/i);
-    const filename = filenameMatch?.[1]
-      ? decodeURIComponent(filenameMatch[1])
-      : fallbackName;
+    const filename = getDownloadFilename(
+      response.headers?.['content-disposition'],
+      fallbackName,
+    );
 
     const url = window.URL.createObjectURL(response.data);
     const link = document.createElement('a');
@@ -402,13 +400,10 @@ const payrollService = {
     const response = await api.get(API_ENDPOINTS.PAYROLL_EXPORT_EXCEL(id), {
       responseType: 'blob',
     });
-    const disposition = response.headers?.['content-disposition'] || '';
-    const filenameMatch =
-      disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-      disposition.match(/filename="?([^"]+)"?/i);
-    const filename = filenameMatch?.[1]
-      ? decodeURIComponent(filenameMatch[1])
-      : fallbackName;
+    const filename = getDownloadFilename(
+      response.headers?.['content-disposition'],
+      fallbackName,
+    );
 
     const url = window.URL.createObjectURL(response.data);
     const link = document.createElement('a');

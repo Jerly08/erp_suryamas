@@ -28,6 +28,7 @@ import { FiFilePlus } from 'react-icons/fi';
 import { Payment, stripInternalPaymentReference } from '@/services/paymentService';
 import paymentService from '@/services/paymentService';
 import { getPaymentPPhStatus } from '@/utils/taxPaymentStatus';
+import { PostedTransactionCorrectionsPanel } from '@/components/corrections/PostedTransactionCorrections';
 
 interface PaymentDetailModalProps {
   payment: Payment | null;
@@ -286,6 +287,15 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                 <Divider />
               </>
             )}
+
+            <>
+              <Divider />
+              <Box>
+                <PostedTransactionCorrectionsPanel
+                  target={{ paymentId: payment.id, code: payment.code }}
+                />
+              </Box>
+            </>
 
             {/* System Information */}
             <Box>

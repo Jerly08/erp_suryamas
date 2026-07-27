@@ -1187,7 +1187,7 @@ func TestFinanceStaffCanRequestRequesterRevisionBeforeInitialReview(t *testing.T
 	require.InDelta(t, 125000, *revised.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
 }
 
-func TestRequesterRevisionDuringApprovalRequiresReviewerAtCurrentStage(t *testing.T) {
+func TestRequesterRevisionDuringApprovalAllowsFinanceStaffBeforeManagerReview(t *testing.T) {
 	db := newPurchaseRequestTestDB(t)
 	repo := repositories.NewPurchaseRequestRepository(db)
 	service := NewPurchaseRequestService(db, repo, nil)
@@ -1215,20 +1215,18 @@ func TestRequesterRevisionDuringApprovalRequiresReviewerAtCurrentStage(t *testin
 		Reason: "Lanjut ke Finance Manager",
 	})
 	require.NoError(t, err)
+	reviewed, err := service.GetPurchaseRequestByID(pr.ID, financeStaff.ID, financeStaff.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRApprovalStageFinanceManager, reviewed.CurrentApprovalStage)
 
-	_, err = service.OpenPurchaseRequestRequesterRevision(
-		pr.ID,
-		financeStaff.ID,
-		financeStaff.Role,
-		models.PurchaseRequestOpenRevisionPayload{Reason: "Finance Staff mencoba membuka tahap Finance Manager"},
-	)
-	require.ErrorContains(t, err, "only the active purchase request reviewer")
+	require.True(t, canOpenPurchaseRequestRequesterRevision(reviewed, financeStaff.Role))
+	require.True(t, canOpenPurchaseRequestRequesterRevision(reviewed, financeManager.Role))
 
 	opened, err := service.OpenPurchaseRequestRequesterRevision(
 		pr.ID,
-		financeManager.ID,
-		financeManager.Role,
-		models.PurchaseRequestOpenRevisionPayload{Reason: "Nominal dan dokumen perlu diperbaiki PIC"},
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Nominal dan dokumen perlu diperbaiki PIC sebelum review Finance Manager"},
 	)
 	require.NoError(t, err)
 	require.Equal(t, models.PRStatusAwaitingRevision, opened.Status)
@@ -1236,6 +1234,22 @@ func TestRequesterRevisionDuringApprovalRequiresReviewerAtCurrentStage(t *testin
 	require.Equal(t, models.PRApprovalStageFinanceManager, opened.RevisionSnapshots[0].PreviousApprovalStage)
 	require.NotNil(t, opened.RevisionSnapshots[0].FinanceStaffApprovedBy)
 	require.Nil(t, opened.RevisionSnapshots[0].FinanceManagerApprovedBy)
+}
+
+func TestFinanceStaffCannotOpenRequesterRevisionAfterManagerReviewStarts(t *testing.T) {
+	managerReviewAt := time.Now()
+	pr := &models.PurchaseRequest{
+		Status:                    models.PRStatusPendingApproval,
+		CurrentApprovalStage:      models.PRApprovalStageFinanceManager,
+		FinanceManagerApprovedAt:  &managerReviewAt,
+		FinanceManagerReviewNotes: "Perlu penyesuaian",
+		Items: []models.PurchaseRequestItem{
+			{FinanceManagerDecision: models.PRItemDecisionApproved},
+		},
+	}
+
+	require.False(t, canOpenPurchaseRequestRequesterRevision(pr, models.RoleFinanceStaff))
+	require.True(t, canOpenPurchaseRequestRequesterRevision(pr, models.RoleFinanceManager))
 }
 
 func TestOpenRequesterRevisionRejectedWhenPurchaseAlreadyLinked(t *testing.T) {

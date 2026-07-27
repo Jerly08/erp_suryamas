@@ -1,15 +1,11 @@
 import { API_ENDPOINTS } from "@/config/api";
+import { getDownloadFilename } from "@/utils/downloadFilename";
 import api from "./api";
 
 const PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS = 120000;
 
 const downloadBlobResponse = (blob: Blob, disposition: string, fallbackName: string) => {
-  const filenameMatch =
-    disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-    disposition.match(/filename="?([^"]+)"?/i);
-  const filename = filenameMatch?.[1]
-    ? decodeURIComponent(filenameMatch[1])
-    : fallbackName;
+  const filename = getDownloadFilename(disposition, fallbackName);
 
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement("a");

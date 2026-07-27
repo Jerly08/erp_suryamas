@@ -314,6 +314,23 @@ export const API_ENDPOINTS = {
   PAYMENTS_REVERSE: (id: number) => `/api/v1/payments/${id}/reverse`,
   PAYMENTS_WITH_JOURNAL: (id: number) => `/api/v1/payments/${id}/with-journal`,
 
+  // Posted transaction correction workflow
+  POSTED_TRANSACTION_CORRECTIONS: {
+    LIST: "/api/v1/posted-transaction-corrections",
+    CREATE: "/api/v1/posted-transaction-corrections",
+    BY_ID: (id: number) => `/api/v1/posted-transaction-corrections/${id}`,
+    ACCOUNTING_REVIEW: (id: number) =>
+      `/api/v1/posted-transaction-corrections/${id}/accounting-review`,
+    FINANCE_MANAGER_DECISION: (id: number) =>
+      `/api/v1/posted-transaction-corrections/${id}/finance-manager-decision`,
+    COMPLETE: (id: number) =>
+      `/api/v1/posted-transaction-corrections/${id}/complete`,
+    DOCUMENTS: (id: number) =>
+      `/api/v1/posted-transaction-corrections/${id}/documents`,
+    DOCUMENT_DOWNLOAD: (documentId: number) =>
+      `/api/v1/posted-transaction-corrections/documents/${documentId}/download`,
+  },
+
   // Security (with /api/v1 prefix)
   SECURITY_ALERTS: "/api/v1/admin/security/alerts",
   SECURITY_ALERT_ACKNOWLEDGE: (id: number) =>

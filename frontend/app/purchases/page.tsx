@@ -116,6 +116,7 @@ import {
 import SubmitApprovalButton from "@/components/purchase/SubmitApprovalButton";
 import { ApprovalPanel } from "@/components/approval/ApprovalPanel";
 import PurchasePaymentForm from "@/components/purchase/PurchasePaymentForm";
+import { PostedTransactionCorrectionsPanel } from "@/components/corrections/PostedTransactionCorrections";
 import contactService from "@/services/contactService";
 import productService, { Product } from "@/services/productService";
 import accountService from "@/services/accountService";
@@ -7544,6 +7545,23 @@ const PurchasesPage: React.FC = () => {
                             </Text>
                           </FormControl>
                         )}
+
+                        <Box
+                          borderWidth="1px"
+                          borderColor={borderColor}
+                          borderRadius="md"
+                          p={4}
+                        >
+                          <PostedTransactionCorrectionsPanel
+                            target={{
+                              purchaseId: selectedPurchase.id,
+                              code: selectedPurchase.code,
+                            }}
+                            onChanged={() => {
+                              void fetchPurchases();
+                            }}
+                          />
+                        </Box>
 
                         {/* Approval Panel */}
                         <ApprovalPanel

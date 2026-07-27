@@ -146,6 +146,9 @@ func RunMigrations(db *gorm.DB) {
 		&models.CashBank{},
 		&models.CashBankTransaction{},
 		&models.PurchasePayment{},
+		&models.PostedTransactionCorrection{},
+		&models.PostedTransactionCorrectionDocument{},
+		&models.PostedTransactionCorrectionEvent{},
 
 		// Payroll models
 		&models.PayrollRun{},

@@ -692,6 +692,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 
 			// Initialize PurchaseController with PaymentService integration (moved here after paymentService is available)
 			purchaseController := controllers.NewPurchaseController(purchaseService, paymentService, db, accountRepo)
+			postedTransactionCorrectionService := services.NewPostedTransactionCorrectionService(db)
+			postedTransactionCorrectionController := controllers.NewPostedTransactionCorrectionController(postedTransactionCorrectionService)
 
 			// 🔔 Notification routes (accessible by all authenticated users)
 			notifs := protected.Group("/notifications")
@@ -875,6 +877,21 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				paymentsCompat.GET("/unpaid-invoices/:customer_id", permMiddleware.CanView("payments"), paymentController.GetSalesUnpaidInvoices)
 				// Unpaid bills for payable payment form
 				paymentsCompat.GET("/unpaid-bills/:vendor_id", permMiddleware.CanView("payments"), paymentController.GetUnpaidBills)
+			}
+
+			// Corrections after posting are an audited workflow. This group intentionally
+			// does not expose a direct edit of the original purchase or payment.
+			postedTransactionCorrections := protected.Group("/posted-transaction-corrections")
+			postedTransactionCorrections.Use(enhancedSecurity.RequestMonitoring())
+			{
+				postedTransactionCorrections.GET("", postedTransactionCorrectionController.List)
+				postedTransactionCorrections.POST("", postedTransactionCorrectionController.Create)
+				postedTransactionCorrections.GET("/documents/:document_id/download", postedTransactionCorrectionController.DownloadDocument)
+				postedTransactionCorrections.GET("/:id", postedTransactionCorrectionController.GetByID)
+				postedTransactionCorrections.POST("/:id/documents", postedTransactionCorrectionController.UploadDocument)
+				postedTransactionCorrections.POST("/:id/accounting-review", postedTransactionCorrectionController.ReviewAccounting)
+				postedTransactionCorrections.POST("/:id/finance-manager-decision", postedTransactionCorrectionController.DecideFinanceManager)
+				postedTransactionCorrections.POST("/:id/complete", postedTransactionCorrectionController.Complete)
 			}
 
 			// ⚡ ULTRA-FAST: Setup Ultra-Fast Payment routes with minimal operations

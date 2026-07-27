@@ -1446,10 +1446,35 @@ func canOpenPurchaseRequestRequesterRevision(pr *models.PurchaseRequest, role st
 	case models.PRApprovalStageFinanceStaff:
 		return models.IsFinanceStaffRole(roleNorm) || models.IsAccountingRole(roleNorm)
 	case models.PRApprovalStageFinanceManager:
-		return models.IsFinanceManagerRole(roleNorm)
+		if models.IsFinanceManagerRole(roleNorm) {
+			return true
+		}
+
+		// Finance Staff can return a PR to the PIC before Finance Manager starts
+		// its review. Once a Finance Manager decision exists, the correction stays
+		// with that active reviewer to preserve the approval trail.
+		return models.IsFinanceStaffRole(roleNorm) && !financeManagerReviewStarted(pr)
 	default:
 		return false
 	}
+}
+
+func financeManagerReviewStarted(pr *models.PurchaseRequest) bool {
+	if pr == nil {
+		return false
+	}
+	if pr.FinanceManagerApprovedBy != nil || pr.FinanceManagerApprovedAt != nil || strings.TrimSpace(pr.FinanceManagerReviewNotes) != "" {
+		return true
+	}
+
+	for _, item := range pr.Items {
+		decision := strings.ToUpper(strings.TrimSpace(item.FinanceManagerDecision))
+		if decision != "" && decision != models.PRItemDecisionPending {
+			return true
+		}
+	}
+
+	return false
 }
 
 func canSubmitPurchaseRequestRequesterRevision(pr *models.PurchaseRequest, userID uint, userRole string) bool {

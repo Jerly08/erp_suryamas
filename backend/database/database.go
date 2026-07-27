@@ -709,6 +709,9 @@ func AutoMigrate(db *gorm.DB) {
 		&models.Payment{},
 		&models.PaymentAllocation{},
 		&models.PurchasePayment{},
+		&models.PostedTransactionCorrection{},
+		&models.PostedTransactionCorrectionDocument{},
+		&models.PostedTransactionCorrectionEvent{},
 
 		// Payroll
 		&models.PayrollRun{},

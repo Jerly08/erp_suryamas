@@ -1779,6 +1779,24 @@ export default function PurchaseRequestsPage() {
     return !getPurchaseRealizationSummary(pr).hasPurchase;
   };
 
+  const financeManagerReviewStarted = (pr?: PurchaseRequest | null) => {
+    if (!pr) return false;
+    if (
+      pr.finance_manager_approved_by ||
+      pr.finance_manager_approved_at ||
+      pr.finance_manager_review_notes?.trim()
+    ) {
+      return true;
+    }
+
+    return (pr.items || []).some((item) => {
+      const decision = (item.finance_manager_decision || "")
+        .trim()
+        .toUpperCase();
+      return decision !== "" && decision !== "PENDING";
+    });
+  };
+
   const canOpenRequesterRevision = (pr?: PurchaseRequest | null) => {
     if (!pr || !canApprove("purchase_requests")) return false;
     if (pr.status !== "APPROVED" && pr.status !== "PENDING_APPROVAL") {
@@ -1794,7 +1812,10 @@ export default function PurchaseRequestsPage() {
       return isFinanceStaffRole(roleNorm) || isAccountingRole(roleNorm);
     }
     if (stage === "FINANCE_MANAGER") {
-      return isFinanceManagerRole(roleNorm);
+      return (
+        isFinanceManagerRole(roleNorm) ||
+        (isFinanceStaffRole(roleNorm) && !financeManagerReviewStarted(pr))
+      );
     }
     return false;
   };
