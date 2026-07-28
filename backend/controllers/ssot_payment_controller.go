@@ -828,6 +828,49 @@ func (ctrl *SSOTPaymentController) GetPayments(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// GetPaymentTransactions returns the unified, read-only activity list for
+// outgoing payments and sales receipts. Creation remains in the source module.
+func (ctrl *SSOTPaymentController) GetPaymentTransactions(c *gin.Context) {
+	var filter services.PaymentTransactionListFilter
+
+	if page, err := strconv.Atoi(c.DefaultQuery("page", "1")); err == nil {
+		filter.Page = page
+	}
+	if limit, err := strconv.Atoi(c.DefaultQuery("limit", "10")); err == nil {
+		filter.Limit = limit
+	}
+	if contactIDStr := c.Query("contact_id"); contactIDStr != "" {
+		if contactID, err := strconv.ParseUint(contactIDStr, 10, 32); err == nil {
+			filter.ContactID = uint(contactID)
+		}
+	}
+	filter.Status = c.Query("status")
+	filter.Method = c.Query("method")
+	filter.Search = c.Query("search")
+	filter.Kind = c.Query("kind")
+
+	if startDate, err := time.Parse("2006-01-02", c.Query("start_date")); err == nil {
+		filter.StartDate = startDate
+	}
+	if endDate, err := time.Parse("2006-01-02", c.Query("end_date")); err == nil {
+		filter.EndDate = endDate
+	}
+	if models.IsStaffRole(c.GetString("role")) {
+		filter.UserID = getSSOTUserIDFromContext(c)
+	}
+
+	result, err := ctrl.enhancedPaymentService.ListPaymentTransactions(filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch payment transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 // getSSOTUserIDFromContext extracts user ID from JWT context for SSOT payment controller
 func getSSOTUserIDFromContext(c *gin.Context) uint {
 	if userID, exists := c.Get("user_id"); exists {
