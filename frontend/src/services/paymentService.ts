@@ -119,6 +119,36 @@ export interface PaymentResult {
   total_pages: number;
 }
 
+export type PaymentTransactionKind =
+  | 'SALES_RECEIPT'
+  | 'CUSTOMER_RECEIPT'
+  | 'OUTGOING_PAYMENT'
+  | 'NON_INVOICE';
+
+export interface PaymentTransaction extends Payment {
+  row_id: string;
+  record_type: 'PAYMENT' | 'SALE_PAYMENT';
+  record_id: number;
+  transaction_kind: PaymentTransactionKind;
+  source_label: string;
+  source_reference?: string;
+  sale_id?: number;
+  is_invoice_receipt: boolean;
+  is_read_only: boolean;
+}
+
+export interface PaymentTransactionFilters extends PaymentFilters {
+  kind?: 'ALL' | 'RECEIPT' | 'OUTGOING' | 'NON_INVOICE';
+}
+
+export interface PaymentTransactionResult {
+  data: PaymentTransaction[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
 export interface PaymentCreateRequest {
   contact_id: number;
   cash_bank_id?: number;
@@ -215,6 +245,33 @@ class PaymentService {
       throw new Error('No valid payments endpoint available');
     } catch (error) {
       console.error('Error fetching payments:', error);
+      throw error;
+    }
+  }
+
+  // Lists payments and sales receipts together without changing either source
+  // workflow. Invoice receipts remain created from the Sales module.
+  async getPaymentTransactions(
+    filters: PaymentTransactionFilters = {}
+  ): Promise<PaymentTransactionResult> {
+    const params = new URLSearchParams();
+
+    if (filters.page) params.append('page', filters.page.toString());
+    if (filters.limit) params.append('limit', filters.limit.toString());
+    if (filters.contact_id) params.append('contact_id', filters.contact_id.toString());
+    if (filters.status) params.append('status', filters.status);
+    if (filters.method) params.append('method', filters.method);
+    if (filters.search) params.append('search', filters.search);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+    if (filters.kind && filters.kind !== 'ALL') params.append('kind', filters.kind);
+
+    try {
+      const endpoint = API_ENDPOINTS.PAYMENTS.SSOT.TRANSACTIONS;
+      const response = await api.get(`${endpoint}?${params.toString()}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching payment transactions:', error);
       throw error;
     }
   }

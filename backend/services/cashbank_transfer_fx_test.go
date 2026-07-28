@@ -171,6 +171,62 @@ func TestGetTransfers_FinanceTeamSeesSharedHistoryWithoutApprovalRights(t *testi
 	}
 }
 
+func TestGetTransfersOrdersByTransactionDateThenCreationTime(t *testing.T) {
+	db := setupCashBankTransferFXTestDB(t)
+	service := NewCashBankService(
+		db,
+		repositories.NewCashBankRepository(db),
+		repositories.NewAccountRepository(db),
+	)
+
+	viewer := models.User{
+		Username: "transfer-date-order-viewer",
+		Email:    "transfer-date-order-viewer@test.local",
+		Password: "secret",
+		Role:     models.RoleFinanceStaff,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&viewer).Error)
+
+	createdAt := time.Date(2026, time.July, 1, 9, 0, 0, 0, time.UTC)
+	createTransfer := func(number string, transactionDate, createdAt time.Time) {
+		transfer := CashBankTransfer{
+			TransferNumber:   number,
+			FromAccountID:    1,
+			ToAccountID:      2,
+			Date:             transactionDate,
+			Amount:           100000,
+			Status:           TransferStatusPendingApproval,
+			UserID:           viewer.ID,
+			ApprovalRequired: true,
+			CreatedAt:        createdAt,
+		}
+		require.NoError(t, db.Create(&transfer).Error)
+	}
+
+	newerDate := time.Date(2026, time.July, 25, 0, 0, 0, 0, time.UTC)
+	olderDate := time.Date(2026, time.July, 24, 0, 0, 0, 0, time.UTC)
+	createTransfer("TRF-ORDER-NEWER-EARLIER", newerDate, createdAt)
+	createTransfer("TRF-ORDER-OLDER-LATER", olderDate, createdAt.Add(2*time.Hour))
+	createTransfer("TRF-ORDER-NEWER-LATER-A", newerDate, createdAt.Add(time.Hour))
+	createTransfer("TRF-ORDER-NEWER-LATER-B", newerDate, createdAt.Add(time.Hour))
+
+	transfers, err := service.GetTransfers(viewer.ID, viewer.Role, "", 20)
+	require.NoError(t, err)
+	require.Len(t, transfers, 4)
+	require.Equal(t, []string{
+		"TRF-ORDER-NEWER-LATER-B",
+		"TRF-ORDER-NEWER-LATER-A",
+		"TRF-ORDER-NEWER-EARLIER",
+		"TRF-ORDER-OLDER-LATER",
+	}, []string{
+		transfers[0].TransferNumber,
+		transfers[1].TransferNumber,
+		transfers[2].TransferNumber,
+		transfers[3].TransferNumber,
+	})
+}
+
 func ensureCashBankTransferApprovalColumns(t *testing.T, db *gorm.DB) {
 	t.Helper()
 

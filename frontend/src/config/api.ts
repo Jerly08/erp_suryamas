@@ -277,6 +277,7 @@ export const API_ENDPOINTS = {
     // SSOT endpoints (for creation and detail with journal integration)
     SSOT: {
       LIST: "/api/v1/payments/ssot",
+      TRANSACTIONS: "/api/v1/payments/ssot/transactions",
       RECEIVABLE: "/api/v1/payments/ssot/receivable",
       PAYABLE: "/api/v1/payments/ssot/payable",
       EXPENSE: "/api/v1/payments/ssot/expense",

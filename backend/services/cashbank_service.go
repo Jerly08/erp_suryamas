@@ -1133,7 +1133,7 @@ func (s *CashBankService) GetTransfers(userID uint, role string, status string, 
 		Preload("Requester").
 		Preload("Approver").
 		Preload("Rejector").
-		Order("created_at DESC").
+		Order("date DESC, created_at DESC, id DESC").
 		Limit(limit)
 
 	if normalizedStatus := strings.TrimSpace(strings.ToUpper(status)); normalizedStatus != "" {

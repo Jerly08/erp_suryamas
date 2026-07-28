@@ -63,12 +63,13 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 		ssotPayments.POST("/:id/approve-standard", permissionMiddleware.CanApprove("payments"), ssotPaymentController.ApproveStandardPayment)
 		ssotPayments.POST("/:id/reject", permissionMiddleware.CanApprove("payments"), ssotPaymentController.RejectPayment)
 		ssotPayments.PUT("/:id/draft", permissionMiddleware.CanEdit("payments"), ssotPaymentController.UpdateDraftPayment)
-		ssotPayments.GET("/:id", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
 		ssotPayments.POST("/:id/reverse", permissionMiddleware.CanEdit("payments"), ssotPaymentController.ReversePayment)
 
 		// Journal integration endpoints
 		ssotPayments.POST("/preview-journal", permissionMiddleware.CanView("payments"), ssotPaymentController.PreviewPaymentJournal)
+		ssotPayments.GET("/transactions", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentTransactions)
 		ssotPayments.GET("/:id/balance-updates", permissionMiddleware.CanView("payments"), ssotPaymentController.GetAccountBalanceUpdates)
+		ssotPayments.GET("/:id", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPaymentWithJournal)
 
 		// Legacy compatibility (deprecated - returns guidance)
 		ssotPayments.GET("", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPayments)

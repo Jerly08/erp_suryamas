@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useModulePermissions } from '@/hooks/usePermissions';
@@ -55,6 +56,9 @@ import {
   MenuList,
   MenuItem,
   MenuDivider,
+  Tabs,
+  TabList,
+  Tab,
   useToast,
   useColorModeValue,
   Textarea,
@@ -77,11 +81,16 @@ import {
   FiChevronsLeft,
   FiChevronRight,
   FiChevronsRight,
-  FiArrowDown,
   FiArrowRight,
   FiBriefcase
 } from 'react-icons/fi';
-import paymentService, { Payment, PaymentFilters, PaymentResult } from '@/services/paymentService';
+import paymentService, {
+  Payment,
+  PaymentFilters,
+  PaymentTransaction,
+  PaymentTransactionFilters,
+  PaymentTransactionResult,
+} from '@/services/paymentService';
 import AdvancedPaymentForm from '@/components/payments/AdvancedPaymentForm';
 import PaymentDetailModal from '@/components/payments/PaymentDetailModal';
 import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
@@ -96,6 +105,7 @@ type PaymentStatusType = 'ALL' | 'PENDING' | 'PENDING_ACCOUNTING' | 'PENDING_FIN
 
 // Payment method type for filtering
 type PaymentMethodType = 'ALL' | 'CASH' | 'BANK_TRANSFER' | 'CHECK' | 'CREDIT_CARD' | 'DEBIT_CARD' | 'OTHER';
+type PaymentTransactionFilter = 'ALL' | 'RECEIPT' | 'OUTGOING' | 'NON_INVOICE';
 
 // Pagination settings
 const ITEMS_PER_PAGE = 10;
@@ -124,6 +134,7 @@ const isCancelledPaymentStatus = (status: string) => {
 
 const PaymentsPage: React.FC = () => {
   const { token, user } = useAuth();
+  const router = useRouter();
   const { t, language } = useTranslation();
   const toast = useToast();
 
@@ -161,8 +172,8 @@ const PaymentsPage: React.FC = () => {
     attachments: 'Lampiran bukti pembayaran (foto transfer, receipt, dll)',
   };
 
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [allPayments, setAllPayments] = useState<Payment[]>([]); // Store all payments for client-side filtering
+  const [payments, setPayments] = useState<PaymentTransaction[]>([]);
+  const [allPayments, setAllPayments] = useState<PaymentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState(''); // Local search state for client-side filtering
@@ -175,10 +186,11 @@ const PaymentsPage: React.FC = () => {
   const [summary, setSummary] = useState<any>(null);
 
   // Filter states
-  const [filters, setFilters] = useState<PaymentFilters>({
+  const [filters, setFilters] = useState<PaymentTransactionFilters>({
     page: 1,
     limit: ITEMS_PER_PAGE
   });
+  const [transactionFilter, setTransactionFilter] = useState<PaymentTransactionFilter>('ALL');
   const [statusFilter, setStatusFilter] = useState<PaymentStatusType>('ALL');
   const [methodFilter, setMethodFilter] = useState<PaymentMethodType>('ALL');
   const [startDate, setStartDate] = useState<string>('');
@@ -430,7 +442,11 @@ const PaymentsPage: React.FC = () => {
   };
 
   // View Payment handler
-  const handleViewPayment = (payment: Payment) => {
+  const handleViewPayment = (payment: PaymentTransaction) => {
+    if (payment.is_invoice_receipt && payment.sale_id) {
+      router.push(`/sales/${payment.sale_id}`);
+      return;
+    }
     setSelectedPayment(payment);
     setShowPaymentDetail(true);
   };
@@ -457,10 +473,23 @@ const PaymentsPage: React.FC = () => {
     return false;
   };
 
+  const getTransactionKindMeta = (payment: PaymentTransaction) => {
+    switch (payment.transaction_kind) {
+      case 'SALES_RECEIPT':
+        return { label: 'Penerimaan Penjualan', colorScheme: 'green' };
+      case 'CUSTOMER_RECEIPT':
+        return { label: 'Penerimaan', colorScheme: 'teal' };
+      case 'NON_INVOICE':
+        return { label: 'Non-Invoice', colorScheme: 'purple' };
+      default:
+        return { label: 'Pembayaran Keluar', colorScheme: 'orange' };
+    }
+  };
+
   const columns = [
     {
       header: t('payments.code'),
-      accessor: (row: Payment) => (
+      accessor: (row: PaymentTransaction) => (
         <Button
           variant="link"
           size="sm"
@@ -478,7 +507,7 @@ const PaymentsPage: React.FC = () => {
     },
     {
       header: t('payments.contact'),
-      accessor: (row: Payment) => {
+      accessor: (row: PaymentTransaction) => {
         // For PPN tax payments, show "Negara" instead of contact name
         if (row.payment_type === 'TAX_PPN' ||
           row.payment_type === 'TAX_PPN_INPUT' ||
@@ -490,22 +519,44 @@ const PaymentsPage: React.FC = () => {
       }
     },
     {
+      header: 'Jenis',
+      accessor: (row: PaymentTransaction) => {
+        const kind = getTransactionKindMeta(row);
+        return <Badge colorScheme={kind.colorScheme}>{kind.label}</Badge>;
+      }
+    },
+    {
+      header: 'Sumber',
+      accessor: (row: PaymentTransaction) => (
+        <VStack align="start" spacing={0} minW="180px">
+          <Text fontSize="sm" fontWeight="medium" whiteSpace="normal">
+            {row.source_label || '-'}
+          </Text>
+          {row.source_reference ? (
+            <Text fontSize="xs" color={textSecondary}>
+              {row.source_reference}
+            </Text>
+          ) : null}
+        </VStack>
+      )
+    },
+    {
       header: t('payments.date'),
-      accessor: (row: Payment) => formatDate(row.date)
+      accessor: (row: PaymentTransaction) => formatDate(row.date)
     },
     {
       header: t('payments.amount'),
-      accessor: (row: Payment) => (
+      accessor: (row: PaymentTransaction) => (
         <Text fontWeight="medium">{formatCurrency(row.amount)}</Text>
       )
     },
     {
       header: t('payments.method'),
-      accessor: (row: Payment) => paymentService.getMethodDisplayName(row.method)
+      accessor: (row: PaymentTransaction) => paymentService.getMethodDisplayName(row.method)
     },
     {
       header: t('payments.status'),
-      accessor: (row: Payment) => {
+      accessor: (row: PaymentTransaction) => {
         const statusMeta = getStatusMetaText(row);
         return (
           <VStack align="start" spacing={1}>
@@ -528,7 +579,7 @@ const PaymentsPage: React.FC = () => {
     },
     {
       header: 'Status PPh',
-      accessor: (row: Payment) => {
+      accessor: (row: PaymentTransaction) => {
         const pphStatus = getPaymentPPhStatus(row);
         return (
           <VStack align="start" spacing={1}>
@@ -553,7 +604,7 @@ const PaymentsPage: React.FC = () => {
     },
     {
       header: t('payments.actions'),
-      accessor: (row: Payment) => (
+      accessor: (row: PaymentTransaction) => (
         <Menu strategy="fixed" placement="bottom-end">
           <MenuButton
             as={IconButton}
@@ -564,8 +615,10 @@ const PaymentsPage: React.FC = () => {
           />
           <MenuList zIndex={9999}>
             <MenuItem icon={<FiEye />} onClick={() => handleViewPayment(row)}>
-              {t('payments.viewDetails')}
+              {row.is_invoice_receipt ? 'Buka Penjualan' : t('payments.viewDetails')}
             </MenuItem>
+            {!row.is_invoice_receipt && (
+              <>
             {/* Finance manager approval lane */}
             {isFinanceManagerApprover && row.status === 'DRAFT' && (
               <>
@@ -695,6 +748,8 @@ const PaymentsPage: React.FC = () => {
                 </MenuItem>
               </>
             )}
+              </>
+            )}
           </MenuList>
         </Menu>
       )
@@ -702,7 +757,7 @@ const PaymentsPage: React.FC = () => {
   ];
 
   // Load payments data
-  const loadPayments = async (newFilters?: Partial<PaymentFilters>) => {
+  const loadPayments = async (newFilters?: Partial<PaymentTransactionFilters>) => {
     try {
       setLoading(true);
       setError(null);
@@ -716,10 +771,14 @@ const PaymentsPage: React.FC = () => {
           : searchInput.trim();
 
       // Prepare filters for API request
-      const apiFilters: PaymentFilters = {
+      const apiFilters: PaymentTransactionFilters = {
         page,
         limit
       };
+
+      if (transactionFilter !== 'ALL') {
+        apiFilters.kind = transactionFilter;
+      }
 
       if (searchTerm) {
         apiFilters.search = searchTerm;
@@ -745,8 +804,8 @@ const PaymentsPage: React.FC = () => {
       }
 
       // Make API call
-      const result = await paymentService.getPayments(apiFilters);
-      const normalizedResult = result as PaymentResult & { totalPages?: number };
+      const result = await paymentService.getPaymentTransactions(apiFilters);
+      const normalizedResult = result as PaymentTransactionResult & { totalPages?: number };
 
       const totalItems = Number(result?.total || 0);
       const totalPages = Math.max(
@@ -851,7 +910,7 @@ const PaymentsPage: React.FC = () => {
     if (token) {
       loadPayments({ page: 1 });
     }
-  }, [statusFilter, methodFilter, startDate, endDate]);
+  }, [statusFilter, methodFilter, startDate, endDate, transactionFilter]);
 
   // Server-side search keeps transactions from other pages searchable.
   useEffect(() => {
@@ -914,6 +973,9 @@ const PaymentsPage: React.FC = () => {
       case 'method':
         setMethodFilter(value as PaymentMethodType);
         break;
+      case 'kind':
+        setTransactionFilter(value as PaymentTransactionFilter);
+        break;
       case 'start_date':
         setStartDate(value);
         break;
@@ -933,12 +995,14 @@ const PaymentsPage: React.FC = () => {
     const hadActiveFilters =
       statusFilter !== 'ALL' ||
       methodFilter !== 'ALL' ||
+      transactionFilter !== 'ALL' ||
       !!startDate ||
       !!endDate ||
       !!searchInput.trim();
 
     setStatusFilter('ALL');
     setMethodFilter('ALL');
+    setTransactionFilter('ALL');
     setStartDate('');
     setEndDate('');
     setSearchInput('');
@@ -1166,8 +1230,8 @@ const PaymentsPage: React.FC = () => {
               {/* Header */}
               <Flex justify="space-between" align="center">
                 <Box>
-                  <Heading as="h1" size="xl" mb={2} color={headingColor}>{t('payments.title')}</Heading>
-                  <Text color={textSecondary}>{t('payments.managePayments')}</Text>
+                  <Heading as="h1" size="xl" mb={2} color={headingColor}>Transaksi Pembayaran & Penerimaan</Heading>
+                  <Text color={textSecondary}>Pembayaran keluar, transaksi non-invoice, dan penerimaan dari penjualan</Text>
                 </Box>
                 <HStack spacing={3}>
                   <Button
@@ -1256,12 +1320,6 @@ const PaymentsPage: React.FC = () => {
                       </MenuButton>
                       <MenuList>
                         <MenuItem
-                          icon={<FiArrowDown />}
-                          onClick={() => handleNewPayment('receivable')}
-                        >
-                          {t('payments.receivablePayment')}
-                        </MenuItem>
-                        <MenuItem
                           icon={<FiArrowRight />}
                           onClick={() => handleNewPayment('payable')}
                         >
@@ -1292,13 +1350,27 @@ const PaymentsPage: React.FC = () => {
               {/* Search and Filters */}
               <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
                 <CardBody>
+                  <Tabs
+                    variant="soft-rounded"
+                    colorScheme="blue"
+                    index={['ALL', 'RECEIPT', 'OUTGOING', 'NON_INVOICE'].indexOf(transactionFilter)}
+                    onChange={(index) => handleFilterChange('kind', ['ALL', 'RECEIPT', 'OUTGOING', 'NON_INVOICE'][index])}
+                    mb={4}
+                  >
+                    <TabList gap={2} flexWrap="wrap">
+                      <Tab>Semua</Tab>
+                      <Tab>Penerimaan</Tab>
+                      <Tab>Pembayaran Keluar</Tab>
+                      <Tab>Non-Invoice</Tab>
+                    </TabList>
+                  </Tabs>
                   <HStack spacing={4} wrap="wrap">
                     <InputGroup maxW="400px">
                       <InputLeftElement pointerEvents="none">
                         <FiSearch color={searchIconColor} />
                       </InputLeftElement>
                       <Input
-                        placeholder={t('payments.searchPlaceholder')}
+                        placeholder="Cari kode, kontak, invoice, atau referensi"
                         value={searchInput}
                         onChange={(e) => handleSearch(e.target.value)}
                         bg={inputBg}
@@ -1383,7 +1455,7 @@ const PaymentsPage: React.FC = () => {
                 <CardHeader>
                   <Flex justify="space-between" align="center">
                     <Heading size="md" color={headingColor}>
-                      {t('payments.paymentTransactions')} ({pagination.totalItems || payments?.length || 0})
+                      Transaksi Pembayaran & Penerimaan ({pagination.totalItems || payments?.length || 0})
                     </Heading>
                   </Flex>
                 </CardHeader>
@@ -1396,7 +1468,7 @@ const PaymentsPage: React.FC = () => {
                     <DataTable
                       columns={columns}
                       data={payments || []}
-                      keyField="id"
+                      keyField="row_id"
                       searchable={false}
                       pagination={false}
                     />
@@ -1422,7 +1494,7 @@ const PaymentsPage: React.FC = () => {
                             pagination.current * (filters.limit || ITEMS_PER_PAGE),
                             pagination.totalItems
                           )}{' '}
-                          dari {pagination.totalItems} transaksi pembayaran
+                          dari {pagination.totalItems} transaksi
                         </Text>
                         {pagination.total > 1 && (
                           <Text fontSize="xs" color={textSecondary}>
