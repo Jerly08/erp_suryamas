@@ -8,6 +8,7 @@ import UnifiedLayout from "@/components/layout/UnifiedLayout";
 import salesService, { Sale } from "@/services/salesService";
 import PaymentForm from "@/components/sales/PaymentForm";
 import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
+import { PostedTransactionCorrectionsPanel } from "@/components/corrections/PostedTransactionCorrections";
 import { getSalePPhStatus } from "@/utils/taxPaymentStatus";
 import {
   Box,
@@ -785,6 +786,25 @@ const SaleDetailPage: React.FC = () => {
             </VStack>
           </CardBody>
         </Card>
+
+        {sale.invoice_number && (
+          <Card>
+            <CardHeader>
+              <Heading size="md">Koreksi Transaksi Terposting</Heading>
+            </CardHeader>
+            <CardBody>
+              <PostedTransactionCorrectionsPanel
+                target={{
+                  saleId: sale.id,
+                  code: sale.invoice_number || sale.code,
+                }}
+                onChanged={() => {
+                  void loadSale();
+                }}
+              />
+            </CardBody>
+          </Card>
+        )}
 
         {/* Notes */}
         {(sale.notes || sale.internal_notes) && (

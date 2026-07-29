@@ -419,15 +419,35 @@ const ProfitLossPage: React.FC = () => {
             );
         };
 
-        const getSectionItems = (section: any, detailsFallback?: any[]) => {
-            // First try section items
-            if (section && section.items && section.items.length > 0) {
-                const items = section.items.filter((item: any) => !item.is_percentage);
-                // If items have account_code, use them
-                if (items.some((item: any) => item.account_code)) {
-                    return items;
-                }
+        const getSectionItems = (section: any, detailsFallback?: any[], directFallback?: any[]) => {
+            const normalizeItems = (items: any[] = []) => items
+                .filter((item: any) => !item.is_percentage)
+                .map((item: any) => ({
+                    ...item,
+                    account_code: item.account_code || item.code || (item.account_id ? String(item.account_id) : undefined),
+                    name: item.name || item.account_name || '-',
+                    amount: item.amount || 0,
+                }));
+
+            const directItems = normalizeItems(section?.items);
+            if (directItems.some((item: any) => item.account_code)) {
+                return directItems;
             }
+
+            // HPP is returned by the API as items inside subsections. Flattening them keeps
+            // the calculation modal aligned with the detailed report and its source COA.
+            const subsectionItems = (section?.subsections || []).flatMap((subsection: any) =>
+                normalizeItems(subsection.items)
+            );
+            if (subsectionItems.some((item: any) => item.account_code)) {
+                return subsectionItems;
+            }
+
+            const directFallbackItems = normalizeItems(directFallback);
+            if (directFallbackItems.some((item: any) => item.account_code)) {
+                return directFallbackItems;
+            }
+
             // Fallback to revenue_details or expense_details
             if (detailsFallback && detailsFallback.length > 0) {
                 return detailsFallback.map((item: any) => ({
@@ -436,11 +456,10 @@ const ProfitLossPage: React.FC = () => {
                     amount: item.amount || 0
                 }));
             }
-            // Return section items without account codes if that's all we have
-            if (section && section.items) {
-                return section.items.filter((item: any) => !item.is_percentage);
-            }
-            return [];
+
+            // Calculated rows may not have a source account. Keep those only after every
+            // account-level source has been exhausted.
+            return directItems;
         };
 
         // Build formula and components based on item name
@@ -450,7 +469,12 @@ const ProfitLossPage: React.FC = () => {
             formula = 'Total Pendapatan - Harga Pokok Penjualan (HPP)';
             components = [
                 { type: 'add', label: 'Total Pendapatan', items: getSectionItems(revenueSection, data.revenue_details), total: revenueSection?.total || data.total_revenue || 0 },
-                { type: 'subtract', label: 'Harga Pokok Penjualan', items: getSectionItems(cogsSection), total: cogsSection?.total || 0 },
+                {
+                    type: 'subtract',
+                    label: 'Harga Pokok Penjualan',
+                    items: getSectionItems(cogsSection, undefined, data.cost_of_goods_sold?.items),
+                    total: cogsSection?.total || data.cost_of_goods_sold?.total_cogs || 0,
+                },
             ];
         } else if (itemName.toLowerCase().includes('laba operasional') || itemName.toLowerCase().includes('operating income')) {
             // For Operating Income, use REVENUE items for Laba Kotor and OPERATING EXPENSE items for Beban Operasional

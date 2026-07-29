@@ -664,6 +664,12 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 			tx.Rollback()
 			return nil, fmt.Errorf("tidak bisa mengubah biaya atau status pajak pengiriman pada penjualan yang sudah difakturkan")
 		}
+		if (request.PaymentTerms != nil && strings.TrimSpace(*request.PaymentTerms) != sale.PaymentTerms) ||
+			(request.PaymentMethodType != nil && strings.TrimSpace(*request.PaymentMethodType) != sale.PaymentMethodType) ||
+			(request.CashBankID != nil && (sale.CashBankID == nil || *request.CashBankID != *sale.CashBankID)) {
+			tx.Rollback()
+			return nil, fmt.Errorf("termin, metode pembayaran, dan akun kas/bank tidak bisa diubah setelah invoice dibuat; gunakan koreksi transaksi terposting bila pencatatan asal keliru")
+		}
 
 		// Only allow non-financial field updates
 		if request.DueDate != nil {
@@ -2280,12 +2286,21 @@ func (s *SalesServiceV2) validateSalePaymentSchedules(schedules []models.SalePay
 }
 
 func validateSalePaymentScheduleMode(paymentTerms, paymentMethodType string) error {
-	if strings.ToUpper(strings.TrimSpace(paymentTerms)) == "CUSTOM" &&
+	if isDeferredSalePaymentTerm(paymentTerms) &&
 		strings.ToUpper(strings.TrimSpace(paymentMethodType)) != "CREDIT" {
-		return fmt.Errorf("jadwal termin hanya dapat digunakan untuk penjualan kredit/piutang")
+		return fmt.Errorf("termin %s harus memakai metode KREDIT/PIUTANG; penerimaan pelanggan dicatat setelah uang benar-benar diterima", strings.ToUpper(strings.TrimSpace(paymentTerms)))
 	}
 
 	return nil
+}
+
+func isDeferredSalePaymentTerm(paymentTerms string) bool {
+	switch strings.ToUpper(strings.TrimSpace(paymentTerms)) {
+	case "NET_15", "NET_30", "NET_60", "NET_90", "CUSTOM":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildSalePaymentSchedules(saleID uint, totalAmount float64, schedules []models.SalePaymentScheduleRequest) []models.SalePaymentSchedule {

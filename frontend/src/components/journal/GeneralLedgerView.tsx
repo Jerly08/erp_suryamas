@@ -42,6 +42,7 @@ import ExportButton from "@/components/common/ExportButton";
 import {
   exportGeneralLedgerToPDF,
   exportGeneralLedgerToCSV,
+  loadReportLetterhead,
 } from "@/utils/journalExport";
 
 export default function GeneralLedgerView() {
@@ -111,7 +112,16 @@ export default function GeneralLedgerView() {
             start_date: startDate,
             end_date: endDate,
           });
-        exportGeneralLedgerToPDF(freshData, startDate, endDate);
+        const letterhead = await loadReportLetterhead({
+          companyName: freshData.company?.name,
+          companyAddress: freshData.company?.address,
+          companyPhone: freshData.company?.phone,
+          companyEmail: freshData.company?.email,
+          taxNumber: freshData.company?.tax_number,
+        });
+        exportGeneralLedgerToPDF(freshData, startDate, endDate, {
+          letterhead,
+        });
       }
       toast({
         title: t("common.success"),

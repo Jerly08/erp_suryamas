@@ -116,6 +116,7 @@ import {
 import SubmitApprovalButton from "@/components/purchase/SubmitApprovalButton";
 import { ApprovalPanel } from "@/components/approval/ApprovalPanel";
 import PurchasePaymentForm from "@/components/purchase/PurchasePaymentForm";
+import PurchaseCOARevisionPanel from "@/components/purchase/PurchaseCOARevisionPanel";
 import { PostedTransactionCorrectionsPanel } from "@/components/corrections/PostedTransactionCorrections";
 import contactService from "@/services/contactService";
 import productService, { Product } from "@/services/productService";
@@ -6875,7 +6876,13 @@ const PurchasesPage: React.FC = () => {
               {/* View Purchase Modal */}
               <Modal isOpen={isViewOpen} onClose={onViewClose} size="xl">
                 <ModalOverlay />
-                <ModalContent bg={modalContentBg}>
+                <ModalContent
+                  bg={modalContentBg}
+                  maxH="calc(100vh - 32px)"
+                  display="flex"
+                  flexDirection="column"
+                  overflow="hidden"
+                >
                   <ModalHeader
                     bg={modalHeaderBg}
                     borderBottomWidth={1}
@@ -6884,7 +6891,7 @@ const PurchasesPage: React.FC = () => {
                     {t("purchases.viewPurchase")} - {selectedPurchase?.code}
                   </ModalHeader>
                   <ModalCloseButton />
-                  <ModalBody>
+                  <ModalBody flex="1" minH="0" overflowY="auto">
                     {selectedPurchase && (
                       <VStack spacing={6} align="stretch">
                         {/* Show rejection alert for cancelled/rejected purchases */}
@@ -6920,6 +6927,17 @@ const PurchasesPage: React.FC = () => {
                             <FormLabel>{t("purchases.vendor")}</FormLabel>
                             <Text fontWeight="medium">
                               {selectedPurchase.vendor?.name || "N/A"}
+                            </Text>
+                          </FormControl>
+
+                          <FormControl>
+                            <FormLabel>Proyek</FormLabel>
+                            <Text fontWeight="medium" overflowWrap="anywhere">
+                              {selectedPurchase.project
+                                ? `${selectedPurchase.project.code} - ${selectedPurchase.project.name}`
+                                : selectedPurchase.purchase_request?.project
+                                  ? `${selectedPurchase.purchase_request.project.code} - ${selectedPurchase.purchase_request.project.name}`
+                                  : "Tidak dialokasikan ke proyek"}
                             </Text>
                           </FormControl>
 
@@ -7546,6 +7564,18 @@ const PurchasesPage: React.FC = () => {
                           </FormControl>
                         )}
 
+                        <PurchaseCOARevisionPanel
+                          purchase={selectedPurchase}
+                          onChanged={async () => {
+                            const detailResponse =
+                              await purchaseService.getById(
+                                selectedPurchase.id,
+                              );
+                            setSelectedPurchase(detailResponse);
+                            await fetchPurchases();
+                          }}
+                        />
+
                         <Box
                           borderWidth="1px"
                           borderColor={borderColor}
@@ -7556,8 +7586,17 @@ const PurchasesPage: React.FC = () => {
                             target={{
                               purchaseId: selectedPurchase.id,
                               code: selectedPurchase.code,
+                              allowCreate: ["APPROVED", "COMPLETED", "PAID"].includes(
+                                (selectedPurchase.status || "").toUpperCase(),
+                              ),
                             }}
                             onChanged={() => {
+                              void purchaseService
+                                .getById(selectedPurchase.id)
+                                .then((detailResponse) => {
+                                  setSelectedPurchase(detailResponse);
+                                })
+                                .catch(() => undefined);
                               void fetchPurchases();
                             }}
                           />

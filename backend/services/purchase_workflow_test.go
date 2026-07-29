@@ -31,6 +31,7 @@ func TestPurchaseApprovalRoutesToAccountingThenFinalApprovalPosts(t *testing.T) 
 		&models.PurchaseRequestItem{},
 		&models.Purchase{},
 		&models.PurchaseItem{},
+		&models.PurchaseCOARevision{},
 		&models.ApprovalWorkflow{},
 		&models.ApprovalRequest{},
 		&models.ApprovalStep{},
@@ -233,6 +234,76 @@ func TestPurchaseApprovalWorkflowWithoutDirectorRoutesToAccounting(t *testing.T)
 	}, fixture.accounting.ID)
 	require.NoError(t, err)
 	require.Equal(t, models.PurchaseStatusPendingFinalApproval, completed.Status)
+}
+
+func TestPurchaseCOARevisionReturnsPurchaseToAccountingBeforePosting(t *testing.T) {
+	fixture := newPurchaseWorkflowFixture(t)
+	purchase, item := fixture.createDraftPurchase(t, "PO-WF-COA-REVISION", 125000)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
+	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.manager.ID,
+		fixture.manager.Role,
+		"Finance Manager approved initial purchase workflow",
+		false,
+	)
+	require.NoError(t, err)
+
+	completed, err := fixture.service.CompleteAccountingCOA(purchase.ID, models.PurchaseAccountingCOARequest{
+		CreditAccountID: &fixture.liabilityAccount.ID,
+		Items: []models.PurchaseAccountingCOAItemRequest{
+			{PurchaseItemID: item.ID, ExpenseAccountID: fixture.expenseAccount.ID},
+		},
+	}, fixture.accounting.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingFinalApproval, completed.Status)
+
+	revision, err := fixture.service.RequestPurchaseCOARevision(
+		purchase.ID,
+		models.PurchaseCOARevisionCreateRequest{
+			Reason: "Akun beban item perlu disesuaikan sebelum jurnal diposting.",
+		},
+		fixture.accounting.ID,
+		fixture.accounting.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseCOARevisionStatusPendingFinanceManager, revision.Status)
+	require.NotEmpty(t, revision.COASnapshot)
+
+	// A pending request blocks final posting and leaves the already-entered COA intact.
+	_, err = fixture.service.FinalApprovePurchaseAfterAccounting(purchase.ID, fixture.manager.ID, "Attempt while revision is pending")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "masih ada pengajuan revisi COA")
+
+	var itemBeforeDecision models.PurchaseItem
+	require.NoError(t, fixture.db.First(&itemBeforeDecision, item.ID).Error)
+	require.Equal(t, fixture.expenseAccount.ID, itemBeforeDecision.ExpenseAccountID)
+
+	approvedRevision, err := fixture.service.DecidePurchaseCOARevision(
+		purchase.ID,
+		revision.ID,
+		models.PurchaseCOARevisionDecisionRequest{
+			Approve: true,
+			Notes:   "Silakan koreksi COA dan ajukan final approval kembali.",
+		},
+		fixture.manager.ID,
+		fixture.manager.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseCOARevisionStatusApproved, approvedRevision.Status)
+
+	returned, err := fixture.service.GetPurchaseByID(purchase.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingAccounting, returned.Status)
+	require.Equal(t, models.PurchaseApprovalApproved, returned.ApprovalStatus)
+
+	var journalCount int64
+	require.NoError(t, fixture.db.Model(&models.SSOTJournalEntry{}).
+		Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, uint64(purchase.ID)).
+		Count(&journalCount).Error)
+	require.Equal(t, int64(0), journalCount)
 }
 
 func TestPurchaseApprovalWorkflowWithExplicitDirectorStillWaitsForAccounting(t *testing.T) {
@@ -543,6 +614,7 @@ func newPurchaseWorkflowFixture(t *testing.T) *purchaseWorkflowFixture {
 		&models.PurchaseRequestItem{},
 		&models.Purchase{},
 		&models.PurchaseItem{},
+		&models.PurchaseCOARevision{},
 		&models.ApprovalWorkflow{},
 		&models.ApprovalRequest{},
 		&models.ApprovalStep{},

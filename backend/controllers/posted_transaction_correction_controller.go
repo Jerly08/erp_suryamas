@@ -42,6 +42,14 @@ func (pc *PostedTransactionCorrectionController) List(c *gin.Context) {
 		}
 		filter.PaymentID = &id
 	}
+	if value := c.Query("sale_id"); value != "" {
+		id, err := parsePostedTransactionCorrectionID(value)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "sale_id tidak valid"})
+			return
+		}
+		filter.SaleID = &id
+	}
 
 	corrections, total, err := pc.service.List(filter, c.GetUint("user_id"), c.GetString("role"))
 	if err != nil {
@@ -146,6 +154,37 @@ func (pc *PostedTransactionCorrectionController) Complete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": correction})
+}
+
+func (pc *PostedTransactionCorrectionController) ListLegacySalesCreditPaymentCandidates(c *gin.Context) {
+	saleID, err := parsePostedTransactionCorrectionID(c.Param("sale_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID penjualan tidak valid"})
+		return
+	}
+	candidates, err := pc.service.ListLegacySalesCreditPaymentCandidates(saleID, c.GetUint("user_id"), c.GetString("role"))
+	if err != nil {
+		pc.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": candidates})
+}
+
+func (pc *PostedTransactionCorrectionController) ExecuteSalesCreditCorrection(c *gin.Context) {
+	id, err := parsePostedTransactionCorrectionID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID koreksi transaksi tidak valid"})
+		return
+	}
+	correction, err := pc.service.ExecuteSalesCreditCorrection(id, c.GetUint("user_id"), c.GetString("role"))
+	if err != nil {
+		pc.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Reklasifikasi piutang berhasil dibuat dan pembayaran pelanggan telah ditautkan ke invoice",
+		"data":    correction,
+	})
 }
 
 func (pc *PostedTransactionCorrectionController) UploadDocument(c *gin.Context) {

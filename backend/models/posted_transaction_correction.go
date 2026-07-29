@@ -9,6 +9,7 @@ import (
 const (
 	PostedTransactionCorrectionTargetPurchase = "PURCHASE"
 	PostedTransactionCorrectionTargetPayment  = "PAYMENT"
+	PostedTransactionCorrectionTargetSale     = "SALE"
 )
 
 const (
@@ -27,7 +28,11 @@ const (
 	PostedTransactionCorrectionTypeSourceBank          = "SOURCE_BANK"
 	PostedTransactionCorrectionTypeDestinationAccount  = "DESTINATION_ACCOUNT"
 	PostedTransactionCorrectionTypePurchaseDate        = "PURCHASE_DATE"
-	PostedTransactionCorrectionTypeOther               = "OTHER"
+	// SalesCreditClassification corrects a legacy cash/bank recognition for a
+	// credit sale by linking the existing customer receipt to the invoice.
+	// It never edits the original sale or payment journal.
+	PostedTransactionCorrectionTypeSalesCreditClassification = "SALES_CREDIT_CLASSIFICATION"
+	PostedTransactionCorrectionTypeOther                     = "OTHER"
 )
 
 const (
@@ -39,13 +44,14 @@ const (
 )
 
 const (
-	PostedTransactionCorrectionEventSubmitted          = "SUBMITTED"
-	PostedTransactionCorrectionEventDocumentAdded      = "DOCUMENT_ADDED"
-	PostedTransactionCorrectionEventAccountingReviewed = "ACCOUNTING_REVIEWED"
-	PostedTransactionCorrectionEventFinanceApproved    = "FINANCE_MANAGER_APPROVED"
-	PostedTransactionCorrectionEventFinanceRejected    = "FINANCE_MANAGER_REJECTED"
-	PostedTransactionCorrectionEventCompleted          = "COMPLETED"
-	PostedTransactionCorrectionEventCancelled          = "CANCELLED"
+	PostedTransactionCorrectionEventSubmitted           = "SUBMITTED"
+	PostedTransactionCorrectionEventDocumentAdded       = "DOCUMENT_ADDED"
+	PostedTransactionCorrectionEventAccountingReviewed  = "ACCOUNTING_REVIEWED"
+	PostedTransactionCorrectionEventFinanceApproved     = "FINANCE_MANAGER_APPROVED"
+	PostedTransactionCorrectionEventFinanceRejected     = "FINANCE_MANAGER_REJECTED"
+	PostedTransactionCorrectionEventCompleted           = "COMPLETED"
+	PostedTransactionCorrectionEventSalesCreditExecuted = "SALES_CREDIT_CLASSIFICATION_EXECUTED"
+	PostedTransactionCorrectionEventCancelled           = "CANCELLED"
 )
 
 // PostedTransactionCorrection records the approved handling of an error found
@@ -60,6 +66,8 @@ type PostedTransactionCorrection struct {
 	PurchaseID        *uint `json:"purchase_id,omitempty" gorm:"index"`
 	PaymentID         *uint `json:"payment_id,omitempty" gorm:"index"`
 	PurchasePaymentID *uint `json:"purchase_payment_id,omitempty" gorm:"index"`
+	SaleID            *uint `json:"sale_id,omitempty" gorm:"index"`
+	LinkedPaymentID   *uint `json:"linked_payment_id,omitempty" gorm:"index"`
 
 	OriginalJournalEntryID uint64 `json:"original_journal_entry_id" gorm:"not null;index"`
 	SourceSnapshot         string `json:"source_snapshot" gorm:"type:text"`
@@ -100,6 +108,8 @@ type PostedTransactionCorrection struct {
 	Purchase        *Purchase                             `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
 	Payment         *Payment                              `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
 	PurchasePayment *PurchasePayment                      `json:"purchase_payment,omitempty" gorm:"foreignKey:PurchasePaymentID"`
+	Sale            *Sale                                 `json:"sale,omitempty" gorm:"foreignKey:SaleID"`
+	LinkedPayment   *Payment                              `json:"linked_payment,omitempty" gorm:"foreignKey:LinkedPaymentID"`
 	Requester       *User                                 `json:"requester,omitempty" gorm:"foreignKey:RequestedBy"`
 	AccountingUser  *User                                 `json:"accounting_user,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
 	FinanceManager  *User                                 `json:"finance_manager,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
@@ -139,6 +149,8 @@ type PostedTransactionCorrectionEvent struct {
 type PostedTransactionCorrectionCreateRequest struct {
 	PurchaseID                    *uint    `json:"purchase_id"`
 	PaymentID                     *uint    `json:"payment_id"`
+	SaleID                        *uint    `json:"sale_id"`
+	LinkedPaymentID               *uint    `json:"linked_payment_id"`
 	CorrectionType                string   `json:"correction_type" binding:"required"`
 	Reason                        string   `json:"reason" binding:"required"`
 	RequestedDate                 string   `json:"requested_date"`
@@ -168,6 +180,7 @@ type PostedTransactionCorrectionCompleteRequest struct {
 type PostedTransactionCorrectionFilter struct {
 	PurchaseID *uint
 	PaymentID  *uint
+	SaleID     *uint
 	Status     string
 	Page       int
 	Limit      int

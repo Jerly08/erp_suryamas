@@ -291,3 +291,22 @@ func TestPostedTransactionCorrectionRequiresPostedJournalAndAccountingRole(t *te
 	require.NoError(t, err)
 	require.Equal(t, correction.ID, document.CorrectionID)
 }
+
+func TestAccountingCanSubmitPostedTransactionCorrection(t *testing.T) {
+	fixture := newPostedTransactionCorrectionFixture(t)
+
+	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+		PurchaseID:     &fixture.purchase.ID,
+		CorrectionType: models.PostedTransactionCorrectionTypePurchaseDate,
+		Reason:         "Accounting menemukan tanggal purchase perlu dikoreksi melalui jurnal audit.",
+	}, fixture.accounting.ID, fixture.accounting.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PostedTransactionCorrectionStatusPendingAccounting, correction.Status)
+
+	reviewed, err := fixture.service.ReviewAccounting(correction.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
+		Resolution: models.PostedTransactionCorrectionResolutionJournalReclass,
+		Notes:      "Accounting menyiapkan jurnal reklasifikasi untuk ditinjau Finance Manager.",
+	}, fixture.accounting.ID, fixture.accounting.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PostedTransactionCorrectionStatusPendingFinanceManager, reviewed.Status)
+}

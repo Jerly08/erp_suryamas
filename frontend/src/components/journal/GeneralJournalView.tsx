@@ -53,6 +53,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   exportGeneralJournalToPDF,
   exportGeneralJournalToCSV,
+  loadReportLetterhead,
 } from "@/utils/journalExport";
 
 type JournalEntryMode = "MANUAL" | "ADJUSTMENT";
@@ -196,7 +197,10 @@ export default function GeneralJournalView() {
     try {
       setExporting(true);
       const exportEntries = await getExportEntries();
-      exportGeneralJournalToPDF(exportEntries, startDate, endDate);
+      const letterhead = await loadReportLetterhead();
+      exportGeneralJournalToPDF(exportEntries, startDate, endDate, {
+        letterhead,
+      });
       toast({
         title: t("common.success"),
         description: "PDF berhasil diunduh",

@@ -41,8 +41,18 @@ func (s *PostedTransactionCorrectionService) Create(
 	if reason == "" {
 		return nil, fmt.Errorf("alasan koreksi wajib diisi")
 	}
-	if (request.PurchaseID == nil && request.PaymentID == nil) || (request.PurchaseID != nil && request.PaymentID != nil) {
-		return nil, fmt.Errorf("pilih tepat satu transaksi pembelian atau pembayaran")
+	targetCount := 0
+	if request.PurchaseID != nil {
+		targetCount++
+	}
+	if request.PaymentID != nil {
+		targetCount++
+	}
+	if request.SaleID != nil {
+		targetCount++
+	}
+	if targetCount != 1 {
+		return nil, fmt.Errorf("pilih tepat satu transaksi pembelian, pembayaran, atau penjualan")
 	}
 
 	requestedDate, err := parseRequestedCorrectionDate(request.RequestedDate)
@@ -52,10 +62,21 @@ func (s *PostedTransactionCorrectionService) Create(
 	if request.RequestedAmount != nil && *request.RequestedAmount < 0 {
 		return nil, fmt.Errorf("nominal koreksi tidak boleh negatif")
 	}
+	correctionType := strings.ToUpper(strings.TrimSpace(request.CorrectionType))
+	if correctionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
+		if request.SaleID == nil || request.LinkedPaymentID == nil {
+			return nil, fmt.Errorf("koreksi penjualan kredit harus memilih penjualan dan pembayaran pelanggan yang sudah ada")
+		}
+		if requestedDate == nil {
+			return nil, fmt.Errorf("tanggal koreksi wajib diisi untuk reklasifikasi penjualan kredit")
+		}
+	} else if request.SaleID != nil || request.LinkedPaymentID != nil {
+		return nil, fmt.Errorf("penjualan hanya dapat memakai jenis koreksi reklasifikasi penjualan kredit")
+	}
 
 	var correction models.PostedTransactionCorrection
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		target, err := s.resolvePostedCorrectionTarget(tx, request.PurchaseID, request.PaymentID)
+		target, err := s.resolvePostedCorrectionTarget(tx, request.PurchaseID, request.PaymentID, request.SaleID, request.LinkedPaymentID)
 		if err != nil {
 			return err
 		}
@@ -65,8 +86,10 @@ func (s *PostedTransactionCorrectionService) Create(
 			Where("correction_type = ? AND status IN ?", strings.ToUpper(strings.TrimSpace(request.CorrectionType)), activeCorrectionStatuses())
 		if target.purchaseID != nil {
 			duplicateQuery = duplicateQuery.Where("purchase_id = ?", *target.purchaseID)
-		} else {
+		} else if target.paymentID != nil {
 			duplicateQuery = duplicateQuery.Where("payment_id = ?", *target.paymentID)
+		} else {
+			duplicateQuery = duplicateQuery.Where("sale_id = ?", *target.saleID)
 		}
 		if err := duplicateQuery.Count(&activeCount).Error; err != nil {
 			return err
@@ -82,9 +105,11 @@ func (s *PostedTransactionCorrectionService) Create(
 			PurchaseID:                    target.purchaseID,
 			PaymentID:                     target.paymentID,
 			PurchasePaymentID:             target.purchasePaymentID,
+			SaleID:                        target.saleID,
+			LinkedPaymentID:               target.linkedPaymentID,
 			OriginalJournalEntryID:        target.originalJournalID,
 			SourceSnapshot:                target.sourceSnapshot,
-			CorrectionType:                strings.ToUpper(strings.TrimSpace(request.CorrectionType)),
+			CorrectionType:                correctionType,
 			Status:                        models.PostedTransactionCorrectionStatusPendingAccounting,
 			Reason:                        reason,
 			RequestedDate:                 requestedDate,
@@ -131,6 +156,9 @@ func (s *PostedTransactionCorrectionService) List(
 	}
 	if filter.PaymentID != nil {
 		query = query.Where("payment_id = ?", *filter.PaymentID)
+	}
+	if filter.SaleID != nil {
+		query = query.Where("sale_id = ?", *filter.SaleID)
 	}
 	if status := strings.ToUpper(strings.TrimSpace(filter.Status)); status != "" {
 		query = query.Where("status = ?", status)
@@ -198,6 +226,14 @@ func (s *PostedTransactionCorrectionService) ReviewAccounting(
 		}
 		if correction.Status != models.PostedTransactionCorrectionStatusPendingAccounting {
 			return fmt.Errorf("koreksi ini tidak sedang menunggu review Accounting")
+		}
+		if correction.CorrectionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
+			if resolution != models.PostedTransactionCorrectionResolutionJournalReclass {
+				return fmt.Errorf("koreksi penjualan kredit hanya dapat memakai rencana jurnal reklasifikasi")
+			}
+			if err := s.validateSalesCreditClassificationAccount(tx, correction, request.ProposedAccountID); err != nil {
+				return err
+			}
 		}
 		if err := s.validateProposedAccount(tx, request.ProposedAccountID); err != nil {
 			return err
@@ -294,6 +330,9 @@ func (s *PostedTransactionCorrectionService) Complete(
 		if correction.Status != models.PostedTransactionCorrectionStatusApprovedForExecution {
 			return fmt.Errorf("koreksi ini belum disetujui untuk dieksekusi")
 		}
+		if correction.CorrectionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
+			return fmt.Errorf("koreksi penjualan kredit harus dieksekusi melalui aksi reklasifikasi piutang")
+		}
 		if correctionRequiresFinancialLink(correction.AccountingResolution) && request.CompletionJournalEntryID == nil && request.ReplacementPaymentID == nil {
 			return fmt.Errorf("jurnal koreksi atau pembayaran pengganti wajib ditautkan untuk rencana penyelesaian ini")
 		}
@@ -384,6 +423,8 @@ type postedCorrectionTarget struct {
 	purchaseID        *uint
 	paymentID         *uint
 	purchasePaymentID *uint
+	saleID            *uint
+	linkedPaymentID   *uint
 	originalJournalID uint64
 	sourceSnapshot    string
 }
@@ -392,7 +433,12 @@ func (s *PostedTransactionCorrectionService) resolvePostedCorrectionTarget(
 	tx *gorm.DB,
 	purchaseID *uint,
 	paymentID *uint,
+	saleID *uint,
+	linkedPaymentID *uint,
 ) (*postedCorrectionTarget, error) {
+	if saleID != nil {
+		return s.resolveLegacySalesCreditCorrectionTarget(tx, *saleID, linkedPaymentID)
+	}
 	if purchaseID != nil {
 		var purchase models.Purchase
 		if err := tx.Preload("Vendor").Preload("BankAccount").Preload("PurchasePayments.Payment").First(&purchase, *purchaseID).Error; err != nil {
@@ -563,6 +609,10 @@ func (s *PostedTransactionCorrectionService) withCorrectionRelations(db *gorm.DB
 		Preload("Payment").
 		Preload("Payment.Contact").
 		Preload("PurchasePayment").
+		Preload("Sale").
+		Preload("Sale.Customer").
+		Preload("LinkedPayment").
+		Preload("LinkedPayment.Contact").
 		Preload("Requester").
 		Preload("AccountingUser").
 		Preload("FinanceManager").
@@ -610,6 +660,7 @@ func validatePostedTransactionCorrectionType(value string) error {
 		models.PostedTransactionCorrectionTypeSourceBank,
 		models.PostedTransactionCorrectionTypeDestinationAccount,
 		models.PostedTransactionCorrectionTypePurchaseDate,
+		models.PostedTransactionCorrectionTypeSalesCreditClassification,
 		models.PostedTransactionCorrectionTypeOther:
 		return nil
 	default:
@@ -638,7 +689,7 @@ func normalizePostedTransactionCorrectionNotFound(err error) error {
 }
 
 func canRequestPostedTransactionCorrection(role string) bool {
-	return models.IsFinanceStaffRole(role) || models.IsFinanceManagerRole(role) || isCorrectionAdmin(role)
+	return models.IsFinanceStaffRole(role) || models.IsAccountingRole(role) || models.IsFinanceManagerRole(role) || isCorrectionAdmin(role)
 }
 
 func canViewAllPostedTransactionCorrections(role string) bool {

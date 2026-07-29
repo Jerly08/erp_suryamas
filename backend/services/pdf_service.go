@@ -788,10 +788,23 @@ func detectImageType(path string) string {
 	return ""
 }
 
-// GenerateInvoicePDF generates a clean PDF for a sale invoice with multi-language support
+func drawRightAlignedPDFLines(pdf *gofpdf.Fpdf, value string, rightX, y, maxWidth, lineHeight float64, maxLines int) float64 {
+	for _, line := range splitPDFCellLines(pdf, value, maxWidth, maxLines) {
+		if line == "" {
+			continue
+		}
+		lineWidth := pdf.GetStringWidth(line)
+		pdf.SetXY(rightX-lineWidth, y)
+		pdf.Cell(lineWidth, lineHeight, line)
+		y += lineHeight
+	}
+
+	return y
+}
+
 // drawUnifiedLetterhead renders a consistent, professional letterhead on a PDF page.
-// Layout: logo at top-left, company info right-aligned, separator line underneath.
-// Colors match the Cash Flow PDF style (dark navy company name, dark gray details).
+// Layout: logo at top-left, company information right-aligned, separator line underneath.
+// Its height expands for long company information so report content cannot overlap the header.
 // Returns the Y position after the header so content can start below it.
 func drawUnifiedLetterhead(pdf *gofpdf.Fpdf, companyInfo *models.Settings, logoSize float64) float64 {
 	lm, tm, rm, _ := pdf.GetMargins()
@@ -839,6 +852,10 @@ func drawUnifiedLetterhead(pdf *gofpdf.Fpdf, companyInfo *models.Settings, logoS
 	// ── Company info (right-aligned) ──
 	rightX := pageW - rm
 	infoY := tm
+	infoMaxWidth := pageW - rm - (lm + logoSize + 10)
+	if infoMaxWidth < 70 {
+		infoMaxWidth = 70
+	}
 
 	if companyInfo != nil {
 		// Company name — bold, dark navy
@@ -846,10 +863,8 @@ func drawUnifiedLetterhead(pdf *gofpdf.Fpdf, companyInfo *models.Settings, logoS
 		if name != "" {
 			pdf.SetFont("Arial", "B", 12)
 			pdf.SetTextColor(25, 55, 109) // dark navy matching Cash Flow PDF
-			w := pdf.GetStringWidth(name)
-			pdf.SetXY(rightX-w, infoY)
-			pdf.Cell(w, 6, name)
-			infoY += 8
+			infoY = drawRightAlignedPDFLines(pdf, name, rightX, infoY, infoMaxWidth, 6, 2)
+			infoY += 2
 		}
 
 		// Address — dark gray
@@ -857,33 +872,32 @@ func drawUnifiedLetterhead(pdf *gofpdf.Fpdf, companyInfo *models.Settings, logoS
 		if addr != "" {
 			pdf.SetFont("Arial", "", 9)
 			pdf.SetTextColor(33, 37, 41)
-			w := pdf.GetStringWidth(addr)
-			pdf.SetXY(rightX-w, infoY)
-			pdf.Cell(w, 4, addr)
-			infoY += 6
+			infoY = drawRightAlignedPDFLines(pdf, addr, rightX, infoY, infoMaxWidth, 4.5, 2)
 		}
 
 		// Phone
 		phone := strings.TrimSpace(companyInfo.CompanyPhone)
 		if phone != "" {
-			phoneText := fmt.Sprintf("Phone: %s", phone)
 			pdf.SetFont("Arial", "", 9)
 			pdf.SetTextColor(33, 37, 41)
-			w := pdf.GetStringWidth(phoneText)
-			pdf.SetXY(rightX-w, infoY)
-			pdf.Cell(w, 4, phoneText)
-			infoY += 6
+			infoY = drawRightAlignedPDFLines(pdf, fmt.Sprintf("Telepon: %s", phone), rightX, infoY, infoMaxWidth, 4.5, 1)
 		}
 
 		// Email
 		email := strings.TrimSpace(companyInfo.CompanyEmail)
 		if email != "" {
-			emailText := fmt.Sprintf("Email: %s", email)
 			pdf.SetFont("Arial", "", 9)
 			pdf.SetTextColor(33, 37, 41)
-			w := pdf.GetStringWidth(emailText)
-			pdf.SetXY(rightX-w, infoY)
-			pdf.Cell(w, 4, emailText)
+			infoY = drawRightAlignedPDFLines(pdf, fmt.Sprintf("Email: %s", email), rightX, infoY, infoMaxWidth, 4.5, 1)
+		}
+
+		// Tax number is optional, but included whenever it is configured so the
+		// report header matches the company profile used by the application.
+		taxNumber := strings.TrimSpace(companyInfo.TaxNumber)
+		if taxNumber != "" {
+			pdf.SetFont("Arial", "", 9)
+			pdf.SetTextColor(33, 37, 41)
+			infoY = drawRightAlignedPDFLines(pdf, fmt.Sprintf("NPWP: %s", taxNumber), rightX, infoY, infoMaxWidth, 4.5, 1)
 		}
 	}
 
@@ -891,7 +905,7 @@ func drawUnifiedLetterhead(pdf *gofpdf.Fpdf, companyInfo *models.Settings, logoS
 	pdf.SetTextColor(0, 0, 0)
 
 	// ── Separator line ──
-	separatorY := tm + logoSize + 10
+	separatorY := math.Max(tm+logoSize, infoY) + 7
 	pdf.SetDrawColor(238, 238, 238)
 	pdf.SetLineWidth(0.2)
 	pdf.Line(lm, separatorY, pageW-rm, separatorY)
@@ -900,7 +914,7 @@ func drawUnifiedLetterhead(pdf *gofpdf.Fpdf, companyInfo *models.Settings, logoS
 	return separatorY + 8
 }
 
-// GenerateInvoicePDF — kept below for existing invoice generation
+// GenerateInvoicePDF generates a clean PDF for a sale invoice with multi-language support.
 func (p *PDFService) GenerateInvoicePDF(invoice interface{}) ([]byte, error) {
 	// Default to user's language from settings
 	lang := p.Language()
@@ -2393,8 +2407,8 @@ func (p *PDFService) GenerateGeneralLedgerPDF(ledgerData interface{}, accountInf
 	pdf.SetCellMargin(1.5)
 	pdf.AddPage()
 
-	// Invoice-like header
-	lm, tm, rm, _ := pdf.GetMargins()
+	// Reuse the same company letterhead as the other financial reports.
+	lm, _, rm, _ := pdf.GetMargins()
 	pageW, _ := pdf.GetPageSize()
 	contentW := pageW - lm - rm
 
@@ -2403,57 +2417,10 @@ func (p *PDFService) GenerateGeneralLedgerPDF(ledgerData interface{}, accountInf
 		return nil, fmt.Errorf("failed to get company info: %v", err)
 	}
 
-	// Logo left
-	logoX, logoY, logoSize := lm, tm, 35.0
-	logoAdded := false
-	if strings.TrimSpace(companyInfo.CompanyLogo) != "" {
-		logoPath := companyInfo.CompanyLogo
-		if strings.HasPrefix(logoPath, "/") {
-			logoPath = "." + logoPath
-		}
-		if _, err := os.Stat(logoPath); err == nil {
-			if imgType := detectImageType(logoPath); imgType != "" {
-				pdf.ImageOptions(logoPath, logoX, logoY, logoSize, 0, false, gofpdf.ImageOptions{ImageType: imgType, ReadDpi: true}, 0, "")
-				logoAdded = true
-			}
-		}
-	}
-	if !logoAdded {
-		pdf.SetDrawColor(220, 220, 220)
-		pdf.SetFillColor(248, 249, 250)
-		pdf.SetLineWidth(0.3)
-		pdf.Rect(logoX, logoY, logoSize, logoSize, "FD")
-		pdf.SetFont("Arial", "B", 16)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.SetXY(logoX+8, logoY+19)
-		pdf.CellFormat(19, 8, "</>", "", 0, "C", false, 0, "")
-		pdf.SetTextColor(0, 0, 0)
-	}
-
-	// Company text right
-	companyInfoX := pageW - rm
-	pdf.SetFont("Arial", "B", 12)
-	nameW := pdf.GetStringWidth(companyInfo.CompanyName)
-	pdf.SetXY(companyInfoX-nameW, tm)
-	pdf.Cell(nameW, 6, companyInfo.CompanyName)
-
-	pdf.SetFont("Arial", "", 9)
-	addrW := pdf.GetStringWidth(companyInfo.CompanyAddress)
-	pdf.SetXY(companyInfoX-addrW, tm+8)
-	pdf.Cell(addrW, 4, companyInfo.CompanyAddress)
-
-	phoneText := fmt.Sprintf("Phone: %s", companyInfo.CompanyPhone)
-	phoneW := pdf.GetStringWidth(phoneText)
-	pdf.SetXY(companyInfoX-phoneW, tm+14)
-	pdf.Cell(phoneW, 4, phoneText)
-
-	// Divider
-	pdf.SetDrawColor(238, 238, 238)
-	pdf.SetLineWidth(0.2)
-	pdf.Line(lm, tm+45, pageW-rm, tm+45)
+	contentY := drawUnifiedLetterhead(pdf, companyInfo, 35)
 
 	// Title
-	pdf.SetY(tm + 55)
+	pdf.SetY(contentY)
 	pdf.SetFont("Arial", "B", 22)
 	pdf.SetTextColor(51, 51, 51)
 	pdf.Cell(contentW, 10, "GENERAL LEDGER REPORT")
@@ -4732,7 +4699,7 @@ func (p *PDFService) GenerateBalanceSheetPDF(balanceSheetData interface{}, asOfD
 	pdf.AddPage()
 
 	// Layout helpers
-	lm, tm, rm, _ := pdf.GetMargins()
+	lm, _, rm, _ := pdf.GetMargins()
 	pageW, _ := pdf.GetPageSize()
 	contentW := pageW - lm - rm
 
@@ -4742,60 +4709,10 @@ func (p *PDFService) GenerateBalanceSheetPDF(balanceSheetData interface{}, asOfD
 		return nil, fmt.Errorf("failed to get company info: %v", err)
 	}
 
-	// Header: logo left, company info right
-	logoX := lm
-	logoY := tm
-	logoSize := 35.0
-	logoAdded := false
-	if strings.TrimSpace(companyInfo.CompanyLogo) != "" {
-		logoPath := companyInfo.CompanyLogo
-		if strings.HasPrefix(logoPath, "/") {
-			logoPath = "." + logoPath
-		}
-		if _, err := os.Stat(logoPath); err == nil {
-			if imgType := detectImageType(logoPath); imgType != "" {
-				pdf.ImageOptions(logoPath, logoX, logoY, logoSize, 0, false, gofpdf.ImageOptions{ImageType: imgType, ReadDpi: true}, 0, "")
-				logoAdded = true
-			}
-		}
-	}
-	if !logoAdded {
-		pdf.SetDrawColor(220, 220, 220)
-		pdf.SetFillColor(248, 249, 250)
-		pdf.SetLineWidth(0.3)
-		pdf.Rect(logoX, logoY, logoSize, logoSize, "FD")
-		pdf.SetFont("Arial", "B", 16)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.SetXY(logoX+8, logoY+19)
-		pdf.CellFormat(19, 8, "</>", "", 0, "C", false, 0, "")
-		pdf.SetTextColor(0, 0, 0)
-	}
-
-	// Company profile right-aligned
-	companyInfoX := pageW - rm
-	companyInfoY := tm
-	pdf.SetFont("Arial", "B", 12)
-	nameW := pdf.GetStringWidth(companyInfo.CompanyName)
-	pdf.SetXY(companyInfoX-nameW, companyInfoY)
-	pdf.Cell(nameW, 6, companyInfo.CompanyName)
-
-	pdf.SetFont("Arial", "", 9)
-	addrW := pdf.GetStringWidth(companyInfo.CompanyAddress)
-	pdf.SetXY(companyInfoX-addrW, companyInfoY+8)
-	pdf.Cell(addrW, 4, companyInfo.CompanyAddress)
-
-	phoneText := fmt.Sprintf("Phone: %s", companyInfo.CompanyPhone)
-	phoneW := pdf.GetStringWidth(phoneText)
-	pdf.SetXY(companyInfoX-phoneW, companyInfoY+14)
-	pdf.Cell(phoneW, 4, phoneText)
-
-	// Divider line under header
-	pdf.SetDrawColor(238, 238, 238)
-	pdf.SetLineWidth(0.2)
-	pdf.Line(lm, tm+45, pageW-rm, tm+45)
+	contentY := drawUnifiedLetterhead(pdf, companyInfo, 35)
 
 	// Title
-	pdf.SetY(tm + 55)
+	pdf.SetY(contentY)
 	pdf.SetX(lm)
 	pdf.SetFont("Arial", "B", 22)
 	pdf.SetTextColor(51, 51, 51)

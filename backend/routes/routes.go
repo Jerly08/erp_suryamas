@@ -887,11 +887,13 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				postedTransactionCorrections.GET("", postedTransactionCorrectionController.List)
 				postedTransactionCorrections.POST("", postedTransactionCorrectionController.Create)
 				postedTransactionCorrections.GET("/documents/:document_id/download", postedTransactionCorrectionController.DownloadDocument)
+				postedTransactionCorrections.GET("/sales/:sale_id/payment-candidates", postedTransactionCorrectionController.ListLegacySalesCreditPaymentCandidates)
 				postedTransactionCorrections.GET("/:id", postedTransactionCorrectionController.GetByID)
 				postedTransactionCorrections.POST("/:id/documents", postedTransactionCorrectionController.UploadDocument)
 				postedTransactionCorrections.POST("/:id/accounting-review", postedTransactionCorrectionController.ReviewAccounting)
 				postedTransactionCorrections.POST("/:id/finance-manager-decision", postedTransactionCorrectionController.DecideFinanceManager)
 				postedTransactionCorrections.POST("/:id/complete", postedTransactionCorrectionController.Complete)
+				postedTransactionCorrections.POST("/:id/execute-sales-credit-correction", postedTransactionCorrectionController.ExecuteSalesCreditCorrection)
 			}
 
 			// ⚡ ULTRA-FAST: Setup Ultra-Fast Payment routes with minimal operations
@@ -922,6 +924,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.POST("/vendors", permMiddleware.CanCreate("purchases"), contactController.CreateVendorForPurchase)
 				purchases.GET("/payment-proofs/:payment_id/download", rbacMgr.RequireAnyPermission("purchases:view", "purchase_requests:view"), purchaseController.DownloadPaymentProof)
 				purchases.GET("/documents/:document_id/download", permMiddleware.CanView("purchases"), purchaseController.DownloadDocument)
+				purchases.GET("/:id/coa-revisions", permMiddleware.CanView("purchases"), purchaseController.ListPurchaseCOARevisions)
 				purchases.GET("/:id", permMiddleware.CanView("purchases"), purchaseController.GetPurchase)
 				purchases.POST("", permMiddleware.CanCreate("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchase)
 				purchases.PUT("/:id", permMiddleware.CanEditPurchaseOrFinanceStaffDraft(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdatePurchase)
@@ -932,6 +935,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchases.POST("/:id/approve", permMiddleware.CanUsePurchaseApprovalWorkflow(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.ApprovePurchase)
 				purchases.POST("/:id/reject", permMiddleware.CanUsePurchaseApprovalWorkflow(), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.RejectPurchase)
 				purchases.POST("/:id/accounting-coa", rbacMgr.RequireAnyPermission("purchases:edit", "purchases:approve"), purchaseController.CompleteAccountingCOA)
+				purchases.POST("/:id/coa-revisions", permMiddleware.CanView("purchases"), purchaseController.RequestPurchaseCOARevision)
+				purchases.POST("/:id/coa-revisions/:revision_id/decision", permMiddleware.CanView("purchases"), purchaseController.DecidePurchaseCOARevision)
 				purchases.POST("/:id/final-review-config", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.UpdateFinalReviewConfig)
 				purchases.POST("/:id/final-approval", permMiddleware.CanApprove("purchases"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.FinalApprovePurchase)
 				// Approval history endpoint (accessible by those who can view purchases)

@@ -2214,6 +2214,13 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 	if purchase.Status != models.PurchaseStatusPendingFinalApproval {
 		return nil, fmt.Errorf("purchase belum menunggu final approval Finance Manager (status saat ini: %s)", purchase.Status)
 	}
+	pendingCOARevision, err := s.HasPendingPurchaseCOARevision(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("gagal memeriksa pengajuan revisi COA: %w", err)
+	}
+	if pendingCOARevision {
+		return nil, errors.New("masih ada pengajuan revisi COA yang menunggu keputusan Finance Manager")
+	}
 	if s.purchaseNeedsAccountingCOA(purchase) {
 		return nil, errors.New("GL/COA belum lengkap, Accounting harus melengkapi COA terlebih dahulu")
 	}
@@ -2223,6 +2230,35 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 
 	now := time.Now()
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize final approval with a possible COA revision request. The same
+		// row lock is used by the revision workflow, so a journal cannot be posted
+		// while a pending revision is being created.
+		var lockedPurchase models.Purchase
+		if err := tx.Preload("PurchaseItems").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&lockedPurchase, purchaseID).Error; err != nil {
+			return err
+		}
+		if lockedPurchase.ApprovalStatus != models.PurchaseApprovalApproved ||
+			lockedPurchase.Status != models.PurchaseStatusPendingFinalApproval {
+			return errors.New("purchase tidak lagi siap untuk final approval")
+		}
+		if s.purchaseNeedsAccountingCOA(&lockedPurchase) {
+			return errors.New("GL/COA belum lengkap, Accounting harus melengkapi COA terlebih dahulu")
+		}
+		if err := CheckClosedPeriod(tx, lockedPurchase.Date); err != nil {
+			return err
+		}
+		var pendingCount int64
+		if err := tx.Model(&models.PurchaseCOARevision{}).
+			Where("purchase_id = ? AND status = ?", purchaseID, models.PurchaseCOARevisionStatusPendingFinanceManager).
+			Count(&pendingCount).Error; err != nil {
+			return err
+		}
+		if pendingCount > 0 {
+			return errors.New("masih ada pengajuan revisi COA yang menunggu keputusan Finance Manager")
+		}
+
 		updates := map[string]interface{}{
 			"status":      models.PurchaseStatusApproved,
 			"approved_by": userID,
@@ -2232,13 +2268,13 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 		if err := tx.Model(&models.Purchase{}).Where("id = ?", purchaseID).Updates(updates).Error; err != nil {
 			return fmt.Errorf("failed to mark purchase final approved: %w", err)
 		}
-		if purchase.ApprovalRequestID != nil {
+		if lockedPurchase.ApprovalRequestID != nil {
 			historyComments := strings.TrimSpace(comments)
 			if historyComments == "" {
 				historyComments = "Finance Manager final approval after Accounting GL/COA completion"
 			}
 			history := models.ApprovalHistory{
-				RequestID: *purchase.ApprovalRequestID,
+				RequestID: *lockedPurchase.ApprovalRequestID,
 				UserID:    userID,
 				Action:    models.ApprovalActionApproved,
 				Comments:  historyComments,

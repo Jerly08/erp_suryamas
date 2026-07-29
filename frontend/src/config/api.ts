@@ -326,6 +326,10 @@ export const API_ENDPOINTS = {
       `/api/v1/posted-transaction-corrections/${id}/finance-manager-decision`,
     COMPLETE: (id: number) =>
       `/api/v1/posted-transaction-corrections/${id}/complete`,
+    SALES_PAYMENT_CANDIDATES: (saleId: number) =>
+      `/api/v1/posted-transaction-corrections/sales/${saleId}/payment-candidates`,
+    EXECUTE_SALES_CREDIT_CORRECTION: (id: number) =>
+      `/api/v1/posted-transaction-corrections/${id}/execute-sales-credit-correction`,
     DOCUMENTS: (id: number) =>
       `/api/v1/posted-transaction-corrections/${id}/documents`,
     DOCUMENT_DOWNLOAD: (documentId: number) =>
@@ -449,6 +453,10 @@ export const API_ENDPOINTS = {
   PURCHASES_REJECT: (id: number) => `/api/v1/purchases/${id}/reject`,
   PURCHASES_ACCOUNTING_COA: (id: number) =>
     `/api/v1/purchases/${id}/accounting-coa`,
+  PURCHASES_COA_REVISIONS: (id: number) =>
+    `/api/v1/purchases/${id}/coa-revisions`,
+  PURCHASES_COA_REVISION_DECISION: (id: number, revisionId: number) =>
+    `/api/v1/purchases/${id}/coa-revisions/${revisionId}/decision`,
   PURCHASES_FINAL_REVIEW_CONFIG: (id: number) =>
     `/api/v1/purchases/${id}/final-review-config`,
   PURCHASES_FINAL_APPROVAL: (id: number) =>

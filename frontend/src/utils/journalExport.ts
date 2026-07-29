@@ -8,6 +8,12 @@ import {
   formatAccountingDateShort,
 } from '@/utils/accountingDate';
 import { cleanCsvCell } from '@/utils/exportText';
+import { API_ENDPOINTS } from '@/config/api';
+import { getImageUrl } from '@/utils/imageUrl';
+import {
+  fetchCompanySettings,
+  settingsToCompanyInfo,
+} from '@/utils/pdfReportGenerator';
 
 // ===== HELPERS =====
 const formatCurrency = (amount: number): string => {
@@ -23,39 +29,232 @@ const formatCsvCell = (value: string | number | null | undefined): string => {
   return `"${cleanCsvCell(value).replace(/"/g, '""')}"`;
 };
 
-const addHeader = (doc: jsPDF, title: string, subtitle: string, yStart: number = 20): number => {
-  let yPos = yStart;
+export interface ReportLetterhead {
+  companyName?: string;
+  companyAddress?: string;
+  companyPhone?: string;
+  companyEmail?: string;
+  taxNumber?: string;
+  companyLogoBase64?: string;
+}
+
+export interface ReportPdfOptions {
+  letterhead?: ReportLetterhead;
+}
+
+const REPORT_COLORS = {
+  primary: [25, 55, 109] as [number, number, number],
+  dark: [33, 37, 41] as [number, number, number],
+  muted: [108, 117, 125] as [number, number, number],
+  line: [210, 218, 230] as [number, number, number],
+};
+
+const loadImageAsBase64 = async (url: string): Promise<string | null> => {
+  if (typeof window === 'undefined' || typeof FileReader === 'undefined') {
+    return null;
+  }
+
+  try {
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) return null;
+
+    const blob = await response.blob();
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+};
+
+/** Loads the current company profile once before a browser-side PDF is generated. */
+export const loadReportLetterhead = async (
+  fallback: ReportLetterhead = {},
+): Promise<ReportLetterhead> => {
+  const settings = await fetchCompanySettings();
+  const company = settings ? settingsToCompanyInfo(settings) : null;
+  const logoSource = company?.logo || API_ENDPOINTS.BRANDING_LOGO;
+  const logoUrl = logoSource.startsWith('data:')
+    ? logoSource
+    : getImageUrl(logoSource) || API_ENDPOINTS.BRANDING_LOGO;
+
+  const companyLogoBase64 = logoUrl.startsWith('data:')
+    ? logoUrl
+    : await loadImageAsBase64(logoUrl);
+
+  return {
+    companyName: company?.name || fallback.companyName || 'Finance Management',
+    companyAddress: company?.address || fallback.companyAddress,
+    companyPhone: company?.phone || fallback.companyPhone,
+    companyEmail: company?.email || fallback.companyEmail,
+    taxNumber: company?.tax_number || fallback.taxNumber,
+    companyLogoBase64: companyLogoBase64 || fallback.companyLogoBase64,
+  };
+};
+
+const writeRightAlignedLines = (
+  doc: jsPDF,
+  value: string | undefined,
+  rightX: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+): number => {
+  if (!value?.trim()) return y;
+
+  const lines = doc.splitTextToSize(value.trim(), maxWidth) as string[];
+  lines.forEach((line) => {
+    doc.text(line, rightX, y, { align: 'right' });
+    y += lineHeight;
+  });
+
+  return y;
+};
+
+const drawCompanyLetterhead = (
+  doc: jsPDF,
+  letterhead: ReportLetterhead,
+): number => {
+  const pageWidth = doc.internal.pageSize.width;
+  const margin = 14;
+  const top = 12;
+  const maxLogoWidth = 36;
+  const maxLogoHeight = 25;
+  const rightX = pageWidth - margin;
+  const infoMaxWidth = Math.max(70, pageWidth - margin * 2 - maxLogoWidth - 14);
+  let logoBottom = top;
+
+  if (letterhead.companyLogoBase64) {
+    try {
+      const image = (doc as any).getImageProperties(letterhead.companyLogoBase64);
+      const sourceWidth = Number(image?.width) || 1;
+      const sourceHeight = Number(image?.height) || 1;
+      const scale = Math.min(maxLogoWidth / sourceWidth, maxLogoHeight / sourceHeight);
+      const logoWidth = sourceWidth * scale;
+      const logoHeight = sourceHeight * scale;
+
+      doc.addImage(
+        letterhead.companyLogoBase64,
+        'AUTO',
+        margin,
+        top,
+        logoWidth,
+        logoHeight,
+      );
+      logoBottom = top + logoHeight;
+    } catch {
+      // A malformed or unsupported logo must never block an accounting export.
+    }
+  }
+
+  let infoY = top + 1;
+  doc.setTextColor(...REPORT_COLORS.primary);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  infoY = writeRightAlignedLines(
+    doc,
+    letterhead.companyName,
+    rightX,
+    infoY,
+    infoMaxWidth,
+    5.5,
+  );
+
+  doc.setTextColor(...REPORT_COLORS.dark);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  infoY = writeRightAlignedLines(
+    doc,
+    letterhead.companyAddress,
+    rightX,
+    infoY + 1,
+    infoMaxWidth,
+    4.2,
+  );
+  infoY = writeRightAlignedLines(
+    doc,
+    letterhead.companyPhone ? `Telepon: ${letterhead.companyPhone}` : undefined,
+    rightX,
+    infoY,
+    infoMaxWidth,
+    4.2,
+  );
+  infoY = writeRightAlignedLines(
+    doc,
+    letterhead.companyEmail ? `Email: ${letterhead.companyEmail}` : undefined,
+    rightX,
+    infoY,
+    infoMaxWidth,
+    4.2,
+  );
+  infoY = writeRightAlignedLines(
+    doc,
+    letterhead.taxNumber ? `NPWP: ${letterhead.taxNumber}` : undefined,
+    rightX,
+    infoY,
+    infoMaxWidth,
+    4.2,
+  );
+
+  const separatorY = Math.max(logoBottom, infoY, top + 18) + 5;
+  doc.setDrawColor(...REPORT_COLORS.line);
+  doc.setLineWidth(0.35);
+  doc.line(margin, separatorY, pageWidth - margin, separatorY);
+  doc.setTextColor(0, 0, 0);
+
+  return separatorY + 11;
+};
+
+const addHeader = (
+  doc: jsPDF,
+  title: string,
+  subtitle: string,
+  letterhead?: ReportLetterhead,
+): number => {
+  let yPos = letterhead ? drawCompanyLetterhead(doc, letterhead) : 20;
 
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
   doc.text(title, doc.internal.pageSize.width / 2, yPos, { align: 'center' });
 
   yPos += 7;
-  doc.setFontSize(11);
+  doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(subtitle, doc.internal.pageSize.width / 2, yPos, { align: 'center' });
+  subtitle.split('\n').forEach((line) => {
+    doc.text(line, doc.internal.pageSize.width / 2, yPos, { align: 'center' });
+    yPos += 5;
+  });
 
-  yPos += 10;
-  return yPos;
+  return yPos + 6;
 };
 
 const addFooter = (doc: jsPDF) => {
   const pageCount = (doc as any).getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
+    const footerY = doc.internal.pageSize.height - 10;
+    doc.setDrawColor(...REPORT_COLORS.line);
+    doc.setLineWidth(0.25);
+    doc.line(14, footerY - 3, doc.internal.pageSize.width - 14, footerY - 3);
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...REPORT_COLORS.muted);
     doc.text(
       `Halaman ${i} dari ${pageCount}`,
-      doc.internal.pageSize.width / 2,
-      doc.internal.pageSize.height - 10,
-      { align: 'center' }
+      doc.internal.pageSize.width - 14,
+      footerY,
+      { align: 'right' }
     );
     doc.text(
-      `Digenerate pada: ${new Date().toLocaleString('id-ID')}`,
+      'Dicetak dari Finance Management',
       14,
-      doc.internal.pageSize.height - 10
+      footerY,
     );
+    doc.text(`Dicetak: ${new Date().toLocaleString('id-ID')}`, doc.internal.pageSize.width / 2, footerY, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
   }
 };
 
@@ -74,11 +273,17 @@ const triggerDownload = (blob: Blob, filename: string) => {
 export const exportGeneralJournalToPDF = (
   entries: SSOTJournalEntry[],
   startDate: string,
-  endDate: string
+  endDate: string,
+  options: ReportPdfOptions = {},
 ): void => {
   const doc = new jsPDF({ orientation: 'landscape' });
 
-  let yPos = addHeader(doc, 'Jurnal Umum', `Periode: ${formatAccountingDateShort(startDate)} - ${formatAccountingDateShort(endDate)}`);
+  let yPos = addHeader(
+    doc,
+    'Jurnal Umum',
+    `Periode: ${formatAccountingDateShort(startDate)} - ${formatAccountingDateShort(endDate)}`,
+    options.letterhead,
+  );
 
   // Summary
   const totalDebit = entries.reduce((sum, e) => sum + (Number(e.total_debit) || 0), 0);
@@ -172,13 +377,19 @@ export const exportGeneralJournalToCSV = (
 export const exportGeneralLedgerToPDF = (
   data: SSOTGeneralLedgerData,
   startDate: string,
-  endDate: string
+  endDate: string,
+  options: ReportPdfOptions = {},
 ): void => {
   const doc = new jsPDF();
   const isAllAccountsMode = !data.account?.account_code;
 
   const accountLabel = data.account?.account_code ? `${data.account.account_code} - ${data.account.account_name}` : 'Semua Akun';
-  let yPos = addHeader(doc, 'Buku Besar', `${accountLabel}\nPeriode: ${formatAccountingDateShort(startDate)} - ${formatAccountingDateShort(endDate)}`);
+  let yPos = addHeader(
+    doc,
+    'Buku Besar',
+    `${accountLabel}\nPeriode: ${formatAccountingDateShort(startDate)} - ${formatAccountingDateShort(endDate)}`,
+    options.letterhead,
+  );
   yPos += 4;
 
   // Summary
@@ -321,22 +532,17 @@ export const exportGeneralLedgerToCSV = (
 // ===== NERACA (Balance Sheet) PDF - Client-side fallback =====
 export const exportBalanceSheetToPDF = (
   data: SSOTBalanceSheetData,
-  asOfDate: string
+  asOfDate: string,
+  options: ReportPdfOptions = {},
 ): void => {
   const doc = new jsPDF();
 
-  let yPos = 20;
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(data.company?.name || 'Perusahaan', doc.internal.pageSize.width / 2, yPos, { align: 'center' });
-  yPos += 7;
-  doc.setFontSize(13);
-  doc.text('Neraca', doc.internal.pageSize.width / 2, yPos, { align: 'center' });
-  yPos += 6;
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Per ${new Date(asOfDate).toLocaleDateString('id-ID', { dateStyle: 'long' })}`, doc.internal.pageSize.width / 2, yPos, { align: 'center' });
-  yPos += 12;
+  let yPos = addHeader(
+    doc,
+    'Neraca',
+    `Per ${formatAccountingDate(asOfDate)}`,
+    options.letterhead,
+  );
 
   const pageWidth = doc.internal.pageSize.width;
   const marginLeft = 14;

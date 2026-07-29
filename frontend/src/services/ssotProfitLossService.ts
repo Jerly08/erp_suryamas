@@ -71,6 +71,17 @@ export interface SSOTProfitLossData {
     amount: number;
   }>;
 
+  cost_of_goods_sold?: {
+    total_cogs?: number;
+    items?: Array<{
+      code?: string;
+      account_code?: string;
+      name?: string;
+      account_name?: string;
+      amount: number;
+    }>;
+  };
+
   other_income_items?: Array<{
     account_code?: string;
     account_name: string;

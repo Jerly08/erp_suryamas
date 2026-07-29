@@ -208,6 +208,11 @@ const getLocalDateInputValue = (date = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
+const isDeferredSalePaymentTerm = (paymentTerms?: string): boolean =>
+  ["NET_15", "NET_30", "NET_60", "NET_90", "CUSTOM"].includes(
+    String(paymentTerms || "").trim().toUpperCase(),
+  );
+
 const SalesForm: React.FC<SalesFormProps> = ({
   isOpen,
   onClose,
@@ -397,6 +402,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
   const watchDate = watch("date");
   const watchType = watch("type");
   const watchDueDate = watch("due_date");
+  const requiresReceivablePayment = isDeferredSalePaymentTerm(watchPaymentTerms);
   const [discountType, setDiscountType] = useState<"percentage" | "amount">(
     "percentage",
   );
@@ -511,11 +517,22 @@ const SalesForm: React.FC<SalesFormProps> = ({
   ]);
 
   useEffect(() => {
-    if (watchPaymentMethodType !== "CREDIT" && watchPaymentTerms === "CUSTOM") {
-      setValue("payment_terms", "COD");
-      setValue("payment_schedules", []);
+    if (
+      !isInvoiced &&
+      requiresReceivablePayment &&
+      watchPaymentMethodType !== "CREDIT"
+    ) {
+      setValue("payment_method_type", "CREDIT", {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
     }
-  }, [watchPaymentMethodType, watchPaymentTerms, setValue]);
+  }, [
+    isInvoiced,
+    requiresReceivablePayment,
+    setValue,
+    watchPaymentMethodType,
+  ]);
 
   useEffect(() => {
     if (watchPaymentMethodType !== "CREDIT") {
@@ -1567,6 +1584,19 @@ const SalesForm: React.FC<SalesFormProps> = ({
       const receivableAccountId = resolveReceivableAccountId(
         data.receivable_account_id,
       );
+      if (
+        isDeferredSalePaymentTerm(data.payment_terms) &&
+        data.payment_method_type !== "CREDIT"
+      ) {
+        ErrorHandler.handleValidationError(
+          [
+            "Termin NET atau custom harus memakai metode Piutang. Penerimaan pelanggan dicatat saat uang benar-benar diterima.",
+          ],
+          toast,
+          "sales form",
+        );
+        return;
+      }
       if (
         data.payment_method_type === "CREDIT" &&
         (!receivableAccountId || receivableAccountId <= 0)
@@ -3438,6 +3468,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           {...register("payment_terms")}
                           bg={inputBg}
                           _focus={{ bg: inputFocusBg }}
+                          isDisabled={isInvoiced}
                         >
                           <option value="COD">
                             {t("sales.form.paymentTermsOptions.cod")}
@@ -3454,17 +3485,14 @@ const SalesForm: React.FC<SalesFormProps> = ({
                           <option value="NET_90">
                             {t("sales.form.paymentTermsOptions.net90")}
                           </option>
-                          <option
-                            value="CUSTOM"
-                            disabled={watchPaymentMethodType !== "CREDIT"}
-                          >
+                          <option value="CUSTOM">
                             Custom Termin / Installment Schedule
                           </option>
                         </Select>
                         <FormHelperText color={textColor}>
-                          {watchPaymentMethodType === "CREDIT"
-                            ? 'Untuk cicilan atau termin 30%-40%-30%, pilih "Custom Termin / Installment Schedule".'
-                            : "Termin custom hanya tersedia untuk penjualan kredit/piutang."}
+                          {requiresReceivablePayment
+                            ? "Termin kredit memakai Piutang Usaha; penerimaan customer dicatat terpisah setelah dana benar-benar diterima."
+                            : 'Untuk cicilan atau termin 30%-40%-30%, pilih "Custom Termin / Installment Schedule".'}
                         </FormHelperText>
                         {watchPaymentMethodType === "CREDIT" &&
                           watchPaymentTerms !== "CUSTOM" && (
@@ -3562,11 +3590,12 @@ const SalesForm: React.FC<SalesFormProps> = ({
                               })}
                               bg={inputBg}
                               _focus={{ bg: inputFocusBg }}
+                              isDisabled={isInvoiced}
                             >
-                              <option value="CASH">
+                              <option value="CASH" disabled={requiresReceivablePayment}>
                                 {t("sales.form.paymentMethodOptions.cash")}
                               </option>
-                              <option value="BANK">
+                              <option value="BANK" disabled={requiresReceivablePayment}>
                                 {t("sales.form.paymentMethodOptions.bank")}
                               </option>
                               <option value="CREDIT">
@@ -3594,7 +3623,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 })}
                                 bg={inputBg}
                                 _focus={{ bg: inputFocusBg }}
-                                isDisabled={loadingData}
+                                isDisabled={loadingData || isInvoiced}
                               >
                                 <option value="">
                                   {loadingData
@@ -3639,7 +3668,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 })}
                                 bg={inputBg}
                                 _focus={{ bg: inputFocusBg }}
-                                isDisabled={loadingData}
+                                isDisabled={loadingData || isInvoiced}
                               >
                                 <option value="">
                                   {loadingData
@@ -3675,7 +3704,7 @@ const SalesForm: React.FC<SalesFormProps> = ({
                                 })}
                                 bg={inputBg}
                                 _focus={{ bg: inputFocusBg }}
-                                isDisabled={loadingData}
+                                isDisabled={loadingData || isInvoiced}
                               >
                                 <option value="">
                                   {loadingData

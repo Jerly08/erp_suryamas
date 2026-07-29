@@ -591,6 +591,117 @@ func (pc *PurchaseController) CompleteAccountingCOA(c *gin.Context) {
 	})
 }
 
+// ListPurchaseCOARevisions returns the audit trail for pre-posting COA revisions.
+// It never exposes an action that changes a posted journal.
+func (pc *PurchaseController) ListPurchaseCOARevisions(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	role := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(role)
+	if !models.IsFinanceTeamRole(roleNorm) && roleNorm != models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya tim Finance, Accounting, atau Admin yang dapat melihat riwayat revisi COA"})
+		return
+	}
+
+	revisions, err := pc.purchaseService.ListPurchaseCOARevisions(uint(id), userID, roleNorm)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": revisions})
+}
+
+// RequestPurchaseCOARevision lets Accounting ask Finance Manager to return a
+// final-review PO to Accounting. The request itself cannot alter any COA.
+func (pc *PurchaseController) RequestPurchaseCOARevision(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	role := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(role)
+	if !models.IsAccountingRole(roleNorm) && roleNorm != models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Accounting yang dapat mengajukan revisi COA sebelum jurnal diposting"})
+		return
+	}
+
+	var request models.PurchaseCOARevisionCreateRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	revision, err := pc.purchaseService.RequestPurchaseCOARevision(uint(id), request, userID, roleNorm)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":  "Pengajuan revisi COA dikirim ke Finance Manager",
+		"revision": revision,
+	})
+}
+
+// DecidePurchaseCOARevision is the Finance Manager approval gate before a PO
+// returns to Accounting. It is not used for an already-posted purchase.
+func (pc *PurchaseController) DecidePurchaseCOARevision(c *gin.Context) {
+	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	revisionID, err := strconv.ParseUint(c.Param("revision_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid revision ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(purchaseID)); !ok {
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	role := c.MustGet("user_role").(string)
+	roleNorm := models.NormalizeRole(role)
+	if !models.IsFinanceManagerRole(roleNorm) && roleNorm != models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Finance Manager yang dapat memutuskan revisi COA"})
+		return
+	}
+
+	var request models.PurchaseCOARevisionDecisionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	revision, err := pc.purchaseService.DecidePurchaseCOARevision(uint(purchaseID), uint(revisionID), request, userID, roleNorm)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	message := "Revisi COA ditolak; purchase tetap menunggu final approval"
+	if request.Approve {
+		message = "Revisi COA disetujui; purchase dikembalikan ke Accounting"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": message, "revision": revision})
+}
+
 func (pc *PurchaseController) UpdateFinalReviewConfig(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {

@@ -17,6 +17,7 @@ export type PostedTransactionCorrectionType =
   | 'SOURCE_BANK'
   | 'DESTINATION_ACCOUNT'
   | 'PURCHASE_DATE'
+  | 'SALES_CREDIT_CLASSIFICATION'
   | 'OTHER';
 
 export type PostedTransactionCorrectionResolution =
@@ -59,11 +60,13 @@ export interface PostedTransactionCorrectionEvent {
 
 export interface PostedTransactionCorrection {
   id: number;
-  target_type: 'PURCHASE' | 'PAYMENT';
+  target_type: 'PURCHASE' | 'PAYMENT' | 'SALE';
   target_code: string;
   purchase_id?: number | null;
   payment_id?: number | null;
   purchase_payment_id?: number | null;
+  sale_id?: number | null;
+  linked_payment_id?: number | null;
   original_journal_entry_id: number;
   correction_type: PostedTransactionCorrectionType;
   status: PostedTransactionCorrectionStatus;
@@ -92,6 +95,16 @@ export interface PostedTransactionCorrection {
   updated_at: string;
   purchase?: { id: number; code: string; total_amount?: number; date?: string };
   payment?: { id: number; code: string; amount?: number; date?: string };
+  sale?: {
+    id: number;
+    code: string;
+    invoice_number?: string;
+    total_amount?: number;
+    date?: string;
+    payment_terms?: string;
+    payment_method_type?: string;
+  };
+  linked_payment?: { id: number; code: string; amount?: number; date?: string; reference?: string };
   requester?: CorrectionActor;
   accounting_user?: CorrectionActor;
   finance_manager?: CorrectionActor;
@@ -104,6 +117,8 @@ export interface PostedTransactionCorrection {
 export interface CreatePostedTransactionCorrectionRequest {
   purchase_id?: number;
   payment_id?: number;
+  sale_id?: number;
+  linked_payment_id?: number;
   correction_type: PostedTransactionCorrectionType;
   reason: string;
   requested_date?: string;
@@ -116,6 +131,7 @@ export interface CreatePostedTransactionCorrectionRequest {
 export interface PostedTransactionCorrectionFilters {
   purchase_id?: number;
   payment_id?: number;
+  sale_id?: number;
   status?: PostedTransactionCorrectionStatus;
   page?: number;
   limit?: number;
@@ -129,6 +145,17 @@ export interface PostedTransactionCorrectionListResponse {
     total: number;
     total_pages: number;
   };
+}
+
+export interface LegacySalesCreditPaymentCandidate {
+  id: number;
+  code: string;
+  date: string;
+  amount: number;
+  reference?: string;
+  cash_bank_code?: string;
+  cash_bank_name?: string;
+  cash_bank_currency?: string;
 }
 
 const authHeaders = (token?: string) =>
@@ -207,6 +234,29 @@ const postedTransactionCorrectionService = {
     const response = await api.post(
       API_ENDPOINTS.POSTED_TRANSACTION_CORRECTIONS.COMPLETE(id),
       payload,
+      { headers: authHeaders(token) },
+    );
+    return response.data.data;
+  },
+
+  async getLegacySalesCreditPaymentCandidates(
+    token: string | undefined,
+    saleId: number,
+  ): Promise<LegacySalesCreditPaymentCandidate[]> {
+    const response = await api.get(
+      API_ENDPOINTS.POSTED_TRANSACTION_CORRECTIONS.SALES_PAYMENT_CANDIDATES(saleId),
+      { headers: authHeaders(token) },
+    );
+    return response.data.data || [];
+  },
+
+  async executeSalesCreditCorrection(
+    token: string | undefined,
+    id: number,
+  ): Promise<PostedTransactionCorrection> {
+    const response = await api.post(
+      API_ENDPOINTS.POSTED_TRANSACTION_CORRECTIONS.EXECUTE_SALES_CREDIT_CORRECTION(id),
+      {},
       { headers: authHeaders(token) },
     );
     return response.data.data;

@@ -60,6 +60,36 @@ export interface PurchaseFinalReviewConfigRequest {
   notes?: string;
 }
 
+export type PurchaseCOARevisionStatus =
+  | "PENDING_FINANCE_MANAGER"
+  | "APPROVED"
+  | "REJECTED";
+
+export interface PurchaseCOARevisionActor {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+}
+
+export interface PurchaseCOARevision {
+  id: number;
+  purchase_id: number;
+  status: PurchaseCOARevisionStatus;
+  reason: string;
+  coa_snapshot: string;
+  requested_by: number;
+  requested_at: string;
+  finance_manager_decision_notes?: string;
+  finance_manager_decision_by?: number | null;
+  finance_manager_decision_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  requester?: PurchaseCOARevisionActor;
+  finance_manager?: PurchaseCOARevisionActor;
+}
+
 export interface PurchaseFilterParams {
   status?: string;
   vendor_id?: string;
@@ -414,6 +444,34 @@ class PurchaseService {
       payload,
     );
     return response.data?.purchase ?? response.data;
+  }
+
+  async listCOARevisions(id: number): Promise<PurchaseCOARevision[]> {
+    const response = await api.get(API_ENDPOINTS.PURCHASES_COA_REVISIONS(id));
+    return response.data?.data ?? [];
+  }
+
+  async requestCOARevision(
+    id: number,
+    payload: { reason: string },
+  ): Promise<PurchaseCOARevision> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_COA_REVISIONS(id),
+      payload,
+    );
+    return response.data?.revision ?? response.data;
+  }
+
+  async decideCOARevision(
+    id: number,
+    revisionId: number,
+    payload: { approve: boolean; notes?: string },
+  ): Promise<PurchaseCOARevision> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_COA_REVISION_DECISION(id, revisionId),
+      payload,
+    );
+    return response.data?.revision ?? response.data;
   }
 
   async updateFinalReviewConfig(

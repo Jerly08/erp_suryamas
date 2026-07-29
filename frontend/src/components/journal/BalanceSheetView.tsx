@@ -41,6 +41,7 @@ import {
 import {
   exportBalanceSheetToCSV,
   exportBalanceSheetToPDF,
+  loadReportLetterhead,
 } from "@/utils/journalExport";
 
 type ReportMode = "live" | "archive";
@@ -265,7 +266,10 @@ export default function BalanceSheetView() {
     try {
       setExporting(true);
       if (reportMode === "archive" && archiveMetadata) {
-        exportBalanceSheetToPDF(data, effectiveAsOfDate);
+        const letterhead = await loadReportLetterhead({
+          companyName: data.company?.name,
+        });
+        exportBalanceSheetToPDF(data, effectiveAsOfDate, { letterhead });
       } else {
         const blob =
           await ssotBalanceSheetReportService.generateSSOTBalanceSheetPDF({
