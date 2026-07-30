@@ -154,8 +154,16 @@ const isEmployeeLoanAccount = (account: AccountCatalogItem) => {
 };
 
 const isIntercompanyReceivableAccount = (account: AccountCatalogItem) => {
-  const label = `${account.code} ${account.name}`.toLowerCase();
-  return label.includes('intercompany') ||
+  const code = (account.code || '').trim();
+  const parentCode = (account.parent_code || '').trim();
+  const label = `${code} ${account.name || ''}`.toLowerCase();
+
+  // The COA hierarchy is authoritative. Name matching remains as a fallback
+  // for tenant-specific labels and older catalog responses without parent_code.
+  return parentCode === '1106' ||
+    code.startsWith('1106-') ||
+    label.includes('intercompany') ||
+    label.includes('intercomp') ||
     (label.includes('antar') && label.includes('perusahaan')) ||
     (label.includes('piutang') && label.includes('afiliasi'));
 };
