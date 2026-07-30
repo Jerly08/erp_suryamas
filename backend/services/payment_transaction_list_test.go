@@ -25,6 +25,7 @@ func TestListPaymentTransactionsCombinesInvoiceReceiptsAndOutgoingPayments(t *te
 		&models.Sale{},
 		&models.SalePayment{},
 		&models.Purchase{},
+		&models.PurchasePaymentTerm{},
 		&models.PurchasePayment{},
 		&models.SSOTJournalEntry{},
 		&models.JournalEntry{},
@@ -85,6 +86,14 @@ func TestListPaymentTransactionsCombinesInvoiceReceiptsAndOutgoingPayments(t *te
 		Status:   "APPROVED",
 	}
 	require.NoError(t, db.Create(&purchase).Error)
+	purchaseTerm := models.PurchasePaymentTerm{
+		PurchaseID: purchase.ID,
+		Sequence:   1,
+		Amount:     125_000,
+		DueDate:    baseDate.AddDate(0, 0, 30),
+		Status:     models.PurchasePaymentTermPending,
+	}
+	require.NoError(t, db.Create(&purchaseTerm).Error)
 
 	legacyReceipt := models.Payment{
 		Code:        "RCV-LEGACY-0001",
@@ -132,11 +141,29 @@ func TestListPaymentTransactionsCombinesInvoiceReceiptsAndOutgoingPayments(t *te
 		AllocatedAmount: 125_000,
 	}).Error)
 
+	termPayment := models.Payment{
+		Code:        "PAY-VENDOR-TERM-0001",
+		ContactID:   vendor.ID,
+		UserID:      user.ID,
+		Date:        baseDate.AddDate(0, 0, 4),
+		Amount:      125_000,
+		Method:      models.PaymentMethodBankTransfer,
+		Status:      models.PaymentStatusDraft,
+		PaymentType: models.PaymentTypeRegular,
+	}
+	require.NoError(t, db.Create(&termPayment).Error)
+	require.NoError(t, db.Create(&models.PaymentAllocation{
+		PaymentID:             uint64(termPayment.ID),
+		BillID:                &purchase.ID,
+		PurchasePaymentTermID: &purchaseTerm.ID,
+		AllocatedAmount:       125_000,
+	}).Error)
+
 	service := &EnhancedPaymentServiceWithJournal{db: db}
 	all, err := service.ListPaymentTransactions(PaymentTransactionListFilter{Page: 1, Limit: 10})
 	require.NoError(t, err)
-	require.Equal(t, int64(4), all.Total)
-	require.Len(t, all.Data, 4)
+	require.Equal(t, int64(5), all.Total)
+	require.Len(t, all.Data, 5)
 
 	itemsByRecord := make(map[string]PaymentTransactionListItem)
 	for _, item := range all.Data {
@@ -164,6 +191,11 @@ func TestListPaymentTransactionsCombinesInvoiceReceiptsAndOutgoingPayments(t *te
 	require.Equal(t, "Pembelian - PO/2026/07/00028", outgoingItem.SourceLabel)
 	require.Equal(t, "PO/2026/07/00028", outgoingItem.SourceReference)
 
+	termItem := itemsByRecord["PAYMENT-"+uintToString(termPayment.ID)]
+	require.Equal(t, PaymentTransactionKindOutgoingPayment, termItem.TransactionKind)
+	require.Equal(t, "Pembelian - PO/2026/07/00028 | Termin 1", termItem.SourceLabel)
+	require.Empty(t, termItem.SourceReference)
+
 	receipts, err := service.ListPaymentTransactions(PaymentTransactionListFilter{
 		Page:  1,
 		Limit: 10,
@@ -189,9 +221,8 @@ func TestListPaymentTransactionsCombinesInvoiceReceiptsAndOutgoingPayments(t *te
 		Kind:  "OUTGOING",
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(1), outgoing.Total)
-	require.Len(t, outgoing.Data, 1)
-	require.Equal(t, "PAY-VENDOR-0001", outgoing.Data[0].Code)
+	require.Equal(t, int64(2), outgoing.Total)
+	require.Len(t, outgoing.Data, 2)
 }
 
 func uintToString(value uint) string {

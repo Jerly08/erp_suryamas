@@ -72,7 +72,7 @@ func TestCreatePaymentAllocationsCreatesPurchasePaymentLink(t *testing.T) {
 		BillAllocations: []AllocationItem{
 			{BillID: &purchase.ID, Amount: payment.Amount},
 		},
-	}, models.ContactTypeVendor, true)
+	}, models.ContactTypeVendor, true, true)
 	require.NoError(t, err)
 
 	var link models.PurchasePayment

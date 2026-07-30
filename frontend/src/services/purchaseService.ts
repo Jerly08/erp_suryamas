@@ -348,6 +348,7 @@ export interface PurchasePayment {
   cash_bank_id?: number;
   user_id: number;
   payment_id?: number;
+  purchase_payment_term_id?: number | null;
   payment_proof_file_name?: string;
   payment_proof_file_path?: string;
   payment_proof_file_size?: number;
@@ -365,6 +366,7 @@ export interface PurchasePayment {
   cash_bank?: any;
   user?: any;
   payment?: any;
+  purchase_payment_term?: PurchasePaymentTerm | null;
   payment_proof_uploader?: any;
   payment_proof_reviewer?: any;
 }
@@ -625,6 +627,28 @@ class PurchaseService {
 
     const response = await api.post(
       API_ENDPOINTS.PURCHASES_PAYMENT_PROOF(purchaseId),
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 30000,
+      },
+    );
+    return response.data?.payment ?? response.data;
+  }
+
+  async uploadCreditPurchasePaymentProof(
+    purchaseId: number,
+    paymentId: number,
+    file: File,
+  ): Promise<PurchasePayment> {
+    const formData = new FormData();
+    formData.append("payment_proof", file);
+
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_PAYMENT_PROOF_FOR_PAYMENT(
+        purchaseId,
+        paymentId,
+      ),
       formData,
       {
         headers: { "Content-Type": "multipart/form-data" },

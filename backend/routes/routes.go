@@ -971,6 +971,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				// Payment management (similar to sales payment management)
 				purchases.GET("/:id/payments", rbacMgr.RequireAnyPermission("purchases:view", "payments:view"), purchaseController.GetPurchasePayments)
 				purchases.POST("/:id/payments", rbacMgr.RequireAnyPermission("purchases:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.CreatePurchasePayment)
+				purchases.POST("/:id/payments/:payment_id/payment-proof", rbacMgr.RequireAnyPermission("purchases:create", "purchases:edit", "purchases:approve", "payments:create"), purchaseController.UploadCreditPurchasePaymentProof)
 				purchases.POST("/:id/payment-proof", rbacMgr.RequireAnyPermission("purchases:create", "purchases:edit", "purchases:approve", "payments:create"), purchaseController.UploadPaymentProof)
 				purchases.POST("/:id/pay-pph", rbacMgr.RequireAnyPermission("purchases:edit", "payments:create"), periodValidationMiddleware.ValidateTransactionPeriod(), purchaseController.PayPurchasePPh)
 

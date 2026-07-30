@@ -143,17 +143,21 @@ type PurchaseItem struct {
 
 // PurchasePayment represents payments made for purchases (cross-reference with payments table)
 type PurchasePayment struct {
-	ID                       uint           `json:"id" gorm:"primaryKey"`
-	PurchaseID               uint           `json:"purchase_id" gorm:"not null;index"`
-	PaymentNumber            string         `json:"payment_number" gorm:"size:50"`
-	Date                     time.Time      `json:"date"`
-	Amount                   float64        `json:"amount" gorm:"type:decimal(15,2);default:0"`
-	Method                   string         `json:"method" gorm:"size:20"`
-	Reference                string         `json:"reference" gorm:"size:100"`
-	Notes                    string         `json:"notes" gorm:"type:text"`
-	CashBankID               *uint          `json:"cash_bank_id" gorm:"index"`
-	UserID                   uint           `json:"user_id" gorm:"not null;index"`
-	PaymentID                *uint          `json:"payment_id" gorm:"index"` // Cross-reference to payments table
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	PurchaseID    uint      `json:"purchase_id" gorm:"not null;index"`
+	PaymentNumber string    `json:"payment_number" gorm:"size:50"`
+	Date          time.Time `json:"date"`
+	Amount        float64   `json:"amount" gorm:"type:decimal(15,2);default:0"`
+	Method        string    `json:"method" gorm:"size:20"`
+	Reference     string    `json:"reference" gorm:"size:100"`
+	Notes         string    `json:"notes" gorm:"type:text"`
+	CashBankID    *uint     `json:"cash_bank_id" gorm:"index"`
+	UserID        uint      `json:"user_id" gorm:"not null;index"`
+	PaymentID     *uint     `json:"payment_id" gorm:"index"` // Cross-reference to payments table
+	// PurchasePaymentTermID identifies the exact credit-payment term settled by
+	// this payment. It remains nullable for historical records and payments that
+	// intentionally allocate across more than one term.
+	PurchasePaymentTermID    *uint          `json:"purchase_payment_term_id,omitempty" gorm:"index"`
 	PaymentProofFileName     string         `json:"payment_proof_file_name" gorm:"size:255"`
 	PaymentProofFilePath     string         `json:"payment_proof_file_path" gorm:"size:500"`
 	PaymentProofFileSize     int64          `json:"payment_proof_file_size"`
@@ -169,12 +173,13 @@ type PurchasePayment struct {
 	DeletedAt                gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Purchase             Purchase  `json:"purchase" gorm:"foreignKey:PurchaseID"`
-	CashBank             *CashBank `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
-	User                 User      `json:"user" gorm:"foreignKey:UserID"`
-	Payment              *Payment  `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
-	PaymentProofUploader *User     `json:"payment_proof_uploader,omitempty" gorm:"foreignKey:PaymentProofUploadedBy"`
-	PaymentProofReviewer *User     `json:"payment_proof_reviewer,omitempty" gorm:"foreignKey:PaymentProofReviewedBy"`
+	Purchase             Purchase             `json:"purchase" gorm:"foreignKey:PurchaseID"`
+	CashBank             *CashBank            `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
+	User                 User                 `json:"user" gorm:"foreignKey:UserID"`
+	Payment              *Payment             `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
+	PurchasePaymentTerm  *PurchasePaymentTerm `json:"purchase_payment_term,omitempty" gorm:"foreignKey:PurchasePaymentTermID"`
+	PaymentProofUploader *User                `json:"payment_proof_uploader,omitempty" gorm:"foreignKey:PaymentProofUploadedBy"`
+	PaymentProofReviewer *User                `json:"payment_proof_reviewer,omitempty" gorm:"foreignKey:PaymentProofReviewedBy"`
 }
 
 // Purchase Status Constants

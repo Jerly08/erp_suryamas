@@ -148,6 +148,8 @@ import purchaseJournalService from "../../src/services/purchaseJournalService";
 import { API_ENDPOINTS } from "@/config/api";
 
 const PAYMENT_PROOF_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp";
+const MAX_PAYMENT_PROOF_SIZE = 20 * 1024 * 1024;
+const PAYMENT_PROOF_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "webp"];
 const PR_REALIZATION_DOCUMENT_TYPE = "REALIZATION_DOCUMENT";
 const PURCHASE_SEARCH_DEBOUNCE_MS = 400;
 
@@ -1342,6 +1344,11 @@ const PurchasesPage: React.FC = () => {
     useState<Purchase | null>(null);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
+  const [creditPaymentProofFiles, setCreditPaymentProofFiles] = useState<
+    Record<number, File | null>
+  >({});
+  const [uploadingCreditPaymentProofId, setUploadingCreditPaymentProofId] =
+    useState<number | null>(null);
   const [reviewingPaymentProofId, setReviewingPaymentProofId] = useState<
     number | null
   >(null);
@@ -2478,6 +2485,19 @@ const PurchasesPage: React.FC = () => {
 
     // Refresh purchases to show updated amounts
     await fetchPurchases();
+    if (selectedPurchaseForPayment?.id) {
+      try {
+        const detailResponse = await purchaseService.getById(
+          selectedPurchaseForPayment.id,
+        );
+        setSelectedPurchase(detailResponse);
+      } catch (error) {
+        console.warn(
+          "Failed to refresh purchase detail after recording payment",
+          error,
+        );
+      }
+    }
   };
 
   // Fetch cash banks for payment form
@@ -3807,6 +3827,126 @@ const PurchasesPage: React.FC = () => {
       isFinanceStaffRole(roleNorm) ||
       isFinanceManagerRole(roleNorm)
     );
+  };
+
+  const canUploadCreditPaymentProofForPurchase = (
+    purchase?: Purchase | null,
+  ) => {
+    if (!purchase || purchase.payment_method !== "CREDIT") return false;
+    return (
+      roleNorm === "admin" ||
+      isFinanceStaffRole(roleNorm) ||
+      isFinanceManagerRole(roleNorm)
+    );
+  };
+
+  const getLinkedPaymentId = (payment: PurchasePayment): number =>
+    Number(payment.payment_id || payment.payment?.id || 0);
+
+  const getPaymentTermId = (payment: PurchasePayment): number | null => {
+    const value = payment.purchase_payment_term_id ?? payment.purchase_payment_term?.id;
+    return value ? Number(value) : null;
+  };
+
+  const validateCreditPaymentProofFile = (file: File): boolean => {
+    if (file.size <= 0) {
+      toast({
+        title: "File bukti pembayaran kosong",
+        status: "warning",
+        duration: 3500,
+        isClosable: true,
+      });
+      return false;
+    }
+    if (file.size > MAX_PAYMENT_PROOF_SIZE) {
+      toast({
+        title: "Ukuran file terlalu besar",
+        description: "Bukti pembayaran maksimal 20MB.",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return false;
+    }
+    const extension = file.name.split(".").pop()?.toLowerCase() || "";
+    if (!PAYMENT_PROOF_EXTENSIONS.includes(extension)) {
+      toast({
+        title: "Format file tidak didukung",
+        description: "Gunakan PDF, JPG, PNG, atau WebP untuk bukti pembayaran.",
+        status: "error",
+        duration: 4000,
+        isClosable: true,
+      });
+      return false;
+    }
+    return true;
+  };
+
+  const handleUploadCreditPaymentProof = async (
+    purchase: Purchase,
+    payment: PurchasePayment,
+  ) => {
+    const file = creditPaymentProofFiles[payment.id];
+    const paymentId = getLinkedPaymentId(payment);
+    if (!file) {
+      toast({
+        title: "Pilih file bukti pembayaran",
+        description: "Pilih bukti untuk pembayaran termin ini terlebih dahulu.",
+        status: "warning",
+        duration: 3500,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!paymentId || !getPaymentTermId(payment)) {
+      toast({
+        title: "Pembayaran belum dapat ditautkan ke termin",
+        description:
+          "Riwayat pembayaran ini tidak memiliki relasi termin yang diperlukan untuk upload bukti dengan aman.",
+        status: "warning",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!validateCreditPaymentProofFile(file)) return;
+
+    try {
+      setUploadingCreditPaymentProofId(payment.id);
+      await purchaseService.uploadCreditPurchasePaymentProof(
+        purchase.id,
+        paymentId,
+        file,
+      );
+      const detailResponse = await purchaseService.getById(purchase.id);
+      setSelectedPurchase(detailResponse);
+      setCreditPaymentProofFiles((current) => ({
+        ...current,
+        [payment.id]: null,
+      }));
+      await fetchPurchases();
+      toast({
+        title: "Bukti pembayaran termin tersimpan",
+        description:
+          "Bukti telah tertaut ke pembayaran dan termin yang dipilih, tanpa mengubah jurnal atau saldo.",
+        status: "success",
+        duration: 4500,
+        isClosable: true,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal upload bukti pembayaran termin",
+        description:
+          err.response?.data?.error ||
+          err.message ||
+          "Bukti pembayaran termin belum bisa diunggah.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setUploadingCreditPaymentProofId(null);
+    }
   };
 
   const handleUploadPaymentProofForPurchase = async (
@@ -7153,107 +7293,439 @@ const PurchasesPage: React.FC = () => {
                                   </HStack>
                                   <VStack align="stretch" spacing={2}>
                                     {selectedPurchase.payment_terms?.map(
-                                      (term) => (
-                                        <Box
-                                          key={term.id}
-                                          p={3}
-                                          borderWidth="1px"
-                                          borderColor={borderColor}
-                                          borderRadius="md"
-                                          bg={cardBg}
-                                        >
-                                          <SimpleGrid
-                                            columns={{ base: 1, md: 5 }}
-                                            spacing={3}
-                                            fontSize="sm"
+                                      (term) => {
+                                        const termPayments = (
+                                          selectedPurchase.purchase_payments ||
+                                          []
+                                        ).filter(
+                                          (payment) =>
+                                            getPaymentTermId(payment) === term.id,
+                                        );
+
+                                        return (
+                                          <Box
+                                            key={term.id}
+                                            p={3}
+                                            borderWidth="1px"
+                                            borderColor={borderColor}
+                                            borderRadius="md"
+                                            bg={cardBg}
                                           >
-                                            <Box>
-                                              <Text
-                                                color={textSecondary}
-                                                fontSize="xs"
+                                            <SimpleGrid
+                                              columns={{ base: 1, md: 5 }}
+                                              spacing={3}
+                                              fontSize="sm"
+                                            >
+                                              <Box>
+                                                <Text
+                                                  color={textSecondary}
+                                                  fontSize="xs"
+                                                >
+                                                  Termin
+                                                </Text>
+                                                <Text fontWeight="semibold">
+                                                  {term.description ||
+                                                    `Termin ${term.sequence}`}
+                                                </Text>
+                                              </Box>
+                                              <Box>
+                                                <Text
+                                                  color={textSecondary}
+                                                  fontSize="xs"
+                                                >
+                                                  Nominal
+                                                </Text>
+                                                <Text fontWeight="semibold">
+                                                  {formatCurrency(term.amount)}
+                                                </Text>
+                                              </Box>
+                                              <Box>
+                                                <Text
+                                                  color={textSecondary}
+                                                  fontSize="xs"
+                                                >
+                                                  Terbayar
+                                                </Text>
+                                                <Text>
+                                                  {formatCurrency(
+                                                    term.paid_amount || 0,
+                                                  )}
+                                                </Text>
+                                              </Box>
+                                              <Box>
+                                                <Text
+                                                  color={textSecondary}
+                                                  fontSize="xs"
+                                                >
+                                                  Sisa
+                                                </Text>
+                                                <Text fontWeight="semibold">
+                                                  {formatCurrency(
+                                                    term.outstanding_amount ??
+                                                      term.amount,
+                                                  )}
+                                                </Text>
+                                              </Box>
+                                              <Box>
+                                                <Text
+                                                  color={textSecondary}
+                                                  fontSize="xs"
+                                                >
+                                                  Jatuh Tempo
+                                                </Text>
+                                                <Text>
+                                                  {term.due_date
+                                                    ? new Date(
+                                                        term.due_date,
+                                                      ).toLocaleDateString(
+                                                        "id-ID",
+                                                      )
+                                                    : "-"}
+                                                </Text>
+                                                <Badge
+                                                  mt={1}
+                                                  colorScheme={
+                                                    term.status === "PAID"
+                                                      ? "green"
+                                                      : term.status === "PARTIAL"
+                                                        ? "orange"
+                                                        : "yellow"
+                                                  }
+                                                >
+                                                  {term.status}
+                                                </Badge>
+                                              </Box>
+                                            </SimpleGrid>
+
+                                            <Box
+                                              mt={3}
+                                              pt={3}
+                                              borderTopWidth="1px"
+                                              borderColor={borderColor}
+                                            >
+                                              <HStack
+                                                justify="space-between"
+                                                align="start"
+                                                spacing={2}
+                                                flexWrap="wrap"
                                               >
-                                                Termin
-                                              </Text>
-                                              <Text fontWeight="semibold">
-                                                {term.description ||
-                                                  `Termin ${term.sequence}`}
-                                              </Text>
+                                                <Text
+                                                  fontSize="sm"
+                                                  fontWeight="semibold"
+                                                >
+                                                  Riwayat Pembayaran Termin
+                                                </Text>
+                                                <Badge colorScheme="blue">
+                                                  {termPayments.length} PEMBAYARAN
+                                                </Badge>
+                                              </HStack>
+
+                                              {termPayments.length === 0 ? (
+                                                <Text
+                                                  mt={2}
+                                                  fontSize="sm"
+                                                  color={textSecondary}
+                                                >
+                                                  Belum ada pembayaran yang
+                                                  dicatat untuk termin ini.
+                                                </Text>
+                                              ) : (
+                                                <VStack
+                                                  mt={2}
+                                                  align="stretch"
+                                                  spacing={3}
+                                                >
+                                                  {termPayments.map(
+                                                    (payment) => {
+                                                      const hasProof = Boolean(
+                                                        payment.payment_proof_file_path,
+                                                      );
+                                                      const proofReviewStatus = (
+                                                        payment.payment_proof_review_status ||
+                                                        "PENDING"
+                                                      ).toUpperCase();
+                                                      const paymentId =
+                                                        getLinkedPaymentId(payment);
+                                                      const paymentIsCompleted =
+                                                        String(
+                                                          payment.payment?.status ||
+                                                            "",
+                                                        ).toUpperCase() ===
+                                                        "COMPLETED";
+                                                      const canUploadProof =
+                                                        canUploadCreditPaymentProofForPurchase(
+                                                          selectedPurchase,
+                                                        ) &&
+                                                        Boolean(paymentId) &&
+                                                        paymentIsCompleted;
+                                                      const canReviewProof =
+                                                        hasProof &&
+                                                        proofReviewStatus ===
+                                                          "PENDING" &&
+                                                        (roleNorm === "admin" ||
+                                                          isFinanceManagerRole(
+                                                            roleNorm,
+                                                          ));
+                                                      const selectedProofFile =
+                                                        creditPaymentProofFiles[
+                                                          payment.id
+                                                        ];
+
+                                                      return (
+                                                        <Box
+                                                          key={payment.id}
+                                                          pt={3}
+                                                          borderTopWidth="1px"
+                                                          borderColor={borderColor}
+                                                        >
+                                                          <Flex
+                                                            gap={3}
+                                                            align={{
+                                                              base: "stretch",
+                                                              md: "flex-start",
+                                                            }}
+                                                            justify="space-between"
+                                                            direction={{
+                                                              base: "column",
+                                                              md: "row",
+                                                            }}
+                                                          >
+                                                            <Box minW={0} flex="1">
+                                                              <HStack
+                                                                spacing={2}
+                                                                flexWrap="wrap"
+                                                              >
+                                                                <Text
+                                                                  fontSize="sm"
+                                                                  fontWeight="semibold"
+                                                                >
+                                                                  {payment.payment_number ||
+                                                                    `Pembayaran #${payment.id}`}
+                                                                </Text>
+                                                                <Badge
+                                                                  colorScheme={
+                                                                    hasProof
+                                                                      ? proofReviewStatus ===
+                                                                        "APPROVED"
+                                                                        ? "green"
+                                                                        : proofReviewStatus ===
+                                                                            "REJECTED"
+                                                                          ? "red"
+                                                                          : "yellow"
+                                                                      : "gray"
+                                                                  }
+                                                                >
+                                                                  {hasProof
+                                                                    ? proofReviewStatus
+                                                                    : "BUKTI BELUM DIUNGGAH"}
+                                                                </Badge>
+                                                              </HStack>
+                                                              <Text
+                                                                mt={1}
+                                                                fontSize="xs"
+                                                                color={textSecondary}
+                                                              >
+                                                                {payment.date
+                                                                  ? new Date(
+                                                                      payment.date,
+                                                                    ).toLocaleDateString(
+                                                                      "id-ID",
+                                                                    )
+                                                                  : "-"}{" "}
+                                                                - {formatCurrency(payment.amount)}
+                                                              </Text>
+                                                              {hasProof && (
+                                                                <Text
+                                                                  mt={1}
+                                                                  fontSize="xs"
+                                                                  color={textSecondary}
+                                                                  overflowWrap="anywhere"
+                                                                >
+                                                                  {payment.payment_proof_file_name ||
+                                                                    "Bukti pembayaran"}
+                                                                </Text>
+                                                              )}
+                                                              {payment.payment_proof_uploaded_at && (
+                                                                <Text
+                                                                  mt={1}
+                                                                  fontSize="xs"
+                                                                  color={textSecondary}
+                                                                >
+                                                                  Diunggah{" "}
+                                                                  {new Date(
+                                                                    payment.payment_proof_uploaded_at,
+                                                                  ).toLocaleString(
+                                                                    "id-ID",
+                                                                  )}
+                                                                </Text>
+                                                              )}
+                                                            </Box>
+
+                                                            {hasProof && (
+                                                              <VStack
+                                                                align={{
+                                                                  base: "stretch",
+                                                                  md: "flex-end",
+                                                                }}
+                                                                spacing={2}
+                                                                minW={{
+                                                                  base: "100%",
+                                                                  md: "auto",
+                                                                }}
+                                                              >
+                                                                <Button
+                                                                  size="sm"
+                                                                  colorScheme="green"
+                                                                  variant="outline"
+                                                                  leftIcon={<FiDownload />}
+                                                                  onClick={() =>
+                                                                    handleDownloadPaymentProof(
+                                                                      payment,
+                                                                    )
+                                                                  }
+                                                                >
+                                                                  Download
+                                                                </Button>
+                                                                {canReviewProof && (
+                                                                  <HStack
+                                                                    spacing={2}
+                                                                    flexWrap="wrap"
+                                                                  >
+                                                                    <Button
+                                                                      size="xs"
+                                                                      colorScheme="green"
+                                                                      leftIcon={<FiCheckCircle />}
+                                                                      isLoading={
+                                                                        reviewingPaymentProofId ===
+                                                                        payment.id
+                                                                      }
+                                                                      onClick={() =>
+                                                                        handleReviewPaymentProofForPurchase(
+                                                                          payment,
+                                                                          "APPROVED",
+                                                                        )
+                                                                      }
+                                                                    >
+                                                                      Approve Bukti
+                                                                    </Button>
+                                                                    <Button
+                                                                      size="xs"
+                                                                      colorScheme="red"
+                                                                      variant="outline"
+                                                                      leftIcon={<FiXCircle />}
+                                                                      isLoading={
+                                                                        reviewingPaymentProofId ===
+                                                                        payment.id
+                                                                      }
+                                                                      onClick={() =>
+                                                                        handleReviewPaymentProofForPurchase(
+                                                                          payment,
+                                                                          "REJECTED",
+                                                                        )
+                                                                      }
+                                                                    >
+                                                                      Reject
+                                                                    </Button>
+                                                                  </HStack>
+                                                                )}
+                                                              </VStack>
+                                                            )}
+                                                          </Flex>
+
+                                                          {canUploadProof && (
+                                                            <Flex
+                                                              mt={3}
+                                                              gap={2}
+                                                              align={{
+                                                                base: "stretch",
+                                                                md: "center",
+                                                              }}
+                                                              direction={{
+                                                                base: "column",
+                                                                md: "row",
+                                                              }}
+                                                            >
+                                                              <Box flex="1" minW={0}>
+                                                                <Input
+                                                                  key={`${payment.id}-${payment.payment_proof_file_path || "no-proof"}`}
+                                                                  type="file"
+                                                                  accept={
+                                                                    PAYMENT_PROOF_ACCEPT
+                                                                  }
+                                                                  size="sm"
+                                                                  pt={1}
+                                                                  onChange={(event) =>
+                                                                    setCreditPaymentProofFiles(
+                                                                      (current) => ({
+                                                                        ...current,
+                                                                        [payment.id]:
+                                                                          event.target.files?.[0] ||
+                                                                          null,
+                                                                      }),
+                                                                    )
+                                                                  }
+                                                                />
+                                                                {selectedProofFile && (
+                                                                  <Text
+                                                                    mt={1}
+                                                                    fontSize="xs"
+                                                                    color={textSecondary}
+                                                                    overflowWrap="anywhere"
+                                                                  >
+                                                                    File dipilih: {selectedProofFile.name}
+                                                                  </Text>
+                                                                )}
+                                                              </Box>
+                                                              <Button
+                                                                size="sm"
+                                                                colorScheme="blue"
+                                                                leftIcon={<FiUpload />}
+                                                                flexShrink={0}
+                                                                isDisabled={
+                                                                  !selectedProofFile
+                                                                }
+                                                                isLoading={
+                                                                  uploadingCreditPaymentProofId ===
+                                                                  payment.id
+                                                                }
+                                                                onClick={() =>
+                                                                  handleUploadCreditPaymentProof(
+                                                                    selectedPurchase,
+                                                                    payment,
+                                                                  )
+                                                                }
+                                                              >
+                                                                {hasProof
+                                                                  ? "Ganti Bukti"
+                                                                  : "Upload Bukti"}
+                                                              </Button>
+                                                            </Flex>
+                                                          )}
+                                                          {!paymentIsCompleted && (
+                                                            <Text
+                                                              mt={2}
+                                                              fontSize="xs"
+                                                              color={textSecondary}
+                                                            >
+                                                              Bukti dapat diunggah setelah
+                                                              pembayaran tercatat.
+                                                            </Text>
+                                                          )}
+                                                        </Box>
+                                                      );
+                                                    },
+                                                  )}
+                                                </VStack>
+                                              )}
                                             </Box>
-                                            <Box>
-                                              <Text
-                                                color={textSecondary}
-                                                fontSize="xs"
-                                              >
-                                                Nominal
-                                              </Text>
-                                              <Text fontWeight="semibold">
-                                                {formatCurrency(term.amount)}
-                                              </Text>
-                                            </Box>
-                                            <Box>
-                                              <Text
-                                                color={textSecondary}
-                                                fontSize="xs"
-                                              >
-                                                Terbayar
-                                              </Text>
-                                              <Text>
-                                                {formatCurrency(
-                                                  term.paid_amount || 0,
-                                                )}
-                                              </Text>
-                                            </Box>
-                                            <Box>
-                                              <Text
-                                                color={textSecondary}
-                                                fontSize="xs"
-                                              >
-                                                Sisa
-                                              </Text>
-                                              <Text fontWeight="semibold">
-                                                {formatCurrency(
-                                                  term.outstanding_amount ??
-                                                    term.amount,
-                                                )}
-                                              </Text>
-                                            </Box>
-                                            <Box>
-                                              <Text
-                                                color={textSecondary}
-                                                fontSize="xs"
-                                              >
-                                                Jatuh Tempo
-                                              </Text>
-                                              <Text>
-                                                {term.due_date
-                                                  ? new Date(
-                                                      term.due_date,
-                                                    ).toLocaleDateString(
-                                                      "id-ID",
-                                                    )
-                                                  : "-"}
-                                              </Text>
-                                              <Badge
-                                                mt={1}
-                                                colorScheme={
-                                                  term.status === "PAID"
-                                                    ? "green"
-                                                    : term.status === "PARTIAL"
-                                                      ? "orange"
-                                                      : "yellow"
-                                                }
-                                              >
-                                                {term.status}
-                                              </Badge>
-                                            </Box>
-                                          </SimpleGrid>
-                                        </Box>
-                                      ),
+                                          </Box>
+                                        );
+                                      },
                                     )}
                                   </VStack>
                                 </Box>
                               )}
-                            {(() => {
+                            {selectedPurchase.payment_method !== "CREDIT" && (() => {
                               const paymentProof =
                                 getPurchasePaymentProofRecord(selectedPurchase);
                               if (!paymentProof) {

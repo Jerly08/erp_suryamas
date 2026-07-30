@@ -92,6 +92,7 @@ import paymentService, {
   PaymentTransactionResult,
 } from '@/services/paymentService';
 import AdvancedPaymentForm from '@/components/payments/AdvancedPaymentForm';
+import PurchaseTermPaymentPicker from '@/components/payments/PurchaseTermPaymentPicker';
 import PaymentDetailModal from '@/components/payments/PaymentDetailModal';
 import PPNPaymentModal from '@/components/payments/PPNPaymentModal';
 import ExpensePaymentForm from '@/components/payments/ExpensePaymentForm';
@@ -198,6 +199,7 @@ const PaymentsPage: React.FC = () => {
 
   // State for modals
   const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [showPurchaseTermPayment, setShowPurchaseTermPayment] = useState(false);
   const [paymentType, setPaymentType] = useState<'receivable' | 'payable'>('receivable');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
@@ -1325,6 +1327,12 @@ const PaymentsPage: React.FC = () => {
                         >
                           {t('payments.payablePayment')}
                         </MenuItem>
+                        <MenuItem
+                          icon={<FiBriefcase />}
+                          onClick={() => setShowPurchaseTermPayment(true)}
+                        >
+                          {t('payments.purchaseTermPayment')}
+                        </MenuItem>
                         <MenuDivider />
                         <MenuItem
                           icon={<FiDollarSign />}
@@ -1587,6 +1595,12 @@ const PaymentsPage: React.FC = () => {
                 id: selectedPayment.contact_id,
                 name: selectedPayment.contact?.name || 'Unknown'
               } : undefined}
+            />
+
+            <PurchaseTermPaymentPicker
+              isOpen={showPurchaseTermPayment}
+              onClose={() => setShowPurchaseTermPayment(false)}
+              onSuccess={() => loadPayments()}
             />
 
             {/* Delete Confirmation Dialog */}

@@ -12,6 +12,7 @@ import {
   Button,
   FormControl,
   FormLabel,
+  FormHelperText,
   Input,
   Select,
   Textarea,
@@ -32,6 +33,10 @@ import cashbankService, { ReferenceExchangeRate } from '@/services/cashbankServi
 import { useTranslation } from '@/hooks/useTranslation';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
 
+const PAYMENT_PROOF_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp';
+const MAX_PAYMENT_PROOF_SIZE = 20 * 1024 * 1024;
+const PAYMENT_PROOF_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
+
 interface CashBank {
   id: number;
   name: string;
@@ -48,6 +53,7 @@ interface PurchasePaymentFormProps {
   purchase: Purchase | null;
   onSuccess?: (result: any) => void;
   cashBanks: CashBank[];
+  title?: string;
 }
 
 const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
@@ -56,12 +62,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
   purchase,
   onSuccess,
   cashBanks = [],
+  title,
 }) => {
   const { t, language } = useTranslation();
   const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [loadingPurchase, setLoadingPurchase] = useState(false);
   const [freshPurchase, setFreshPurchase] = useState<Purchase | null>(null);
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const [createdPaymentResult, setCreatedPaymentResult] = useState<any | null>(null);
   const [referenceRate, setReferenceRate] = useState<ReferenceExchangeRate | null>(null);
   const [exchangeRateEdited, setExchangeRateEdited] = useState(false);
   const [formData, setFormData] = useState<PurchasePaymentRequest>({
@@ -139,7 +148,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     return roundPaymentAmount(value?.outstanding_amount || 0);
   };
 
-  // Fetch fresh purchase data from server when modal opens
+  // Reset upload state only when the dialog is opened for a different purchase.
+  // The retry state must survive a failed proof upload so clicking Upload again
+  // never creates a second payment.
+  useEffect(() => {
+    setPaymentProofFile(null);
+    setCreatedPaymentResult(null);
+  }, [isOpen, purchase?.id]);
+
+  // Fetch fresh purchase data from server when modal opens.
   useEffect(() => {
     const fetchFreshPurchase = async () => {
       if (isOpen && purchase) {
@@ -196,6 +213,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       } else {
         // Reset when modal closes
         setFreshPurchase(null);
+        setPaymentProofFile(null);
+        setCreatedPaymentResult(null);
       }
     };
 
@@ -235,10 +254,112 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
     };
   }, [isOpen, isUsdAccount, selectedAccount?.id, exchangeRateEdited]);
 
+  const requiresPaymentProof = (method: string) => {
+    const normalizedMethod = method.trim().toUpperCase().replace(/\s+/g, '_');
+    return normalizedMethod === 'BANK_TRANSFER' || normalizedMethod === 'CHECK';
+  };
+
+  const validatePaymentProof = (isRequired: boolean) => {
+    if (!paymentProofFile) {
+      if (isRequired) {
+        toast({
+          title: 'Bukti pembayaran diperlukan',
+          description: 'Unggah bukti transfer atau cek sebelum mencatat pembayaran.',
+          status: 'warning',
+          duration: 4500,
+          isClosable: true,
+        });
+        return false;
+      }
+      return true;
+    }
+
+    if (paymentProofFile.size > MAX_PAYMENT_PROOF_SIZE) {
+      toast({
+        title: 'Ukuran file terlalu besar',
+        description: 'Bukti pembayaran maksimal 20MB.',
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return false;
+    }
+
+    const extension = paymentProofFile.name.split('.').pop()?.toLowerCase() || '';
+    if (!PAYMENT_PROOF_EXTENSIONS.includes(extension)) {
+      toast({
+        title: 'Format file tidak didukung',
+        description: 'Gunakan PDF, JPG, PNG, atau WebP untuk bukti pembayaran.',
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return false;
+    }
+
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const currentPurchase = freshPurchase || purchase;
     if (!currentPurchase) return;
+
+    const proofRequired = requiresPaymentProof(formData.payment_method);
+    if (!validatePaymentProof(proofRequired)) return;
+
+    const finishSuccessfulPayment = (result: any) => {
+      if (onSuccess) {
+        onSuccess(result);
+      } else {
+        toast({
+          title: t('purchases.payment.paymentSuccess') + ' 🎉',
+          description: t('purchases.payment.paymentSuccessDesc'),
+          status: 'success',
+          duration: 5000,
+          isClosable: true,
+        });
+      }
+      onClose();
+    };
+
+    if (createdPaymentResult) {
+      const paymentID = Number(createdPaymentResult?.payment?.id);
+      if (!paymentID || !paymentProofFile) {
+        toast({
+          title: 'Bukti pembayaran diperlukan',
+          description: 'Pilih file bukti untuk menyelesaikan pembayaran yang sudah tercatat.',
+          status: 'warning',
+          duration: 4500,
+          isClosable: true,
+        });
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await purchaseService.uploadCreditPurchasePaymentProof(
+          currentPurchase.id,
+          paymentID,
+          paymentProofFile,
+        );
+        finishSuccessfulPayment(createdPaymentResult);
+      } catch (error: any) {
+        toast({
+          title: 'Bukti pembayaran belum tersimpan',
+          description:
+            error.response?.data?.error ||
+            error.message ||
+            'Pembayaran sudah tercatat. Silakan unggah ulang bukti pembayaran.',
+          status: 'warning',
+          duration: 7000,
+          isClosable: true,
+        });
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     const maxPaymentAmount = getMaxPaymentAmount(currentPurchase);
     const roundedAmount = roundPaymentAmount(formData.amount);
@@ -343,21 +464,35 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
       // Use the new Payment Management integration endpoint
       const result = await purchaseService.createPurchasePayment(currentPurchase.id, dataToSubmit);
 
-      // Avoid duplicate success toasts.
-      // If a parent onSuccess handler is provided, let the parent show the toast.
-      if (onSuccess) {
-        onSuccess(result);
-      } else {
-        toast({
-          title: t('purchases.payment.paymentSuccess') + ' 🎉',
-          description: t('purchases.payment.paymentSuccessDesc'),
-          status: 'success',
-          duration: 5000,
-          isClosable: true,
-        });
+      if (paymentProofFile) {
+        const paymentID = Number(result?.payment?.id);
+        if (!paymentID) {
+          throw new Error('Pembayaran tercatat tetapi nomor pembayaran tidak dapat ditemukan untuk upload bukti.');
+        }
+
+        try {
+          await purchaseService.uploadCreditPurchasePaymentProof(
+            currentPurchase.id,
+            paymentID,
+            paymentProofFile,
+          );
+        } catch (uploadError: any) {
+          setCreatedPaymentResult(result);
+          toast({
+            title: 'Pembayaran tercatat, bukti belum tersimpan',
+            description:
+              uploadError.response?.data?.error ||
+              uploadError.message ||
+              'Unggah ulang bukti pembayaran. Sistem tidak akan membuat pembayaran kedua.',
+            status: 'warning',
+            duration: 8000,
+            isClosable: true,
+          });
+          return;
+        }
       }
 
-      onClose();
+      finishSuccessfulPayment(result);
     } catch (error: any) {
       console.error('Error recording payment:', error);
 
@@ -598,6 +733,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
   const currentPurchase = freshPurchase || purchase;
   const openPaymentTerms = getOpenPaymentTerms(currentPurchase);
   const selectedPaymentTerm = getSelectedTerm(currentPurchase);
+  const paymentProofRequired = requiresPaymentProof(formData.payment_method);
+  const paymentAlreadyRecorded = Boolean(createdPaymentResult);
   const maxPaymentAmount = getMaxPaymentAmount(currentPurchase);
   const usdNativeOutAmount = getUsdNativeOutAmount();
   const currentAccountBookBalance = getAccountBookBalance(selectedAccount);
@@ -622,15 +759,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
   if (!purchase) return null;
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} size="lg" scrollBehavior="inside">
       <ModalOverlay />
-      <ModalContent bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
+      <ModalContent maxH="90vh" bg={modalBg} border="1px solid" borderColor={modalBorderColor}>
         <ModalHeader bg={modalHeaderBg} borderBottomWidth="1px" borderColor={modalBorderColor} color={headingColor}>
-          {t('purchases.payment.title')}
+          {title || t('purchases.payment.title')}
         </ModalHeader>
         <ModalCloseButton />
         <form onSubmit={handleSubmit}>
-          <ModalBody>
+          <ModalBody overflowY="auto">
             {loadingPurchase ? (
               <VStack spacing={4} py={8}>
                 <Spinner size="lg" />
@@ -693,6 +830,15 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     )}
                   </Text>
                 </Alert>
+
+                {paymentAlreadyRecorded && (
+                  <Alert status="warning">
+                    <AlertIcon />
+                    <Text fontSize="sm">
+                      Pembayaran sudah tercatat. Unggah bukti pembayaran untuk menyelesaikan dokumentasi termin ini; klik simpan tidak akan membuat pembayaran kedua.
+                    </Text>
+                  </Alert>
+                )}
 
                 {/* Payment Form */}
                 {openPaymentTerms.length > 0 && (
@@ -874,6 +1020,32 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                     <option value="Check">{t('purchases.payment.check')}</option>
                     <option value="Other">{t('common.other')}</option>
                   </Select>
+                </FormControl>
+
+                <FormControl isRequired={paymentProofRequired}>
+                  <FormLabel color={headingColor}>Bukti Pembayaran</FormLabel>
+                  <Input
+                    type="file"
+                    accept={PAYMENT_PROOF_ACCEPT}
+                    pt={1}
+                    onChange={(event) =>
+                      setPaymentProofFile(event.target.files?.[0] || null)
+                    }
+                    bg={inputBg}
+                    color={textColor}
+                    borderColor={inputBorderColor}
+                    _hover={{ borderColor: inputHoverBorder }}
+                  />
+                  <FormHelperText color={mutedTextColor}>
+                    {paymentProofRequired
+                      ? 'Wajib untuk transfer bank atau cek. Format PDF/JPG/PNG/WebP, maksimal 20MB.'
+                      : 'Opsional untuk metode pembayaran ini. Format PDF/JPG/PNG/WebP, maksimal 20MB.'}
+                  </FormHelperText>
+                  {paymentProofFile && (
+                    <Text mt={2} fontSize="xs" color={mutedTextColor} overflowWrap="anywhere">
+                      File dipilih: {paymentProofFile.name}
+                    </Text>
+                  )}
                 </FormControl>
 
                 <FormControl isRequired>
@@ -1126,6 +1298,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
               colorScheme="green"
               type="submit"
               disabled={loading || loadingPurchase || (() => {
+                if (paymentAlreadyRecorded) return !paymentProofFile;
+                if (paymentProofRequired && !paymentProofFile) return true;
                 // Disable if no account selected
                 if (!formData.cash_bank_id) return true;
 
@@ -1167,6 +1341,8 @@ const PurchasePaymentForm: React.FC<PurchasePaymentFormProps> = ({
                   }
                 }
 
+                if (paymentAlreadyRecorded) return 'Unggah Bukti Pembayaran';
+                if (paymentProofRequired && !paymentProofFile) return 'Pilih Bukti Pembayaran';
                 return t('purchases.payment.recordPayment');
               })()}
             </Button>

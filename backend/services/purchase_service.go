@@ -3599,6 +3599,8 @@ func (s *PurchaseService) GetPurchasePayments(purchaseID uint) ([]models.Purchas
 	err := s.db.Where("purchase_id = ?", purchaseID).
 		Preload("CashBank").
 		Preload("User").
+		Preload("Payment").
+		Preload("PurchasePaymentTerm").
 		Preload("PaymentProofUploader").
 		Preload("PaymentProofReviewer").
 		Order("date DESC").
@@ -3689,6 +3691,106 @@ func (s *PurchaseService) AttachPurchasePaymentProof(
 		return nil, err
 	}
 	return &payment, nil
+}
+
+// AttachCreditPurchasePaymentProof attaches a bank proof to one completed
+// credit-payment allocation. The linked term is mandatory so a proof can never
+// be mistaken for another installment on the same purchase order.
+func (s *PurchaseService) AttachCreditPurchasePaymentProof(
+	purchaseID uint,
+	paymentID uint,
+	userID uint,
+	userRole string,
+	fileName string,
+	filePath string,
+	fileSize int64,
+	mimeType string,
+) (*models.PurchasePayment, error) {
+	if strings.TrimSpace(fileName) == "" || strings.TrimSpace(filePath) == "" {
+		return nil, errors.New("payment proof file is required")
+	}
+	if paymentID == 0 {
+		return nil, errors.New("payment ID is required")
+	}
+
+	purchase, err := s.purchaseRepo.FindByID(purchaseID)
+	if err != nil {
+		return nil, fmt.Errorf("purchase not found: %v", err)
+	}
+	if !models.IsCreditPurchaseMethod(purchase.PaymentMethod) {
+		return nil, errors.New("bukti pembayaran termin hanya untuk pembelian kredit")
+	}
+
+	var purchasePayment models.PurchasePayment
+	if err := s.db.
+		Preload("Payment").
+		Where("purchase_id = ? AND payment_id = ? AND deleted_at IS NULL", purchaseID, paymentID).
+		First(&purchasePayment).Error; err != nil {
+		return nil, fmt.Errorf("payment purchase tidak ditemukan: %v", err)
+	}
+	if purchasePayment.PurchasePaymentTermID == nil {
+		return nil, errors.New("pembayaran ini belum tertaut ke termin secara spesifik")
+	}
+	if purchasePayment.Payment == nil || purchasePayment.Payment.Status != models.PaymentStatusCompleted {
+		return nil, errors.New("bukti hanya dapat diunggah untuk pembayaran yang sudah tercatat")
+	}
+
+	var allocationCount int64
+	if err := s.db.Model(&models.PaymentAllocation{}).
+		Where(
+			"payment_id = ? AND bill_id = ? AND purchase_payment_term_id = ?",
+			paymentID,
+			purchaseID,
+			*purchasePayment.PurchasePaymentTermID,
+		).
+		Count(&allocationCount).Error; err != nil {
+		return nil, fmt.Errorf("failed to validate payment allocation: %w", err)
+	}
+	if allocationCount == 0 {
+		return nil, errors.New("pembayaran tidak memiliki alokasi termin yang valid")
+	}
+
+	now := time.Now()
+	reviewStatus := models.PurchasePaymentProofPending
+	var reviewedBy *uint
+	var reviewedAt *time.Time
+	reviewNotes := ""
+	if models.IsFinanceManagerRole(userRole) && s.canReviewPurchasePaymentProof(*purchase) {
+		reviewStatus = models.PurchasePaymentProofApproved
+		reviewedBy = &userID
+		reviewedAt = &now
+		reviewNotes = "Bukti pembayaran termin diunggah oleh Finance Manager"
+	}
+
+	updates := map[string]interface{}{
+		"payment_proof_file_name":     strings.TrimSpace(fileName),
+		"payment_proof_file_path":     strings.TrimSpace(filePath),
+		"payment_proof_file_size":     fileSize,
+		"payment_proof_mime_type":     strings.TrimSpace(mimeType),
+		"payment_proof_uploaded_by":   userID,
+		"payment_proof_uploaded_at":   now,
+		"payment_proof_review_status": reviewStatus,
+		"payment_proof_reviewed_by":   reviewedBy,
+		"payment_proof_reviewed_at":   reviewedAt,
+		"payment_proof_review_notes":  reviewNotes,
+		"updated_at":                  now,
+	}
+	if err := s.db.Model(&purchasePayment).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("failed to attach payment proof: %w", err)
+	}
+
+	if err := s.db.
+		Preload("Payment").
+		Preload("PurchasePaymentTerm").
+		Preload("CashBank").
+		Preload("User").
+		Preload("PaymentProofUploader").
+		Preload("PaymentProofReviewer").
+		First(&purchasePayment, purchasePayment.ID).Error; err != nil {
+		return nil, err
+	}
+
+	return &purchasePayment, nil
 }
 
 func (s *PurchaseService) GetPurchasePaymentProofForDownload(paymentID uint, userID uint, userRole string) (*models.PurchasePayment, error) {

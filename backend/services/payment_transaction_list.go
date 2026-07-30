@@ -128,6 +128,22 @@ SELECT
 		WHEN EXISTS (
 			SELECT 1
 			FROM payment_allocations pa
+			WHERE pa.payment_id = p.id AND pa.purchase_payment_term_id IS NOT NULL
+		) THEN 'Pembelian - ' || COALESCE(
+			(
+				SELECT pu.code || ' | Termin ' || CAST(ppt.sequence AS TEXT)
+				FROM payment_allocations pa
+				JOIN purchase_payment_terms ppt ON ppt.id = pa.purchase_payment_term_id AND ppt.deleted_at IS NULL
+				JOIN purchases pu ON pu.id = pa.bill_id AND pu.deleted_at IS NULL
+				WHERE pa.payment_id = p.id AND pa.purchase_payment_term_id IS NOT NULL
+				ORDER BY pa.id ASC
+				LIMIT 1
+			),
+			'PO / Termin'
+		)
+		WHEN EXISTS (
+			SELECT 1
+			FROM payment_allocations pa
 			WHERE pa.payment_id = p.id AND pa.bill_id IS NOT NULL
 		) THEN 'Pembelian - ' || COALESCE(
 			NULLIF((
@@ -171,6 +187,11 @@ SELECT
 		WHEN EXISTS (
 			SELECT 1
 			FROM payment_allocations pa
+			WHERE pa.payment_id = p.id AND pa.purchase_payment_term_id IS NOT NULL
+		) THEN ''
+		WHEN EXISTS (
+			SELECT 1
+			FROM payment_allocations pa
 			WHERE pa.payment_id = p.id AND pa.bill_id IS NOT NULL
 		) THEN COALESCE((
 			SELECT pu.code
@@ -178,8 +199,8 @@ SELECT
 			JOIN purchases pu ON pu.id = pa.bill_id AND pu.deleted_at IS NULL
 			WHERE pa.payment_id = p.id AND pa.bill_id IS NOT NULL
 			ORDER BY pa.id ASC
-			LIMIT 1
-		), '')
+				LIMIT 1
+			), '')
 		ELSE ''
 	END AS source_reference,
 	COALESCE((

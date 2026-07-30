@@ -22,6 +22,7 @@ func (r *PurchaseRepository) withPurchasePaymentPreloads(query *gorm.DB) *gorm.D
 		query = query.
 			Preload("PurchasePayments").
 			Preload("PurchasePayments.Payment").
+			Preload("PurchasePayments.PurchasePaymentTerm").
 			Preload("PurchasePayments.PaymentProofUploader").
 			Preload("PurchasePayments.PaymentProofReviewer")
 	}

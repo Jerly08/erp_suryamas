@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1040,28 +1041,10 @@ func (pc *PurchaseController) UploadPaymentProof(c *gin.Context) {
 	}
 	defer file.Close()
 
-	if header.Size <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File bukti pembayaran kosong"})
+	mimeType, err := validatePaymentProofFile(header)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-	const maxPaymentProofSize = 20 * 1024 * 1024
-	if header.Size > maxPaymentProofSize {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Ukuran bukti pembayaran maksimal 20MB"})
-		return
-	}
-
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	allowedExt := map[string]bool{
-		".pdf": true, ".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
-	}
-	if !allowedExt[ext] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Format bukti pembayaran harus PDF/JPG/PNG/WEBP"})
-		return
-	}
-
-	mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
 	}
 
 	uploadDir := "uploads/purchase-payment-proofs"
@@ -1096,6 +1079,99 @@ func (pc *PurchaseController) UploadPaymentProof(c *gin.Context) {
 		"message": "Bukti pembayaran bank berhasil diunggah",
 		"payment": payment,
 	})
+}
+
+// UploadCreditPurchasePaymentProof attaches a proof to one specific payment and
+// its allocated credit-payment term. It deliberately does not post or alter a
+// financial transaction.
+func (pc *PurchaseController) UploadCreditPurchasePaymentProof(c *gin.Context) {
+	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	paymentID, err := strconv.ParseUint(c.Param("payment_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payment ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(purchaseID)); !ok {
+		return
+	}
+
+	file, header, err := c.Request.FormFile("payment_proof")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Bukti pembayaran bank wajib diunggah"})
+		return
+	}
+	defer file.Close()
+
+	mimeType, err := validatePaymentProofFile(header)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	uploadDir := "uploads/purchase-payment-proofs"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare upload directory"})
+		return
+	}
+
+	safeName := buildSafePaymentProofFilename(
+		uint(purchaseID),
+		fmt.Sprintf("payment_%d_%s", paymentID, header.Filename),
+	)
+	filePath := filepath.Join(uploadDir, safeName)
+	if err := c.SaveUploadedFile(header, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save payment proof"})
+		return
+	}
+
+	payment, err := pc.purchaseService.AttachCreditPurchasePaymentProof(
+		uint(purchaseID),
+		uint(paymentID),
+		c.GetUint("user_id"),
+		c.GetString("role"),
+		header.Filename,
+		filePath,
+		header.Size,
+		mimeType,
+	)
+	if err != nil {
+		_ = os.Remove(filePath)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Bukti pembayaran termin berhasil diunggah",
+		"payment": payment,
+	})
+}
+
+func validatePaymentProofFile(header *multipart.FileHeader) (string, error) {
+	if header == nil || header.Size <= 0 {
+		return "", fmt.Errorf("file bukti pembayaran kosong")
+	}
+	const maxPaymentProofSize = 20 * 1024 * 1024
+	if header.Size > maxPaymentProofSize {
+		return "", fmt.Errorf("ukuran bukti pembayaran maksimal 20MB")
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	allowedExt := map[string]bool{
+		".pdf": true, ".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
+	}
+	if !allowedExt[ext] {
+		return "", fmt.Errorf("format bukti pembayaran harus PDF/JPG/PNG/WEBP")
+	}
+
+	mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return mimeType, nil
 }
 
 func (pc *PurchaseController) DownloadPaymentProof(c *gin.Context) {
@@ -1672,6 +1748,18 @@ func (pc *PurchaseController) CreatePurchasePayment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":          "Only credit purchases can receive payments",
 			"payment_method": purchase.PaymentMethod,
+		})
+		return
+	}
+	if len(purchase.PaymentTerms) > 1 && (request.PaymentTermID == nil || *request.PaymentTermID == 0) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":      "Pilih termin pembayaran untuk PO ini",
+			"error_type": "PAYMENT_TERM_REQUIRED",
+			"details": fmt.Sprintf(
+				"PO %s memiliki %d termin. Pembayaran harus dicatat pada termin yang tepat agar nominal, bukti pembayaran, dan jurnal tetap terlacak.",
+				purchase.Code,
+				len(purchase.PaymentTerms),
+			),
 		})
 		return
 	}

@@ -473,6 +473,10 @@ export const API_ENDPOINTS = {
   PURCHASES_PAYMENTS: (id: number) => `/api/v1/purchases/${id}/payments`,
   PURCHASES_PAYMENT_PROOF: (id: number) =>
     `/api/v1/purchases/${id}/payment-proof`,
+  PURCHASES_PAYMENT_PROOF_FOR_PAYMENT: (
+    purchaseId: number,
+    paymentId: number,
+  ) => `/api/v1/purchases/${purchaseId}/payments/${paymentId}/payment-proof`,
   PURCHASES_PAYMENT_PROOF_DOWNLOAD: (paymentId: number) =>
     `/api/v1/purchases/payment-proofs/${paymentId}/download`,
   PURCHASES_DOCUMENT_DOWNLOAD: (documentId: number) =>

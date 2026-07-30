@@ -142,9 +142,10 @@ type PaymentWithJournalRequest struct {
 
 // AllocationItem represents a single allocation to an invoice or bill
 type AllocationItem struct {
-	InvoiceID *uint   `json:"invoice_id,omitempty"`
-	BillID    *uint   `json:"bill_id,omitempty"`
-	Amount    float64 `json:"amount" binding:"required,min=0.01"`
+	InvoiceID     *uint   `json:"invoice_id,omitempty"`
+	BillID        *uint   `json:"bill_id,omitempty"`
+	PaymentTermID *uint   `json:"payment_term_id,omitempty"`
+	Amount        float64 `json:"amount" binding:"required,min=0.01"`
 }
 
 // PaymentWithJournalResponse extends payment response with journal information
@@ -1133,6 +1134,14 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 
 		var journalLines []JournalLineRequest
 		var journalDescription string
+		paymentJournalTag := ""
+		if payment.Contact.Type == "VENDOR" {
+			var tagErr error
+			paymentJournalTag, tagErr = resolvePurchasePaymentJournalTag(tx, uint64(payment.ID))
+			if tagErr != nil {
+				return tagErr
+			}
+		}
 		if strings.ToUpper(payment.Contact.Type) == "VENDOR" && normalizeCashBankCurrency(payment.Currency) == "USD" && payment.NativeAmount > 0 {
 			bookAmountIDR, _, err := calculatePaymentReductionBookAmount(cashBank, payment.NativeAmount)
 			if err != nil {
@@ -1196,13 +1205,19 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 					AccountID:    apAccountID,
 					DebitAmount:  decimal.NewFromFloat(payment.Amount),
 					CreditAmount: decimal.Zero,
-					Description:  fmt.Sprintf("AP reduction - %s", payment.Code),
+					Description: appendPurchasePaymentJournalTag(
+						fmt.Sprintf("AP reduction - %s", payment.Code),
+						paymentJournalTag,
+					),
 				},
 				{
 					AccountID:    uint64(cashBank.AccountID),
 					DebitAmount:  decimal.Zero,
 					CreditAmount: decimal.NewFromFloat(bankBookAmount),
-					Description:  fmt.Sprintf("Payment made to %s - %s", payment.Contact.Name, payment.Code),
+					Description: appendPurchasePaymentJournalTag(
+						fmt.Sprintf("Payment made to %s - %s", payment.Contact.Name, payment.Code),
+						paymentJournalTag,
+					),
 				},
 			}
 			if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-payment.Amount, true, payment.Code); err != nil {
@@ -1210,7 +1225,10 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 			} else if fxLine != nil {
 				journalLines = append(journalLines, *fxLine)
 			}
-			journalDescription = fmt.Sprintf("Vendor Payment approved %s - %s", payment.Code, payment.Contact.Name)
+			journalDescription = appendPurchasePaymentJournalTag(
+				fmt.Sprintf("Vendor Payment approved %s - %s", payment.Code, payment.Contact.Name),
+				paymentJournalTag,
+			)
 
 		} else {
 			return fmt.Errorf("unsupported contact type for journal creation: %s", payment.Contact.Type)
@@ -1222,6 +1240,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 			Reference:   payment.Code,
 			EntryDate:   payment.Date,
 			Description: journalDescription,
+			Notes:       purchasePaymentJournalNotes(paymentJournalTag),
 			Lines:       journalLines,
 			AutoPost:    true,
 			CreatedBy:   uint64(approverUserID),
@@ -1608,6 +1627,14 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		if req.AutoCreateJournal && !approvalPending {
 			var journalLines []JournalLineRequest
 			var journalDescription string
+			paymentJournalTag := ""
+			if contact.Type == "VENDOR" {
+				var tagErr error
+				paymentJournalTag, tagErr = resolvePurchasePaymentJournalTagForBillAllocations(tx, req.BillAllocations)
+				if tagErr != nil {
+					return tagErr
+				}
+			}
 			bankBookAmount := payment.BookAmountIDR
 			if bankBookAmount == 0 {
 				bankBookAmount = req.Amount
@@ -1651,13 +1678,19 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 						AccountID:    apAccountID,
 						DebitAmount:  decimal.NewFromFloat(req.Amount),
 						CreditAmount: decimal.Zero,
-						Description:  fmt.Sprintf("AP reduction - %s", payment.Code),
+						Description: appendPurchasePaymentJournalTag(
+							fmt.Sprintf("AP reduction - %s", payment.Code),
+							paymentJournalTag,
+						),
 					},
 					{
 						AccountID:    uint64(cashBank.AccountID),
 						DebitAmount:  decimal.Zero,
 						CreditAmount: decimal.NewFromFloat(bankBookAmount),
-						Description:  fmt.Sprintf("Payment made to %s - %s", contact.Name, payment.Code),
+						Description: appendPurchasePaymentJournalTag(
+							fmt.Sprintf("Payment made to %s - %s", contact.Name, payment.Code),
+							paymentJournalTag,
+						),
 					},
 				}
 				if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-req.Amount, true, payment.Code); err != nil {
@@ -1665,7 +1698,10 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 				} else if fxLine != nil {
 					journalLines = append(journalLines, *fxLine)
 				}
-				journalDescription = fmt.Sprintf("Vendor Payment %s - %s", payment.Code, contact.Name)
+				journalDescription = appendPurchasePaymentJournalTag(
+					fmt.Sprintf("Vendor Payment %s - %s", payment.Code, contact.Name),
+					paymentJournalTag,
+				)
 
 			} else {
 				return fmt.Errorf("unsupported contact type for journal creation: %s", contact.Type)
@@ -1678,6 +1714,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 				Reference:   payment.Code,
 				EntryDate:   payment.Date,
 				Description: journalDescription,
+				Notes:       purchasePaymentJournalNotes(paymentJournalTag),
 				Lines:       journalLines,
 				AutoPost:    true,
 				CreatedBy:   uint64(req.UserID),
@@ -1706,7 +1743,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		}
 
 		// Step 6: Create allocations if specified
-		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, !approvalPending)
+		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, !approvalPending, true)
 		if err != nil {
 			return fmt.Errorf("failed to create allocations: %w", err)
 		}
@@ -2559,7 +2596,10 @@ func (eps *EnhancedPaymentServiceWithJournal) SyncDraftStandardPaymentAllocation
 		return fmt.Errorf("failed to replace draft allocations: %w", err)
 	}
 
-	allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, false)
+	// Existing draft allocations are allowed to retain their legacy shape so an
+	// older draft does not become uneditable. Newly created payments enforce an
+	// explicit term whenever the PO has multiple payment terms.
+	allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, false, false)
 	if err != nil {
 		return err
 	}
@@ -2646,6 +2686,7 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 	req *PaymentWithJournalRequest,
 	contactType string,
 	applyOutstanding bool,
+	enforceExplicitPaymentTerm bool,
 ) ([]models.PaymentAllocation, error) {
 	var allocations []models.PaymentAllocation
 
@@ -2782,12 +2823,22 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 					allocatedAmount = purchase.OutstandingAmount
 					log.Printf("⚠️ Adjusting amount to outstanding: %.2f -> %.2f", allocatedAmount, purchase.OutstandingAmount)
 				}
+				if err := validatePurchasePaymentTermAllocation(
+					tx,
+					&purchase,
+					alloc.PaymentTermID,
+					allocatedAmount,
+					enforceExplicitPaymentTerm,
+				); err != nil {
+					return nil, err
+				}
 
 				// Create allocation
 				allocation := models.PaymentAllocation{
-					PaymentID:       uint64(payment.ID),
-					BillID:          alloc.BillID,
-					AllocatedAmount: allocatedAmount,
+					PaymentID:             uint64(payment.ID),
+					BillID:                alloc.BillID,
+					PurchasePaymentTermID: alloc.PaymentTermID,
+					AllocatedAmount:       allocatedAmount,
 				}
 
 				if err := tx.Create(&allocation).Error; err != nil {
@@ -2814,6 +2865,19 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 		} else if req.TargetBillID != nil {
 			// Legacy: single bill allocation
 			log.Printf("📝 Processing single bill allocation (legacy)")
+			var purchase models.Purchase
+			if err := tx.First(&purchase, *req.TargetBillID).Error; err != nil {
+				return nil, fmt.Errorf("bill %d not found: %w", *req.TargetBillID, err)
+			}
+			if err := validatePurchasePaymentTermAllocation(
+				tx,
+				&purchase,
+				nil,
+				payment.Amount,
+				enforceExplicitPaymentTerm,
+			); err != nil {
+				return nil, err
+			}
 			allocation := models.PaymentAllocation{
 				PaymentID:       uint64(payment.ID),
 				BillID:          req.TargetBillID,
@@ -2866,64 +2930,8 @@ func (eps *EnhancedPaymentServiceWithJournal) updateSaleOutstanding(tx *gorm.DB,
 }
 
 func (eps *EnhancedPaymentServiceWithJournal) ensurePurchasePaymentLink(tx *gorm.DB, payment *models.Payment, purchaseID uint, amount float64) error {
-	if tx == nil || payment == nil || purchaseID == 0 || payment.ID == 0 || amount <= 0 {
-		return nil
-	}
-
-	if !tx.Migrator().HasTable(&models.PurchasePayment{}) {
-		if err := tx.AutoMigrate(&models.PurchasePayment{}); err != nil {
-			return err
-		}
-	}
-
-	var allocationTotal float64
-	if err := tx.Model(&models.PaymentAllocation{}).
-		Where("payment_id = ? AND bill_id = ?", payment.ID, purchaseID).
-		Select("COALESCE(SUM(allocated_amount), 0)").
-		Scan(&allocationTotal).Error; err != nil {
-		return err
-	}
-	if allocationTotal <= 0 {
-		allocationTotal = amount
-	}
-
-	var existing models.PurchasePayment
-	if err := tx.Where("purchase_id = ? AND payment_id = ? AND deleted_at IS NULL", purchaseID, payment.ID).
-		Find(&existing).Error; err != nil {
-		return err
-	}
-
-	linkValues := map[string]interface{}{
-		"payment_number": payment.Code,
-		"date":           payment.Date,
-		"amount":         allocationTotal,
-		"method":         payment.Method,
-		"reference":      payment.Reference,
-		"notes":          payment.Notes,
-		"cash_bank_id":   payment.CashBankID,
-		"user_id":        payment.UserID,
-		"payment_id":     payment.ID,
-	}
-
-	if existing.ID != 0 {
-		return tx.Model(&existing).Updates(linkValues).Error
-	}
-
-	paymentID := payment.ID
-	link := models.PurchasePayment{
-		PurchaseID:    purchaseID,
-		PaymentNumber: payment.Code,
-		Date:          payment.Date,
-		Amount:        allocationTotal,
-		Method:        payment.Method,
-		Reference:     payment.Reference,
-		Notes:         payment.Notes,
-		CashBankID:    payment.CashBankID,
-		UserID:        payment.UserID,
-		PaymentID:     &paymentID,
-	}
-
-	return tx.Create(&link).Error
+	_, err := ensurePurchasePaymentLink(tx, payment, purchaseID, amount)
+	return err
 }
 
 // updatePurchaseOutstanding updates purchase outstanding amount after payment allocation

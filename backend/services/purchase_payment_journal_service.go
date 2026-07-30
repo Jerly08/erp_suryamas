@@ -124,6 +124,12 @@ func (s *PurchasePaymentJournalService) createLegacyPaymentJournal(
 		}
 	}()
 
+	journalTag, err := resolvePurchasePaymentJournalTag(tx, uint64(payment.ID))
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
 	// Get Accounts Payable account (2101 - Utang Usaha)
 	var apAccount models.Account
 	if err := tx.Where("code = ?", "2101").First(&apAccount).Error; err != nil {
@@ -160,7 +166,7 @@ func (s *PurchasePaymentJournalService) createLegacyPaymentJournal(
 	// Create posted journal entry
 	journalEntry := &models.JournalEntry{
 		EntryDate:       payment.Date,
-		Description:     fmt.Sprintf("Purchase Payment %s", payment.Code),
+		Description:     appendPurchasePaymentJournalTag(fmt.Sprintf("Purchase Payment %s", payment.Code), journalTag),
 		ReferenceType:   models.JournalRefPayment,
 		ReferenceID:     &payment.ID,
 		Reference:       payment.Code,
@@ -175,14 +181,14 @@ func (s *PurchasePaymentJournalService) createLegacyPaymentJournal(
 	journalLines := []models.JournalLine{
 		{
 			AccountID:    apAccount.ID,
-			Description:  fmt.Sprintf("Reduce Utang Usaha - %s", payment.Code),
+			Description:  appendPurchasePaymentJournalTag(fmt.Sprintf("Reduce Utang Usaha - %s", payment.Code), journalTag),
 			DebitAmount:  payment.Amount,
 			CreditAmount: 0,
 			LineNumber:   1,
 		},
 		{
 			AccountID:    cashBankAccountID,
-			Description:  fmt.Sprintf("Cash/Bank payment - %s", payment.Code),
+			Description:  appendPurchasePaymentJournalTag(fmt.Sprintf("Cash/Bank payment - %s", payment.Code), journalTag),
 			DebitAmount:  0,
 			CreditAmount: payment.Amount,
 			LineNumber:   2,
@@ -294,6 +300,11 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 		return nil
 	}
 
+	journalTag, err := resolvePurchasePaymentJournalTag(tx, paymentID)
+	if err != nil {
+		return err
+	}
+
 	// 1. Resolve Accounts Payable account (2101-001 Hutang Usaha - Lokal)
 	var apAccount models.Account
 	if err := tx.Where("code = ?", "2101-001").First(&apAccount).Error; err != nil {
@@ -345,13 +356,17 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 	postedBy := uint64(userID)
 
 	journalEntry := &models.SSOTJournalEntry{
-		EntryNumber:     fmt.Sprintf("PURCHASE-PAY-%d-%d", payment.ID, now.Unix()),
-		SourceType:      "PURCHASE_PAYMENT",
-		SourceID:        &paymentID,
-		SourceCode:      payment.Code,
-		EntryDate:       payment.Date,
-		Description:     fmt.Sprintf("Purchase Payment %s", payment.Code),
+		EntryNumber: fmt.Sprintf("PURCHASE-PAY-%d-%d", payment.ID, now.Unix()),
+		SourceType:  "PURCHASE_PAYMENT",
+		SourceID:    &paymentID,
+		SourceCode:  payment.Code,
+		EntryDate:   payment.Date,
+		Description: appendPurchasePaymentJournalTag(
+			fmt.Sprintf("Purchase Payment %s", payment.Code),
+			journalTag,
+		),
 		Reference:       payment.Code,
+		Notes:           purchasePaymentJournalNotes(journalTag),
 		TotalDebit:      decimal.Zero,
 		TotalCredit:     decimal.Zero,
 		Status:          "DRAFT",
@@ -377,13 +392,19 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 			AccountID:    uint64(apAccount.ID),
 			DebitAmount:  payableSettlement,
 			CreditAmount: decimal.Zero,
-			Description:  fmt.Sprintf("Pelunasan Hutang Usaha - %s", payment.Code),
+			Description: appendPurchasePaymentJournalTag(
+				fmt.Sprintf("Pelunasan Hutang Usaha - %s", payment.Code),
+				journalTag,
+			),
 		},
 		{
 			AccountID:    uint64(bankAccount.ID),
 			DebitAmount:  decimal.Zero,
 			CreditAmount: bankBookAmount,
-			Description:  fmt.Sprintf("Pembayaran via %s - %s", bankAccount.Name, payment.Code),
+			Description: appendPurchasePaymentJournalTag(
+				fmt.Sprintf("Pembayaran via %s - %s", bankAccount.Name, payment.Code),
+				journalTag,
+			),
 		},
 	}
 
@@ -401,7 +422,10 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 			AccountID:    lossAccountID,
 			DebitAmount:  decimal.NewFromFloat(forexGainLossValue),
 			CreditAmount: decimal.Zero,
-			Description:  fmt.Sprintf("Rugi selisih kurs terealisasi - %s", payment.Code),
+			Description: appendPurchasePaymentJournalTag(
+				fmt.Sprintf("Rugi selisih kurs terealisasi - %s", payment.Code),
+				journalTag,
+			),
 		})
 	} else if forexGainLossValue < -0.005 {
 		gainAccountID, err := s.resolveForexAccountID(tx, true)
@@ -417,7 +441,10 @@ func (s *PurchasePaymentJournalService) CreatePaymentJournalEntryWithTx(
 			AccountID:    gainAccountID,
 			DebitAmount:  decimal.Zero,
 			CreditAmount: decimal.NewFromFloat(-forexGainLossValue),
-			Description:  fmt.Sprintf("Laba selisih kurs terealisasi - %s", payment.Code),
+			Description: appendPurchasePaymentJournalTag(
+				fmt.Sprintf("Laba selisih kurs terealisasi - %s", payment.Code),
+				journalTag,
+			),
 		})
 	}
 
