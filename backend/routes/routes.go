@@ -888,6 +888,8 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				postedTransactionCorrections.POST("", postedTransactionCorrectionController.Create)
 				postedTransactionCorrections.GET("/documents/:document_id/download", postedTransactionCorrectionController.DownloadDocument)
 				postedTransactionCorrections.GET("/sales/:sale_id/payment-candidates", postedTransactionCorrectionController.ListLegacySalesCreditPaymentCandidates)
+				postedTransactionCorrections.GET("/purchases/:purchase_id/coa-reclassification-candidates", postedTransactionCorrectionController.ListPurchaseCOAReclassificationCandidates)
+				postedTransactionCorrections.GET("/coa-reclassification-accounts", postedTransactionCorrectionController.ListCOAReclassificationAccounts)
 				postedTransactionCorrections.GET("/:id", postedTransactionCorrectionController.GetByID)
 				postedTransactionCorrections.POST("/:id/documents", postedTransactionCorrectionController.UploadDocument)
 				postedTransactionCorrections.POST("/:id/accounting-review", postedTransactionCorrectionController.ReviewAccounting)

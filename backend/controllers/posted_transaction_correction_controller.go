@@ -93,8 +93,12 @@ func (pc *PostedTransactionCorrectionController) Create(c *gin.Context) {
 		pc.writeError(c, err)
 		return
 	}
+	message := "Pengajuan koreksi transaksi berhasil dikirim ke Accounting"
+	if correction.CorrectionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+		message = "Pengajuan koreksi COA berhasil dikirim ke Finance Manager"
+	}
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Pengajuan koreksi transaksi berhasil dikirim ke Accounting",
+		"message": message,
 		"data":    correction,
 	})
 }
@@ -168,6 +172,29 @@ func (pc *PostedTransactionCorrectionController) ListLegacySalesCreditPaymentCan
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": candidates})
+}
+
+func (pc *PostedTransactionCorrectionController) ListPurchaseCOAReclassificationCandidates(c *gin.Context) {
+	purchaseID, err := parsePostedTransactionCorrectionID(c.Param("purchase_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID pembelian tidak valid"})
+		return
+	}
+	candidates, err := pc.service.ListPurchaseCOAReclassificationCandidates(purchaseID, c.GetUint("user_id"), c.GetString("role"))
+	if err != nil {
+		pc.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": candidates})
+}
+
+func (pc *PostedTransactionCorrectionController) ListCOAReclassificationAccounts(c *gin.Context) {
+	accounts, err := pc.service.ListCOAReclassificationAccounts(c.GetUint("user_id"), c.GetString("role"))
+	if err != nil {
+		pc.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": accounts})
 }
 
 func (pc *PostedTransactionCorrectionController) ExecuteSalesCreditCorrection(c *gin.Context) {

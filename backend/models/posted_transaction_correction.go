@@ -32,7 +32,11 @@ const (
 	// credit sale by linking the existing customer receipt to the invoice.
 	// It never edits the original sale or payment journal.
 	PostedTransactionCorrectionTypeSalesCreditClassification = "SALES_CREDIT_CLASSIFICATION"
-	PostedTransactionCorrectionTypeOther                     = "OTHER"
+	// COAReclassification moves one non cash/bank journal line to the correct
+	// active COA through a new adjustment journal. The original journal stays
+	// immutable and the correction is approved directly by Finance Manager.
+	PostedTransactionCorrectionTypeCOAReclassification = "COA_RECLASSIFICATION"
+	PostedTransactionCorrectionTypeOther               = "OTHER"
 )
 
 const (
@@ -51,6 +55,7 @@ const (
 	PostedTransactionCorrectionEventFinanceRejected     = "FINANCE_MANAGER_REJECTED"
 	PostedTransactionCorrectionEventCompleted           = "COMPLETED"
 	PostedTransactionCorrectionEventSalesCreditExecuted = "SALES_CREDIT_CLASSIFICATION_EXECUTED"
+	PostedTransactionCorrectionEventCOAReclassified     = "COA_RECLASSIFICATION_EXECUTED"
 	PostedTransactionCorrectionEventCancelled           = "CANCELLED"
 )
 
@@ -69,8 +74,10 @@ type PostedTransactionCorrection struct {
 	SaleID            *uint `json:"sale_id,omitempty" gorm:"index"`
 	LinkedPaymentID   *uint `json:"linked_payment_id,omitempty" gorm:"index"`
 
-	OriginalJournalEntryID uint64 `json:"original_journal_entry_id" gorm:"not null;index"`
-	SourceSnapshot         string `json:"source_snapshot" gorm:"type:text"`
+	OriginalJournalEntryID uint64  `json:"original_journal_entry_id" gorm:"not null;index"`
+	OriginalJournalLineID  *uint64 `json:"original_journal_line_id,omitempty" gorm:"index"`
+	OriginalAccountID      *uint   `json:"original_account_id,omitempty" gorm:"index"`
+	SourceSnapshot         string  `json:"source_snapshot" gorm:"type:text"`
 
 	CorrectionType string `json:"correction_type" gorm:"not null;size:60;index"`
 	Status         string `json:"status" gorm:"not null;size:40;index"`
@@ -114,6 +121,7 @@ type PostedTransactionCorrection struct {
 	AccountingUser  *User                                 `json:"accounting_user,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
 	FinanceManager  *User                                 `json:"finance_manager,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
 	Completer       *User                                 `json:"completer,omitempty" gorm:"foreignKey:CompletedBy"`
+	OriginalAccount *Account                              `json:"original_account,omitempty" gorm:"foreignKey:OriginalAccountID"`
 	ProposedAccount *Account                              `json:"proposed_account,omitempty" gorm:"foreignKey:ProposedAccountID"`
 	Documents       []PostedTransactionCorrectionDocument `json:"documents,omitempty" gorm:"foreignKey:CorrectionID"`
 	Events          []PostedTransactionCorrectionEvent    `json:"events,omitempty" gorm:"foreignKey:CorrectionID"`
@@ -151,6 +159,8 @@ type PostedTransactionCorrectionCreateRequest struct {
 	PaymentID                     *uint    `json:"payment_id"`
 	SaleID                        *uint    `json:"sale_id"`
 	LinkedPaymentID               *uint    `json:"linked_payment_id"`
+	OriginalJournalLineID         *uint64  `json:"original_journal_line_id"`
+	ProposedAccountID             *uint    `json:"proposed_account_id"`
 	CorrectionType                string   `json:"correction_type" binding:"required"`
 	Reason                        string   `json:"reason" binding:"required"`
 	RequestedDate                 string   `json:"requested_date"`

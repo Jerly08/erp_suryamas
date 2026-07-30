@@ -8,6 +8,7 @@ const (
 	JournalAdjustmentCategorySalesRevenueRecognition   = "SALES_REVENUE_RECOGNITION"
 	JournalAdjustmentCategoryCOGSHPPRecognition        = "COGS_HPP_RECOGNITION"
 	JournalAdjustmentCategoryPrepaidMonthlyRealization = "PREPAID_MONTHLY_REALIZATION"
+	JournalAdjustmentCategoryPostedCOAReclassification = "POSTED_COA_RECLASSIFICATION"
 
 	// Backward-compatible aliases for code paths created before the client
 	// narrowed the adjustment scope to the five approved categories.
@@ -102,6 +103,18 @@ func GetJournalAdjustmentCategories() []JournalAdjustmentCategoryDefinition {
 			Examples: []string{
 				"Amortisasi prepaid expense bulanan",
 				"Realisasi beban dari saldo prepaid",
+			},
+			RequiresOriginalJournal: true,
+		},
+		{
+			Code:                   JournalAdjustmentCategoryPostedCOAReclassification,
+			Label:                  "Reklasifikasi COA Transaksi Terposting",
+			Description:            "Memindahkan satu akun non kas/bank pada jurnal pembelian yang sudah terposting ke COA yang benar tanpa mengubah jurnal asal.",
+			COA:                    "COA asal & COA pengganti",
+			RecommendedSourceTypes: []string{SSOTSourceTypePurchase},
+			Examples: []string{
+				"Reklasifikasi beban pembelian yang salah akun",
+				"Pemindahan piutang atau utang antar akun yang benar",
 			},
 			RequiresOriginalJournal: true,
 		},

@@ -48,9 +48,11 @@ import SearchableSelect from '@/components/common/SearchableSelect';
 import accountService from '@/services/accountService';
 import type { AccountCatalogItem } from '@/types/account';
 import postedTransactionCorrectionService, {
+  type COAReclassificationAccountCandidate,
   type CreatePostedTransactionCorrectionRequest,
   type LegacySalesCreditPaymentCandidate,
   type PostedTransactionCorrection,
+  type PurchaseCOAReclassificationJournalLineCandidate,
   type PostedTransactionCorrectionResolution,
   type PostedTransactionCorrectionStatus,
   type PostedTransactionCorrectionType,
@@ -84,6 +86,7 @@ const correctionTypeOptions: Array<{ value: PostedTransactionCorrectionType; lab
   { value: 'SOURCE_BANK', label: 'Rekening sumber tidak sesuai' },
   { value: 'DESTINATION_ACCOUNT', label: 'Rekening tujuan atau penerima tidak sesuai' },
   { value: 'PURCHASE_DATE', label: 'Tanggal pembelian tidak sesuai' },
+  { value: 'COA_RECLASSIFICATION', label: 'Reklasifikasi COA transaksi terposting' },
   { value: 'OTHER', label: 'Koreksi lain' },
 ];
 
@@ -139,6 +142,8 @@ const actorName = (actor?: { username?: string; first_name?: string; last_name?:
 const correctionTypeLabel = (type: string) =>
   type === 'SALES_CREDIT_CLASSIFICATION'
     ? 'Reklasifikasi penjualan kredit lama'
+    : type === 'COA_RECLASSIFICATION'
+      ? 'Reklasifikasi COA transaksi terposting'
     : correctionTypeOptions.find((option) => option.value === type)?.label || type.replace(/_/g, ' ');
 
 const getErrorDescription = (error: unknown, fallback = 'Coba lagi beberapa saat lagi.') => {
@@ -196,6 +201,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const createDisclosure = useDisclosure();
   const isSalesCreditCorrection = actionModal?.correction.correction_type === 'SALES_CREDIT_CLASSIFICATION';
+  const isCOAReclassification = actionModal?.correction.correction_type === 'COA_RECLASSIFICATION';
 
   const purchaseID = target?.purchaseId;
   const paymentID = target?.paymentId;
@@ -316,6 +322,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
 
   const handleFinanceDecision = async () => {
     if (!actionModal || actionModal.type !== 'finance' || !token) return;
+    const autoCompletesCOAReclassification = actionModal.correction.correction_type === 'COA_RECLASSIFICATION';
     if (!actionModal.approve && !decisionNotes.trim()) {
       toast({ title: 'Alasan penolakan wajib diisi', status: 'warning', duration: 3500 });
       return;
@@ -327,7 +334,14 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
         notes: decisionNotes.trim(),
       });
       toast({
-        title: actionModal.approve ? 'Koreksi disetujui untuk dieksekusi' : 'Koreksi ditolak',
+        title: actionModal.approve
+          ? autoCompletesCOAReclassification
+            ? 'Reklasifikasi COA berhasil diposting'
+            : 'Koreksi disetujui untuk dieksekusi'
+          : 'Koreksi ditolak',
+        description: actionModal.approve && autoCompletesCOAReclassification
+          ? 'Jurnal reklasifikasi baru telah dibuat. Jurnal asal dan kas/bank tetap tidak berubah.'
+          : undefined,
         status: actionModal.approve ? 'success' : 'info',
         duration: 3500,
       });
@@ -453,6 +467,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
           {corrections.map((correction) => {
             const presentation = statusPresentation[correction.status] || { label: correction.status, colorScheme: 'gray' };
             const isSalesCreditClassification = correction.correction_type === 'SALES_CREDIT_CLASSIFICATION';
+            const isCOAReclassification = correction.correction_type === 'COA_RECLASSIFICATION';
             const canAttach = correction.status !== 'CANCELLED' && (
               (Number.isInteger(currentUserID) && correction.requested_by === currentUserID) || canReviewAccounting || canReviewFinance
             );
@@ -523,6 +538,12 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
                     Penerimaan yang akan ditautkan: {correction.linked_payment.code} ({formatCurrency(correction.linked_payment.amount)})
                   </Text>
                 )}
+                {isCOAReclassification && (
+                  <Text mt={3} fontSize="sm" color="gray.600">
+                    COA asal: {correction.original_account?.code || '-'} - {correction.original_account?.name || '-'}
+                    {' '}ke COA pengganti: {correction.proposed_account?.code || '-'} - {correction.proposed_account?.name || '-'}
+                  </Text>
+                )}
 
                 {correction.accounting_resolution && (
                   <Box mt={3} borderTopWidth="1px" pt={3} fontSize="sm">
@@ -579,6 +600,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
         onClose={createDisclosure.onClose}
         target={target}
         token={token || undefined}
+        canRequestCOAReclassification={canReviewAccounting && Boolean(target?.purchaseId)}
         onSuccess={async () => {
           createDisclosure.onClose();
           await refreshAfterChange();
@@ -590,7 +612,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
         <ModalContent maxH="calc(100vh - 32px)" display="flex" flexDirection="column" overflow="hidden">
           <ModalHeader>
             {actionModal?.type === 'accounting' && 'Review Koreksi oleh Accounting'}
-            {actionModal?.type === 'finance' && (actionModal.approve ? 'Setujui Koreksi Transaksi' : 'Tolak Koreksi Transaksi')}
+            {actionModal?.type === 'finance' && (actionModal.approve ? isCOAReclassification ? 'Setujui Reklasifikasi COA' : 'Setujui Koreksi Transaksi' : 'Tolak Koreksi Transaksi')}
             {actionModal?.type === 'complete' && 'Catat Penyelesaian Koreksi'}
             {actionModal?.type === 'execute-sales-credit' && 'Eksekusi Reklasifikasi Piutang'}
           </ModalHeader>
@@ -635,7 +657,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
             )}
             {actionModal?.type === 'finance' && (
               <VStack align="stretch" spacing={4}>
-                <Alert status={actionModal.approve ? 'success' : 'warning'} variant="left-accent"><AlertIcon /><AlertDescription>{actionModal.approve ? 'Persetujuan hanya membuka koreksi untuk dieksekusi oleh Accounting. Transaksi dan jurnal asal tetap tidak diubah.' : 'Penolakan akan menutup pengajuan ini tanpa mengubah transaksi asal.'}</AlertDescription></Alert>
+                <Alert status={actionModal.approve ? 'success' : 'warning'} variant="left-accent"><AlertIcon /><AlertDescription>{actionModal.approve ? isCOAReclassification ? 'Persetujuan akan langsung membuat jurnal reklasifikasi COA baru. Jurnal asal dan mutasi kas/bank tetap tidak diubah.' : 'Persetujuan hanya membuka koreksi untuk dieksekusi oleh Accounting. Transaksi dan jurnal asal tetap tidak diubah.' : 'Penolakan akan menutup pengajuan ini tanpa mengubah transaksi asal.'}</AlertDescription></Alert>
                 <FormControl isRequired={!actionModal.approve}>
                   <FormLabel>{actionModal.approve ? 'Catatan persetujuan (opsional)' : 'Alasan penolakan'}</FormLabel>
                   <Textarea value={decisionNotes} onChange={(event) => setDecisionNotes(event.target.value)} rows={5} placeholder={actionModal.approve ? 'Catatan atau syarat eksekusi bila diperlukan.' : 'Jelaskan alasan pengajuan belum dapat disetujui.'} />
@@ -690,10 +712,18 @@ interface CreateCorrectionModalProps {
   onClose: () => void;
   target?: CorrectionTarget;
   token?: string;
+  canRequestCOAReclassification: boolean;
   onSuccess: () => Promise<void>;
 }
 
-const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, onClose, target, token, onSuccess }) => {
+const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
+  isOpen,
+  onClose,
+  target,
+  token,
+  canRequestCOAReclassification,
+  onSuccess,
+}) => {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const [correctionType, setCorrectionType] = useState<PostedTransactionCorrectionType>('MISSING_PAYMENT_PROOF');
@@ -707,7 +737,16 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
   const [paymentCandidates, setPaymentCandidates] = useState<LegacySalesCreditPaymentCandidate[]>([]);
   const [loadingPaymentCandidates, setLoadingPaymentCandidates] = useState(false);
   const [linkedPaymentId, setLinkedPaymentId] = useState<number | undefined>();
+  const [coaJournalLineCandidates, setCOAJournalLineCandidates] = useState<PurchaseCOAReclassificationJournalLineCandidate[]>([]);
+  const [coaAccounts, setCOAAccounts] = useState<COAReclassificationAccountCandidate[]>([]);
+  const [loadingCOAOptions, setLoadingCOAOptions] = useState(false);
+  const [originalJournalLineId, setOriginalJournalLineId] = useState<number | undefined>();
+  const [proposedAccountId, setProposedAccountId] = useState<number | undefined>();
   const isSalesCreditCorrection = Boolean(target?.saleId);
+  const isPurchaseCOAReclassification = correctionType === 'COA_RECLASSIFICATION';
+  const availableCorrectionTypeOptions = correctionTypeOptions.filter(
+    (option) => option.value !== 'COA_RECLASSIFICATION' || canRequestCOAReclassification,
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -721,6 +760,10 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
     setDocument(null);
     setLinkedPaymentId(undefined);
     setPaymentCandidates([]);
+    setCOAJournalLineCandidates([]);
+    setCOAAccounts([]);
+    setOriginalJournalLineId(undefined);
+    setProposedAccountId(undefined);
   }, [isOpen, isSalesCreditCorrection]);
 
   useEffect(() => {
@@ -750,6 +793,37 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
     };
   }, [isOpen, isSalesCreditCorrection, target?.saleId, toast, token]);
 
+  useEffect(() => {
+    if (!isOpen || !isPurchaseCOAReclassification || !target?.purchaseId || !token) return;
+    let cancelled = false;
+    setLoadingCOAOptions(true);
+    Promise.all([
+      postedTransactionCorrectionService.getPurchaseCOAReclassificationCandidates(token, target.purchaseId),
+      postedTransactionCorrectionService.getCOAReclassificationAccounts(token),
+    ])
+      .then(([lines, accounts]) => {
+        if (cancelled) return;
+        setCOAJournalLineCandidates(lines);
+        setCOAAccounts(accounts);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          toast({
+            title: 'Data koreksi COA tidak dapat dimuat',
+            description: getErrorDescription(error),
+            status: 'error',
+            duration: 5000,
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCOAOptions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isPurchaseCOAReclassification, target?.purchaseId, toast, token]);
+
   const wantsDate = isSalesCreditCorrection || correctionType === 'PAYMENT_DATE' || correctionType === 'PURCHASE_DATE';
   const wantsAmount = correctionType === 'PAYMENT_AMOUNT';
   const wantsSource = correctionType === 'SOURCE_BANK';
@@ -769,6 +843,10 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
       toast({ title: 'Tanggal koreksi dan penerimaan pelanggan wajib dipilih', status: 'warning', duration: 3500 });
       return;
     }
+    if (isPurchaseCOAReclassification && (!originalJournalLineId || !proposedAccountId)) {
+      toast({ title: 'Baris jurnal asal dan COA pengganti wajib dipilih', status: 'warning', duration: 3500 });
+      return;
+    }
     setSaving(true);
     try {
       const payload: CreatePostedTransactionCorrectionRequest = {
@@ -776,6 +854,8 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
         payment_id: target.paymentId,
         sale_id: target.saleId,
         linked_payment_id: linkedPaymentId,
+        original_journal_line_id: isPurchaseCOAReclassification ? originalJournalLineId : undefined,
+        proposed_account_id: isPurchaseCOAReclassification ? proposedAccountId : undefined,
         correction_type: correctionType,
         reason: reason.trim(),
         requested_date: requestedDate || undefined,
@@ -788,7 +868,14 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
       if (document) {
         await postedTransactionCorrectionService.uploadDocument(token, correction.id, document);
       }
-      toast({ title: 'Pengajuan koreksi dikirim', description: 'Pengajuan sekarang menunggu review Accounting.', status: 'success', duration: 4000 });
+      toast({
+        title: 'Pengajuan koreksi dikirim',
+        description: isPurchaseCOAReclassification
+          ? 'Koreksi COA sekarang menunggu persetujuan Finance Manager.'
+          : 'Pengajuan sekarang menunggu review Accounting.',
+        status: 'success',
+        duration: 4000,
+      });
       await onSuccess();
     } catch (error: unknown) {
       toast({ title: 'Pengajuan koreksi gagal dikirim', description: getErrorDescription(error, 'Coba periksa data lalu ulangi.'), status: 'error', duration: 6000 });
@@ -805,7 +892,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
         <ModalCloseButton isDisabled={saving} />
         <ModalBody flex="1" minH="0" overflowY="auto">
           <VStack align="stretch" spacing={4}>
-            <Alert status="warning" variant="left-accent"><AlertIcon /><AlertDescription>{isSalesCreditCorrection ? 'Pengajuan ini hanya untuk sale kredit lama yang salah tercatat sebagai kas/bank. Sistem akan menolak jika penerimaan pelanggan belum memenuhi syarat audit.' : 'Pengajuan ini tidak mengubah transaksi atau jurnal asal. Accounting akan menentukan perlakuan, lalu Finance Manager memberi keputusan.'}</AlertDescription></Alert>
+            <Alert status="warning" variant="left-accent"><AlertIcon /><AlertDescription>{isSalesCreditCorrection ? 'Pengajuan ini hanya untuk sale kredit lama yang salah tercatat sebagai kas/bank. Sistem akan menolak jika penerimaan pelanggan belum memenuhi syarat audit.' : isPurchaseCOAReclassification ? 'Accounting memilih baris jurnal pembelian dan COA pengganti. Pengajuan langsung menunggu Finance Manager. Jika disetujui, sistem membuat jurnal reklasifikasi baru tanpa mengubah jurnal asal atau mutasi kas/bank.' : 'Pengajuan ini tidak mengubah transaksi atau jurnal asal. Accounting akan menentukan perlakuan, lalu Finance Manager memberi keputusan.'}</AlertDescription></Alert>
             <Box borderWidth="1px" borderRadius="md" p={3}>
               <Text fontWeight="semibold">Transaksi asal</Text>
               <Text fontSize="sm" color="gray.500">{target?.code || '-'}</Text>
@@ -819,7 +906,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
               <FormControl isRequired>
                 <FormLabel>Jenis koreksi</FormLabel>
                 <Select value={correctionType} onChange={(event) => setCorrectionType(event.target.value as PostedTransactionCorrectionType)}>
-                  {correctionTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  {availableCorrectionTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </Select>
               </FormControl>
             )}
@@ -846,13 +933,59 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
                 {!loadingPaymentCandidates && paymentCandidates.length === 0 && <Text mt={2} fontSize="sm" color="orange.600">Tidak ada penerimaan yang memenuhi syarat koreksi otomatis. Gunakan jurnal koreksi manual setelah review Accounting.</Text>}
               </FormControl>
             )}
+            {isPurchaseCOAReclassification && (
+              <VStack align="stretch" spacing={4} borderWidth="1px" borderRadius="md" p={3}>
+                <Text fontWeight="semibold">Reklasifikasi COA</Text>
+                <FormControl isRequired>
+                  <FormLabel>Baris jurnal asal</FormLabel>
+                  <SearchableSelect
+                    options={coaJournalLineCandidates.map((line) => ({
+                      id: line.id,
+                      code: line.account_code,
+                      name: `${line.account_name} | ${line.debit_amount > 0 ? `Debit ${formatCurrency(line.debit_amount)}` : `Kredit ${formatCurrency(line.credit_amount)}`}${line.description ? ` | ${line.description}` : ''}`,
+                    }))}
+                    value={originalJournalLineId}
+                    onChange={(value) => {
+                      const lineID = Number(value);
+                      setOriginalJournalLineId(Number.isInteger(lineID) && lineID > 0 ? lineID : undefined);
+                      setProposedAccountId(undefined);
+                    }}
+                    placeholder={loadingCOAOptions ? 'Memuat jurnal pembelian...' : 'Cari akun atau deskripsi jurnal asal'}
+                    isLoading={loadingCOAOptions}
+                    allowClear
+                  />
+                  <FormHelperText>Hanya baris non-kas/bank dari jurnal pembelian terposting yang dapat direklasifikasi.</FormHelperText>
+                  {!loadingCOAOptions && coaJournalLineCandidates.length === 0 && <Text mt={2} fontSize="sm" color="orange.600">Tidak ada baris jurnal pembelian yang memenuhi syarat untuk koreksi COA otomatis.</Text>}
+                </FormControl>
+                <FormControl isRequired>
+                  <FormLabel>COA pengganti</FormLabel>
+                  <SearchableSelect
+                    options={coaAccounts
+                      .filter((account) => {
+                        const original = coaJournalLineCandidates.find((line) => line.id === originalJournalLineId);
+                        return account.id !== original?.account_id;
+                      })
+                      .map((account) => ({ id: account.id, code: account.code, name: account.name }))}
+                    value={proposedAccountId}
+                    onChange={(value) => {
+                      const accountID = Number(value);
+                      setProposedAccountId(Number.isInteger(accountID) && accountID > 0 ? accountID : undefined);
+                    }}
+                    placeholder={loadingCOAOptions ? 'Memuat daftar COA...' : 'Cari kode atau nama COA pengganti'}
+                    isLoading={loadingCOAOptions}
+                    allowClear
+                  />
+                  <FormHelperText>Daftar ini hanya memuat akun aktif, bukan header, dan bukan akun kas/bank.</FormHelperText>
+                </FormControl>
+              </VStack>
+            )}
             {wantsAmount && <FormControl isRequired><FormLabel>Nominal aktual</FormLabel><Input type="number" min="0" inputMode="decimal" value={requestedAmount} onChange={(event) => setRequestedAmount(event.target.value)} placeholder="Contoh: 17670000" /></FormControl>}
             {wantsSource && <FormControl><FormLabel>Rekening sumber aktual menurut bukti bank</FormLabel><Input value={sourceBank} onChange={(event) => setSourceBank(event.target.value)} placeholder="Nomor rekening atau nama bank aktual" /></FormControl>}
             {wantsDestination && <FormControl><FormLabel>Penerima atau rekening tujuan aktual</FormLabel><Input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Nama penerima atau nomor rekening aktual" /></FormControl>}
             <FormControl><FormLabel>Referensi aktual (opsional)</FormLabel><Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Nomor Kopra, invoice, atau referensi lain" /></FormControl>
             <FormControl isRequired>
               <FormLabel>Alasan dan kronologi</FormLabel>
-              <Textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={5} placeholder={isSalesCreditCorrection ? "Jelaskan bahwa invoice kredit dahulu tercatat sebagai kas/bank dan sebutkan dasar penerimaan pelanggan yang dipilih." : "Jelaskan data yang salah, data aktual, dan dasar buktinya."} />
+              <Textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={5} placeholder={isSalesCreditCorrection ? "Jelaskan bahwa invoice kredit dahulu tercatat sebagai kas/bank dan sebutkan dasar penerimaan pelanggan yang dipilih." : isPurchaseCOAReclassification ? "Jelaskan mengapa akun asal tidak tepat dan dasar pemilihan COA pengganti." : "Jelaskan data yang salah, data aktual, dan dasar buktinya."} />
             </FormControl>
             <FormControl>
               <FormLabel>Dokumen pendukung (opsional)</FormLabel>
@@ -863,7 +996,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({ isOpen, o
         </ModalBody>
         <ModalFooter>
           <Button variant="ghost" mr={3} onClick={onClose} isDisabled={saving}>Batal</Button>
-          <Button colorScheme="orange" leftIcon={<FiEdit3 />} onClick={() => void handleSubmit()} isLoading={saving}>{isSalesCreditCorrection ? 'Ajukan Reklasifikasi' : 'Kirim ke Accounting'}</Button>
+          <Button colorScheme="orange" leftIcon={<FiEdit3 />} onClick={() => void handleSubmit()} isLoading={saving}>{isSalesCreditCorrection ? 'Ajukan Reklasifikasi' : isPurchaseCOAReclassification ? 'Kirim ke Finance Manager' : 'Kirim ke Accounting'}</Button>
         </ModalFooter>
       </ModalContent>
     </Modal>

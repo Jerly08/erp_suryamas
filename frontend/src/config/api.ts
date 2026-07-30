@@ -328,6 +328,10 @@ export const API_ENDPOINTS = {
       `/api/v1/posted-transaction-corrections/${id}/complete`,
     SALES_PAYMENT_CANDIDATES: (saleId: number) =>
       `/api/v1/posted-transaction-corrections/sales/${saleId}/payment-candidates`,
+    PURCHASE_COA_RECLASSIFICATION_CANDIDATES: (purchaseId: number) =>
+      `/api/v1/posted-transaction-corrections/purchases/${purchaseId}/coa-reclassification-candidates`,
+    COA_RECLASSIFICATION_ACCOUNTS:
+      "/api/v1/posted-transaction-corrections/coa-reclassification-accounts",
     EXECUTE_SALES_CREDIT_CORRECTION: (id: number) =>
       `/api/v1/posted-transaction-corrections/${id}/execute-sales-credit-correction`,
     DOCUMENTS: (id: number) =>

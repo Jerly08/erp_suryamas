@@ -70,12 +70,76 @@ func (s *PostedTransactionCorrectionService) Create(
 		if requestedDate == nil {
 			return nil, fmt.Errorf("tanggal koreksi wajib diisi untuk reklasifikasi penjualan kredit")
 		}
+	} else if correctionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+		if !canRequestPostedCOAReclassification(role) {
+			return nil, ErrPostedTransactionCorrectionDenied
+		}
+		if request.PurchaseID == nil || request.OriginalJournalLineID == nil || request.ProposedAccountID == nil {
+			return nil, fmt.Errorf("pembelian, baris jurnal asal, dan COA pengganti wajib dipilih untuk koreksi COA")
+		}
+		if request.PaymentID != nil || request.SaleID != nil || request.LinkedPaymentID != nil {
+			return nil, fmt.Errorf("koreksi COA transaksi terposting hanya tersedia untuk pembelian")
+		}
 	} else if request.SaleID != nil || request.LinkedPaymentID != nil {
 		return nil, fmt.Errorf("penjualan hanya dapat memakai jenis koreksi reklasifikasi penjualan kredit")
 	}
 
 	var correction models.PostedTransactionCorrection
 	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if correctionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+			target, data, err := s.resolvePurchaseCOAReclassificationTarget(
+				tx,
+				*request.PurchaseID,
+				*request.OriginalJournalLineID,
+				*request.ProposedAccountID,
+				false,
+			)
+			if err != nil {
+				return err
+			}
+
+			var activeCount int64
+			if err := tx.Model(&models.PostedTransactionCorrection{}).
+				Where("correction_type = ? AND original_journal_line_id = ? AND status IN ?", correctionType, data.originalLine.ID, activeCorrectionStatuses()).
+				Count(&activeCount).Error; err != nil {
+				return err
+			}
+			if activeCount > 0 {
+				return fmt.Errorf("masih ada pengajuan koreksi COA aktif untuk baris jurnal ini")
+			}
+
+			now := time.Now().UTC()
+			originalLineID := data.originalLine.ID
+			originalAccountID := data.originalAccount.ID
+			correction = models.PostedTransactionCorrection{
+				TargetType:             target.targetType,
+				TargetCode:             target.targetCode,
+				PurchaseID:             target.purchaseID,
+				OriginalJournalEntryID: target.originalJournalID,
+				OriginalJournalLineID:  &originalLineID,
+				OriginalAccountID:      &originalAccountID,
+				SourceSnapshot:         target.sourceSnapshot,
+				CorrectionType:         correctionType,
+				Status:                 models.PostedTransactionCorrectionStatusPendingFinanceManager,
+				Reason:                 reason,
+				RequestedReference:     strings.TrimSpace(request.RequestedReference),
+				RequestedBy:            userID,
+				RequestedAt:            now,
+				AccountingResolution:   models.PostedTransactionCorrectionResolutionJournalReclass,
+				AccountingNotes:        fmt.Sprintf("Accounting memilih reklasifikasi %s (%s) ke %s (%s).", data.originalAccount.Code, data.originalAccount.Name, data.proposedAccount.Code, data.proposedAccount.Name),
+				ProposedAccountID:      request.ProposedAccountID,
+				AccountingReviewedBy:   &userID,
+				AccountingReviewedAt:   &now,
+			}
+			if err := tx.Create(&correction).Error; err != nil {
+				return err
+			}
+			if err := s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventSubmitted, reason, userID, role); err != nil {
+				return err
+			}
+			return s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventAccountingReviewed, correction.AccountingNotes, userID, role)
+		}
+
 		target, err := s.resolvePostedCorrectionTarget(tx, request.PurchaseID, request.PaymentID, request.SaleID, request.LinkedPaymentID)
 		if err != nil {
 			return err
@@ -224,6 +288,9 @@ func (s *PostedTransactionCorrectionService) ReviewAccounting(
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&correction, id).Error; err != nil {
 			return normalizePostedTransactionCorrectionNotFound(err)
 		}
+		if correction.CorrectionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+			return fmt.Errorf("koreksi COA diajukan langsung oleh Accounting dan tidak memerlukan review ulang")
+		}
 		if correction.Status != models.PostedTransactionCorrectionStatusPendingAccounting {
 			return fmt.Errorf("koreksi ini tidak sedang menunggu review Accounting")
 		}
@@ -285,19 +352,40 @@ func (s *PostedTransactionCorrectionService) DecideFinanceManager(
 		now := time.Now().UTC()
 		status := models.PostedTransactionCorrectionStatusRejected
 		eventType := models.PostedTransactionCorrectionEventFinanceRejected
-		if request.Approve {
-			status = models.PostedTransactionCorrectionStatusApprovedForExecution
-			eventType = models.PostedTransactionCorrectionEventFinanceApproved
-		}
-		if err := tx.Model(&correction).Updates(map[string]interface{}{
+		completionNotes := ""
+		updates := map[string]interface{}{
 			"status":                         status,
 			"finance_manager_decision_notes": notes,
 			"finance_manager_approved_by":    userID,
 			"finance_manager_approved_at":    now,
-		}).Error; err != nil {
+		}
+		if request.Approve {
+			status = models.PostedTransactionCorrectionStatusApprovedForExecution
+			eventType = models.PostedTransactionCorrectionEventFinanceApproved
+			if correction.CorrectionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+				journal, notes, err := s.executePurchaseCOAReclassification(tx, correction, userID)
+				if err != nil {
+					return err
+				}
+				completionNotes = notes
+				status = models.PostedTransactionCorrectionStatusCompleted
+				updates["completion_notes"] = completionNotes
+				updates["completion_journal_entry_id"] = journal.ID
+				updates["completed_by"] = userID
+				updates["completed_at"] = now
+			}
+		}
+		updates["status"] = status
+		if err := tx.Model(&correction).Updates(updates).Error; err != nil {
 			return err
 		}
-		return s.createEvent(tx, correction.ID, eventType, notes, userID, role)
+		if err := s.createEvent(tx, correction.ID, eventType, notes, userID, role); err != nil {
+			return err
+		}
+		if request.Approve && correction.CorrectionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+			return s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventCOAReclassified, completionNotes, userID, role)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -332,6 +420,9 @@ func (s *PostedTransactionCorrectionService) Complete(
 		}
 		if correction.CorrectionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
 			return fmt.Errorf("koreksi penjualan kredit harus dieksekusi melalui aksi reklasifikasi piutang")
+		}
+		if correction.CorrectionType == models.PostedTransactionCorrectionTypeCOAReclassification {
+			return fmt.Errorf("koreksi COA dieksekusi otomatis saat disetujui Finance Manager")
 		}
 		if correctionRequiresFinancialLink(correction.AccountingResolution) && request.CompletionJournalEntryID == nil && request.ReplacementPaymentID == nil {
 			return fmt.Errorf("jurnal koreksi atau pembayaran pengganti wajib ditautkan untuk rencana penyelesaian ini")
@@ -617,6 +708,7 @@ func (s *PostedTransactionCorrectionService) withCorrectionRelations(db *gorm.DB
 		Preload("AccountingUser").
 		Preload("FinanceManager").
 		Preload("Completer").
+		Preload("OriginalAccount").
 		Preload("ProposedAccount").
 		Preload("Documents", func(db *gorm.DB) *gorm.DB { return db.Order("uploaded_at ASC, id ASC") }).
 		Preload("Documents.Uploader").
@@ -661,6 +753,7 @@ func validatePostedTransactionCorrectionType(value string) error {
 		models.PostedTransactionCorrectionTypeDestinationAccount,
 		models.PostedTransactionCorrectionTypePurchaseDate,
 		models.PostedTransactionCorrectionTypeSalesCreditClassification,
+		models.PostedTransactionCorrectionTypeCOAReclassification,
 		models.PostedTransactionCorrectionTypeOther:
 		return nil
 	default:
@@ -690,6 +783,10 @@ func normalizePostedTransactionCorrectionNotFound(err error) error {
 
 func canRequestPostedTransactionCorrection(role string) bool {
 	return models.IsFinanceStaffRole(role) || models.IsAccountingRole(role) || models.IsFinanceManagerRole(role) || isCorrectionAdmin(role)
+}
+
+func canRequestPostedCOAReclassification(role string) bool {
+	return models.IsAccountingRole(role) || isCorrectionAdmin(role)
 }
 
 func canViewAllPostedTransactionCorrections(role string) bool {

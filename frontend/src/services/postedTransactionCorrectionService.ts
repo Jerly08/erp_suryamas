@@ -18,6 +18,7 @@ export type PostedTransactionCorrectionType =
   | 'DESTINATION_ACCOUNT'
   | 'PURCHASE_DATE'
   | 'SALES_CREDIT_CLASSIFICATION'
+  | 'COA_RECLASSIFICATION'
   | 'OTHER';
 
 export type PostedTransactionCorrectionResolution =
@@ -68,6 +69,8 @@ export interface PostedTransactionCorrection {
   sale_id?: number | null;
   linked_payment_id?: number | null;
   original_journal_entry_id: number;
+  original_journal_line_id?: number | null;
+  original_account_id?: number | null;
   correction_type: PostedTransactionCorrectionType;
   status: PostedTransactionCorrectionStatus;
   reason: string;
@@ -109,6 +112,7 @@ export interface PostedTransactionCorrection {
   accounting_user?: CorrectionActor;
   finance_manager?: CorrectionActor;
   completer?: CorrectionActor;
+  original_account?: { id: number; code: string; name: string };
   proposed_account?: { id: number; code: string; name: string };
   documents?: PostedTransactionCorrectionDocument[];
   events?: PostedTransactionCorrectionEvent[];
@@ -119,6 +123,8 @@ export interface CreatePostedTransactionCorrectionRequest {
   payment_id?: number;
   sale_id?: number;
   linked_payment_id?: number;
+  original_journal_line_id?: number;
+  proposed_account_id?: number;
   correction_type: PostedTransactionCorrectionType;
   reason: string;
   requested_date?: string;
@@ -156,6 +162,23 @@ export interface LegacySalesCreditPaymentCandidate {
   cash_bank_code?: string;
   cash_bank_name?: string;
   cash_bank_currency?: string;
+}
+
+export interface PurchaseCOAReclassificationJournalLineCandidate {
+  id: number;
+  line_number: number;
+  account_id: number;
+  account_code: string;
+  account_name: string;
+  description?: string;
+  debit_amount: number;
+  credit_amount: number;
+}
+
+export interface COAReclassificationAccountCandidate {
+  id: number;
+  code: string;
+  name: string;
 }
 
 const authHeaders = (token?: string) =>
@@ -245,6 +268,27 @@ const postedTransactionCorrectionService = {
   ): Promise<LegacySalesCreditPaymentCandidate[]> {
     const response = await api.get(
       API_ENDPOINTS.POSTED_TRANSACTION_CORRECTIONS.SALES_PAYMENT_CANDIDATES(saleId),
+      { headers: authHeaders(token) },
+    );
+    return response.data.data || [];
+  },
+
+  async getPurchaseCOAReclassificationCandidates(
+    token: string | undefined,
+    purchaseId: number,
+  ): Promise<PurchaseCOAReclassificationJournalLineCandidate[]> {
+    const response = await api.get(
+      API_ENDPOINTS.POSTED_TRANSACTION_CORRECTIONS.PURCHASE_COA_RECLASSIFICATION_CANDIDATES(purchaseId),
+      { headers: authHeaders(token) },
+    );
+    return response.data.data || [];
+  },
+
+  async getCOAReclassificationAccounts(
+    token: string | undefined,
+  ): Promise<COAReclassificationAccountCandidate[]> {
+    const response = await api.get(
+      API_ENDPOINTS.POSTED_TRANSACTION_CORRECTIONS.COA_RECLASSIFICATION_ACCOUNTS,
       { headers: authHeaders(token) },
     );
     return response.data.data || [];
