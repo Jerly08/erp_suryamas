@@ -384,8 +384,8 @@ GOT_CONTENT:
 	// Execute statements one-by-one in separate transactions.
 	// This allows us to skip harmless 'already exists' errors and continue.
 	for _, raw := range sqlStatements {
-		stmt := strings.TrimSpace(raw)
-		if stmt == "" || strings.HasPrefix(stmt, "--") || strings.HasPrefix(stmt, "/*") {
+		stmt := stripLeadingSQLComments(raw)
+		if stmt == "" {
 			continue
 		}
 
@@ -425,6 +425,34 @@ GOT_CONTENT:
 
 	log.Printf("✅ Migration completed: %s (%dms)", filename, executionTime)
 	return nil
+}
+
+// stripLeadingSQLComments keeps an SQL statement intact while removing comments
+// that appear before it. Migrations often start with documentation comments; those
+// comments must not cause the first executable statement to be skipped.
+func stripLeadingSQLComments(statement string) string {
+	remaining := strings.TrimSpace(statement)
+	for remaining != "" {
+		switch {
+		case strings.HasPrefix(remaining, "--"):
+			newline := strings.IndexByte(remaining, '\n')
+			if newline == -1 {
+				return ""
+			}
+			remaining = strings.TrimSpace(remaining[newline+1:])
+		case strings.HasPrefix(remaining, "/*"):
+			commentEnd := strings.Index(remaining[2:], "*/")
+			if commentEnd == -1 {
+				// Leave malformed SQL to PostgreSQL so the migration fails visibly.
+				return remaining
+			}
+			remaining = strings.TrimSpace(remaining[commentEnd+4:])
+		default:
+			return remaining
+		}
+	}
+
+	return ""
 }
 
 func shouldSkipLegacySSOTMigration(db *gorm.DB, filename string) bool {

@@ -12,6 +12,41 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestStripLeadingSQLComments(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "line comments before create table",
+			input: "-- Preserve audit history\n-- Schema-only migration\nCREATE TABLE audit_lines (id BIGINT)",
+			want:  "CREATE TABLE audit_lines (id BIGINT)",
+		},
+		{
+			name:  "mixed comments before create index",
+			input: "/* Initial description */\n-- Keep this index unique\nCREATE INDEX idx_audit_lines ON audit_lines(id)",
+			want:  "CREATE INDEX idx_audit_lines ON audit_lines(id)",
+		},
+		{
+			name:  "comments only",
+			input: "-- no SQL follows\n/* still no SQL */",
+			want:  "",
+		},
+		{
+			name:  "sql without comments",
+			input: "  ALTER TABLE purchases ADD COLUMN note TEXT  ",
+			want:  "ALTER TABLE purchases ADD COLUMN note TEXT",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, stripLeadingSQLComments(tt.input))
+		})
+	}
+}
+
 func TestSyncStandardPurchaseApprovalWorkflowReroutesLegacyFinanceStaffAction(t *testing.T) {
 	db := newAutoMigrationWorkflowTestDB(t)
 	workflow, steps := createLegacyStandardPurchaseApprovalWorkflow(t, db)
