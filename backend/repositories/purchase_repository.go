@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PurchaseRepository struct {
@@ -263,6 +264,64 @@ func (r *PurchaseRepository) Update(purchase *models.Purchase) (*models.Purchase
 	if err := tx.Save(purchase).Error; err != nil {
 		tx.Rollback()
 		return nil, err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	return r.FindByID(purchase.ID)
+}
+
+// UpdateWithItemReplacement atomically replaces all active purchase items.
+// GORM does not delete has-many rows when an association slice is cleared in
+// memory, so the replacement must be explicit to avoid duplicate line items.
+func (r *PurchaseRepository) UpdateWithItemReplacement(purchase *models.Purchase) (*models.Purchase, error) {
+	if purchase == nil || purchase.ID == 0 {
+		return nil, fmt.Errorf("purchase is required to replace items")
+	}
+
+	tx := r.db.Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			tx.Rollback()
+			panic(recovered)
+		}
+	}()
+
+	// Persist the purchase header only. The existing item rows are managed below
+	// so Save cannot append a second copy of the submitted items.
+	if err := tx.Omit(clause.Associations).Save(purchase).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	if err := tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchaseItem{}).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	items := make([]models.PurchaseItem, len(purchase.PurchaseItems))
+	copy(items, purchase.PurchaseItems)
+	for i := range items {
+		// Incoming update items represent the new current lines, never rows to
+		// update in place. Reset persistence fields before creating them.
+		items[i].ID = 0
+		items[i].PurchaseID = purchase.ID
+		items[i].CreatedAt = time.Time{}
+		items[i].UpdatedAt = time.Time{}
+		items[i].DeletedAt = gorm.DeletedAt{}
+	}
+
+	if len(items) > 0 {
+		if err := tx.Omit(clause.Associations).Create(&items).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {

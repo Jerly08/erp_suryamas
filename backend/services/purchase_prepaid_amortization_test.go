@@ -60,3 +60,40 @@ func TestPurchaseItemsRejectPrepaidWithoutAmortizationMonth(t *testing.T) {
 		require.ErrorContains(t, err, "durasi amortisasi prepaid harus antara 1 dan 120 bulan")
 	})
 }
+
+func TestPurchaseItemsRejectDuplicatePurchaseRequestItem(t *testing.T) {
+	purchaseRequestItemID := uint(42)
+	items := []models.PurchaseItemRequest{
+		{
+			ItemType:              models.PurchaseItemTypeExpense,
+			Description:           "Biaya pertama",
+			PurchaseRequestItemID: &purchaseRequestItemID,
+			Quantity:              1,
+			UnitPrice:             100000,
+		},
+		{
+			ItemType:              models.PurchaseItemTypeExpense,
+			Description:           "Biaya kedua",
+			PurchaseRequestItemID: &purchaseRequestItemID,
+			Quantity:              1,
+			UnitPrice:             100000,
+		},
+	}
+
+	for _, testCase := range []struct {
+		name string
+		run  func(*PurchaseService, *models.Purchase, []models.PurchaseItemRequest) error
+	}{
+		{name: "create", run: func(service *PurchaseService, purchase *models.Purchase, requests []models.PurchaseItemRequest) error {
+			return service.calculatePurchaseTotals(purchase, requests)
+		}},
+		{name: "update", run: func(service *PurchaseService, purchase *models.Purchase, requests []models.PurchaseItemRequest) error {
+			return service.updatePurchaseItems(purchase, requests)
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.run(&PurchaseService{}, &models.Purchase{}, items)
+			require.ErrorContains(t, err, "purchase request item 42 is selected more than once")
+		})
+	}
+}

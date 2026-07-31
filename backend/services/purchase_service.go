@@ -742,7 +742,8 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 
 	// Update items if provided
-	if len(request.Items) > 0 {
+	replacePurchaseItems := len(request.Items) > 0
+	if replacePurchaseItems {
 		err = s.updatePurchaseItems(purchase, request.Items)
 		if err != nil {
 			return nil, err
@@ -782,7 +783,12 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 
 	// Save updated purchase
 	fmt.Printf("? Saving updated purchase %d to database\n", id)
-	updatedPurchase, err := s.purchaseRepo.Update(purchase)
+	var updatedPurchase *models.Purchase
+	if replacePurchaseItems {
+		updatedPurchase, err = s.purchaseRepo.UpdateWithItemReplacement(purchase)
+	} else {
+		updatedPurchase, err = s.purchaseRepo.Update(purchase)
+	}
 	if err != nil {
 		fmt.Printf("? Failed to save updated purchase %d: %v\n", id, err)
 		return nil, fmt.Errorf("failed to save updated purchase: %v", err)
