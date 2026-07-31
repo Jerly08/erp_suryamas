@@ -54,6 +54,7 @@ interface SalesTableProps {
   onDownloadInvoice?: (sale: Sale) => void;
   onCreateReceipt?: (sale: Sale) => void;
   onDuplicate?: (sale: Sale) => void;
+  onCreditCorrection?: (sale: Sale) => void;
   title?: string;
   formatCurrency: (amount: number) => string;
   formatDate: (date: string) => string;
@@ -75,6 +76,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
   onDownloadInvoice,
   onCreateReceipt,
   onDuplicate,
+  onCreditCorrection,
   title,
   formatCurrency,
   formatDate,
@@ -492,6 +494,15 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                             >
                               {t("common.buttons.viewDetails")}
                             </MenuItem>
+
+                            {onCreditCorrection && sale.invoice_number && (
+                              <MenuItem
+                                icon={<FiEdit />}
+                                onClick={() => onCreditCorrection(sale)}
+                              >
+                                Koreksi Piutang Kredit Lama
+                              </MenuItem>
+                            )}
 
                             {/* Duplicate Action */}
                             {onDuplicate && (

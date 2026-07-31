@@ -78,6 +78,12 @@ import {
   FiX,
 } from "react-icons/fi";
 import { handleDeleteError, handleSuccess } from "@/utils/errorHandler";
+import {
+  isAccountingRole,
+  isFinanceManagerRole,
+  isFinanceStaffRole,
+  normalizeRole,
+} from "@/utils/roles";
 
 interface SalesPageState {
   sales: Sale[];
@@ -139,7 +145,13 @@ const SalesPageContent: React.FC = () => {
   const { t } = useTranslation();
   const { canCreate, canEdit, canDelete, canExport } =
     useModulePermissions("sales");
-  const isAdmin = user?.role?.toLowerCase() === "admin";
+  const role = normalizeRole(user?.role);
+  const isAdmin = role === "admin";
+  const canUseCreditCorrection =
+    isAdmin ||
+    isFinanceStaffRole(role) ||
+    isAccountingRole(role) ||
+    isFinanceManagerRole(role);
 
   const {
     isOpen: isFormOpen,
@@ -635,6 +647,10 @@ const SalesPageContent: React.FC = () => {
     window.open(`/sales/${sale.id}`, "_blank");
   };
 
+  const handleCreditCorrection = (sale: Sale) => {
+    window.open(`/sales/${sale.id}?focus=credit-correction`, "_blank");
+  };
+
   // Handle download invoice
   const handleDownloadInvoice = (sale: Sale) => {
     salesService.downloadInvoicePDF(sale.id, sale.invoice_number || sale.code);
@@ -928,6 +944,9 @@ const SalesPageContent: React.FC = () => {
           onDuplicate={canCreate ? handleDuplicate : undefined}
           onDownloadInvoice={handleDownloadInvoice}
           onCreateReceipt={handleCreateReceipt}
+          onCreditCorrection={
+            canUseCreditCorrection ? handleCreditCorrection : undefined
+          }
           formatCurrency={salesService.formatCurrency}
           formatDate={salesService.formatDate}
           canEdit={canEdit}

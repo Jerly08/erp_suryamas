@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "@/hooks/useTranslation";
 import UnifiedLayout from "@/components/layout/UnifiedLayout";
 import salesService, { Sale } from "@/services/salesService";
@@ -10,6 +11,12 @@ import PaymentForm from "@/components/sales/PaymentForm";
 import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
 import { PostedTransactionCorrectionsPanel } from "@/components/corrections/PostedTransactionCorrections";
 import { getSalePPhStatus } from "@/utils/taxPaymentStatus";
+import {
+  isAccountingRole,
+  isFinanceManagerRole,
+  isFinanceStaffRole,
+  normalizeRole,
+} from "@/utils/roles";
 import {
   Box,
   Heading,
@@ -57,8 +64,10 @@ import {
 
 const SaleDetailPage: React.FC = () => {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
   const {
     isOpen: isPaymentOpen,
@@ -75,8 +84,16 @@ const SaleDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const correctionSectionRef = useRef<HTMLDivElement>(null);
 
   const saleId = params?.id as string;
+  const correctionFocus = searchParams?.get("focus");
+  const correctionRole = normalizeRole(user?.role);
+  const canUseCreditCorrection =
+    correctionRole === "admin" ||
+    isFinanceStaffRole(correctionRole) ||
+    isAccountingRole(correctionRole) ||
+    isFinanceManagerRole(correctionRole);
 
   // Handle back navigation - simplified and more reliable
   const handleGoBack = () => {
@@ -111,6 +128,33 @@ const SaleDetailPage: React.FC = () => {
   useEffect(() => {
     loadSale();
   }, [saleId]);
+
+  const focusCreditCorrection = useCallback(() => {
+    correctionSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+    correctionSectionRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !sale?.invoice_number ||
+      correctionFocus !== "credit-correction"
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(focusCreditCorrection, 100);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    correctionFocus,
+    focusCreditCorrection,
+    loading,
+    sale?.id,
+    sale?.invoice_number,
+  ]);
 
   // Handle status actions
   const handleStatusAction = async (action: "confirm" | "cancel") => {
@@ -397,6 +441,11 @@ const SaleDetailPage: React.FC = () => {
                     {canAddPPh23
                       ? "Tambah PPh23"
                       : "Posting PPh23"}
+                  </MenuItem>
+                )}
+                {sale.invoice_number && canUseCreditCorrection && (
+                  <MenuItem icon={<FiEdit />} onClick={focusCreditCorrection}>
+                    Koreksi Piutang Kredit Lama
                   </MenuItem>
                 )}
                 <MenuItem
@@ -787,8 +836,13 @@ const SaleDetailPage: React.FC = () => {
           </CardBody>
         </Card>
 
-        {sale.invoice_number && (
-          <Card>
+        {sale.invoice_number && canUseCreditCorrection && (
+          <Card
+            ref={correctionSectionRef}
+            id="credit-correction"
+            tabIndex={-1}
+            scrollMarginTop="24px"
+          >
             <CardHeader>
               <Heading size="md">Koreksi Transaksi Terposting</Heading>
             </CardHeader>
