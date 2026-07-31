@@ -9,6 +9,7 @@ import (
 
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+	"app-sistem-akuntansi/utils"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -25,6 +26,27 @@ type EnhancedPaymentServiceWithJournal struct {
 	journalFactory  *PaymentJournalFactory
 	journalService  *UnifiedJournalService
 	statusValidator *StatusValidationHelper // NEW: Konsistensi dengan SalesJournalServiceV2
+}
+
+// paymentJournalEntryDate keeps the journal's date aligned with the Jakarta
+// business day. Journal entry_date is stored without a timezone, while a
+// payment date is timezone-aware and can otherwise appear one day earlier.
+func paymentJournalEntryDate(paymentDate time.Time) time.Time {
+	if paymentDate.IsZero() {
+		return paymentDate
+	}
+
+	jakartaDate := paymentDate.In(utils.JakartaTZ)
+	return time.Date(
+		jakartaDate.Year(),
+		jakartaDate.Month(),
+		jakartaDate.Day(),
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
 }
 
 // ExpensePaymentRequest represents a new non-invoice payment request.
@@ -539,7 +561,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreateExpensePayment(req *ExpenseP
 			SourceType:  models.SSOTSourceTypePayment,
 			SourceID:    uint64(payment.ID),
 			Reference:   payment.Code,
-			EntryDate:   payment.Date,
+			EntryDate:   paymentJournalEntryDate(payment.Date),
 			Description: req.Description,
 			Lines:       journalLines,
 			AutoPost:    req.AutoCreateJournal,
@@ -960,7 +982,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveExpensePayment(paymentID ui
 			SourceType:  models.SSOTSourceTypePayment,
 			SourceID:    uint64(payment.ID),
 			Reference:   payment.Code,
-			EntryDate:   payment.Date,
+			EntryDate:   paymentJournalEntryDate(payment.Date),
 			Description: fmt.Sprintf("COA payment approved - %s", payment.Code),
 			Lines:       journalLines,
 			AutoPost:    true,
@@ -1238,7 +1260,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 			SourceType:  models.SSOTSourceTypePayment,
 			SourceID:    uint64(payment.ID),
 			Reference:   payment.Code,
-			EntryDate:   payment.Date,
+			EntryDate:   paymentJournalEntryDate(payment.Date),
 			Description: journalDescription,
 			Notes:       purchasePaymentJournalNotes(paymentJournalTag),
 			Lines:       journalLines,
@@ -1712,7 +1734,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 				SourceType:  models.SSOTSourceTypePayment,
 				SourceID:    uint64(payment.ID),
 				Reference:   payment.Code,
-				EntryDate:   payment.Date,
+				EntryDate:   paymentJournalEntryDate(payment.Date),
 				Description: journalDescription,
 				Notes:       purchasePaymentJournalNotes(paymentJournalTag),
 				Lines:       journalLines,

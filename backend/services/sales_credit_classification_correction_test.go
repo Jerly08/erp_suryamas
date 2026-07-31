@@ -357,6 +357,49 @@ func TestSalesCreditClassificationCorrectionPreservesOriginalEntries(t *testing.
 	require.Contains(t, err.Error(), "belum disetujui")
 }
 
+func TestSalesCreditClassificationCorrectionAcceptsPaymentReceivedAuditTrail(t *testing.T) {
+	fixture := newSalesCreditCorrectionFixture(t)
+
+	require.NoError(t, fixture.db.Model(&models.CashBankTransaction{}).
+		Where("reference_type = ? AND reference_id = ?", "PAYMENT", fixture.payment.ID).
+		Update("reference_type", "PAYMENT_RECEIVED").Error)
+
+	candidates, err := fixture.service.ListLegacySalesCreditPaymentCandidates(
+		fixture.sale.ID,
+		fixture.financeStaff.ID,
+		models.RoleFinanceStaff,
+	)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, fixture.payment.ID, candidates[0].ID)
+
+	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+		SaleID:          &fixture.sale.ID,
+		LinkedPaymentID: &fixture.payment.ID,
+		CorrectionType:  models.PostedTransactionCorrectionTypeSalesCreditClassification,
+		Reason:          "Penerimaan pelanggan lama memakai referensi PAYMENT_RECEIVED.",
+		RequestedDate:   "2026-05-11",
+	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
+	require.NoError(t, err)
+
+	_, err = fixture.service.ReviewAccounting(correction.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
+		Resolution:        models.PostedTransactionCorrectionResolutionJournalReclass,
+		Notes:             "COA piutang dan penerimaan pelanggan telah diverifikasi.",
+		ProposedAccountID: &fixture.receivable.ID,
+	}, fixture.accounting.ID, models.RoleAccounting)
+	require.NoError(t, err)
+
+	_, err = fixture.service.DecideFinanceManager(correction.ID, models.PostedTransactionCorrectionFinanceManagerDecisionRequest{
+		Approve: true,
+		Notes:   "Disetujui.",
+	}, fixture.financeManager.ID, models.RoleFinance)
+	require.NoError(t, err)
+
+	completed, err := fixture.service.ExecuteSalesCreditCorrection(correction.ID, fixture.accounting.ID, models.RoleAccounting)
+	require.NoError(t, err)
+	require.Equal(t, models.PostedTransactionCorrectionStatusCompleted, completed.Status)
+}
+
 func TestSalesCreditClassificationCandidateRejectsMismatchedPaymentJournalLink(t *testing.T) {
 	fixture := newSalesCreditCorrectionFixture(t)
 

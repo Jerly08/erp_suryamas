@@ -17,6 +17,15 @@ const salesCreditCorrectionTolerance = 0.01
 
 const salesCreditCorrectionCashBankReferenceType = "SALES_CREDIT_RECLASSIFICATION"
 
+// Legacy customer receipts were persisted with more than one reference type.
+// Keep this list narrow: each value represents an inbound payment linked to the
+// selected Payment record, so unrelated cash/bank movements remain ineligible.
+var salesCreditCorrectionReceiptReferenceTypes = []string{
+	"PAYMENT",
+	"PAYMENT_RECEIVED",
+	"SALES_PAYMENT",
+}
+
 // LegacySalesCreditPaymentCandidate is an existing customer receipt that can
 // safely be linked to a legacy credit sale. It is intentionally narrow so the
 // correction flow cannot create a second customer receipt.
@@ -454,7 +463,7 @@ func (s *PostedTransactionCorrectionService) loadLegacySalesCreditCorrectionData
 	paymentCashBankTransaction, err := loadLegacySalesCreditCashBankTransaction(
 		tx,
 		paymentCashBank.ID,
-		[]string{"PAYMENT", "SALES_PAYMENT"},
+		salesCreditCorrectionReceiptReferenceTypes,
 		payment.ID,
 		payment.Amount,
 		"mutasi kas/bank penerimaan pelanggan",
