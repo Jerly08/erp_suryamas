@@ -109,7 +109,7 @@ func GetJournalAdjustmentCategories() []JournalAdjustmentCategoryDefinition {
 		{
 			Code:                   JournalAdjustmentCategoryPostedCOAReclassification,
 			Label:                  "Reklasifikasi COA Transaksi Terposting",
-			Description:            "Memindahkan satu akun non kas/bank pada jurnal pembelian yang sudah terposting ke COA yang benar tanpa mengubah jurnal asal.",
+			Description:            "Memindahkan satu atau beberapa akun non kas/bank pada jurnal pembelian yang sudah terposting ke COA yang benar tanpa mengubah jurnal asal.",
 			COA:                    "COA asal & COA pengganti",
 			RecommendedSourceTypes: []string{SSOTSourceTypePurchase},
 			Examples: []string{

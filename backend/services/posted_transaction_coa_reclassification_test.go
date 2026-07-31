@@ -13,17 +13,19 @@ import (
 )
 
 type purchaseCOAReclassificationFixture struct {
-	db              *gorm.DB
-	service         *PostedTransactionCorrectionService
-	accounting      models.User
-	financeManager  models.User
-	purchase        models.Purchase
-	originalJournal models.SSOTJournalEntry
-	originalLine    models.SSOTJournalLine
-	originalAccount models.Account
-	replacementCOA  models.Account
-	bankAccount     models.Account
-	cashBank        models.CashBank
+	db                    *gorm.DB
+	service               *PostedTransactionCorrectionService
+	accounting            models.User
+	financeManager        models.User
+	purchase              models.Purchase
+	originalJournal       models.SSOTJournalEntry
+	originalLine          models.SSOTJournalLine
+	secondOriginalLine    models.SSOTJournalLine
+	originalAccount       models.Account
+	secondOriginalAccount models.Account
+	replacementCOA        models.Account
+	bankAccount           models.Account
+	cashBank              models.CashBank
 }
 
 func newPurchaseCOAReclassificationFixture(t *testing.T) purchaseCOAReclassificationFixture {
@@ -37,11 +39,13 @@ func newPurchaseCOAReclassificationFixture(t *testing.T) purchaseCOAReclassifica
 		&models.Account{},
 		&models.CashBank{},
 		&models.CashBankTransaction{},
+		&models.TaxAccountSettings{},
 		&models.Purchase{},
 		&models.AccountingPeriod{},
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 		&models.PostedTransactionCorrection{},
+		&models.PostedTransactionCorrectionReclassificationLine{},
 		&models.PostedTransactionCorrectionDocument{},
 		&models.PostedTransactionCorrectionEvent{},
 	))
@@ -63,6 +67,12 @@ func newPurchaseCOAReclassificationFixture(t *testing.T) purchaseCOAReclassifica
 		Type:     models.AccountTypeExpense,
 		IsActive: true,
 	}
+	secondOriginalAccount := models.Account{
+		Code:     "6102-RECLASS-ORIG",
+		Name:     "BEBAN ASAL KOREKSI KEDUA",
+		Type:     models.AccountTypeExpense,
+		IsActive: true,
+	}
 	replacementCOA := models.Account{
 		Code:     "1106-RECLASS-NEW",
 		Name:     "PIUTANG INTERCOMPANY KOREKSI",
@@ -76,6 +86,7 @@ func newPurchaseCOAReclassificationFixture(t *testing.T) purchaseCOAReclassifica
 		IsActive: true,
 	}
 	require.NoError(t, db.Create(&originalAccount).Error)
+	require.NoError(t, db.Create(&secondOriginalAccount).Error)
 	require.NoError(t, db.Create(&replacementCOA).Error)
 	require.NoError(t, db.Create(&bankAccount).Error)
 
@@ -132,30 +143,40 @@ func newPurchaseCOAReclassificationFixture(t *testing.T) purchaseCOAReclassifica
 		AccountID:   uint64(originalAccount.ID),
 		LineNumber:  1,
 		Description: "Beban yang seharusnya direklasifikasi",
-		DebitAmount: decimal.NewFromInt(100_000),
+		DebitAmount: decimal.NewFromInt(60_000),
+	}
+	secondOriginalLine := models.SSOTJournalLine{
+		JournalID:   originalJournal.ID,
+		AccountID:   uint64(secondOriginalAccount.ID),
+		LineNumber:  2,
+		Description: "Beban kedua yang seharusnya direklasifikasi",
+		DebitAmount: decimal.NewFromInt(40_000),
 	}
 	bankLine := models.SSOTJournalLine{
 		JournalID:    originalJournal.ID,
 		AccountID:    uint64(bankAccount.ID),
-		LineNumber:   2,
+		LineNumber:   3,
 		Description:  "Kas/bank asal",
 		CreditAmount: decimal.NewFromInt(100_000),
 	}
 	require.NoError(t, db.Create(&originalLine).Error)
+	require.NoError(t, db.Create(&secondOriginalLine).Error)
 	require.NoError(t, db.Create(&bankLine).Error)
 
 	return purchaseCOAReclassificationFixture{
-		db:              db,
-		service:         NewPostedTransactionCorrectionService(db),
-		accounting:      accounting,
-		financeManager:  financeManager,
-		purchase:        purchase,
-		originalJournal: originalJournal,
-		originalLine:    originalLine,
-		originalAccount: originalAccount,
-		replacementCOA:  replacementCOA,
-		bankAccount:     bankAccount,
-		cashBank:        cashBank,
+		db:                    db,
+		service:               NewPostedTransactionCorrectionService(db),
+		accounting:            accounting,
+		financeManager:        financeManager,
+		purchase:              purchase,
+		originalJournal:       originalJournal,
+		originalLine:          originalLine,
+		secondOriginalLine:    secondOriginalLine,
+		originalAccount:       originalAccount,
+		secondOriginalAccount: secondOriginalAccount,
+		replacementCOA:        replacementCOA,
+		bankAccount:           bankAccount,
+		cashBank:              cashBank,
 	}
 }
 
@@ -181,9 +202,13 @@ func TestPurchaseCOAReclassificationCreatesAuditJournalWithoutCashBankMutation(t
 		fixture.accounting.Role,
 	)
 	require.NoError(t, err)
-	require.Len(t, candidates, 1)
+	require.Len(t, candidates, 2)
 	require.Equal(t, fixture.originalLine.ID, candidates[0].ID)
 	require.Equal(t, fixture.originalAccount.ID, candidates[0].AccountID)
+	require.Equal(t, fixture.originalJournal.ID, candidates[0].JournalEntryID)
+	require.True(t, candidates[0].BulkSelectable)
+	require.Equal(t, fixture.secondOriginalLine.ID, candidates[1].ID)
+	require.Equal(t, fixture.secondOriginalAccount.ID, candidates[1].AccountID)
 
 	accounts, err := fixture.service.ListCOAReclassificationAccounts(fixture.accounting.ID, fixture.accounting.Role)
 	require.NoError(t, err)
@@ -195,11 +220,11 @@ func TestPurchaseCOAReclassificationCreatesAuditJournalWithoutCashBankMutation(t
 	}
 
 	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
-		PurchaseID:            &fixture.purchase.ID,
-		OriginalJournalLineID: &fixture.originalLine.ID,
-		ProposedAccountID:     &fixture.replacementCOA.ID,
-		CorrectionType:        models.PostedTransactionCorrectionTypeCOAReclassification,
-		Reason:                "COA beban pada jurnal pembelian perlu direklasifikasi ke piutang intercompany.",
+		PurchaseID:             &fixture.purchase.ID,
+		OriginalJournalLineIDs: []uint64{fixture.originalLine.ID, fixture.secondOriginalLine.ID},
+		ProposedAccountID:      &fixture.replacementCOA.ID,
+		CorrectionType:         models.PostedTransactionCorrectionTypeCOAReclassification,
+		Reason:                 "COA beban pada jurnal pembelian perlu direklasifikasi ke piutang intercompany.",
 	}, fixture.accounting.ID, fixture.accounting.Role)
 	require.NoError(t, err)
 	require.Equal(t, models.PostedTransactionCorrectionStatusPendingFinanceManager, correction.Status)
@@ -208,6 +233,9 @@ func TestPurchaseCOAReclassificationCreatesAuditJournalWithoutCashBankMutation(t
 	require.Equal(t, fixture.originalLine.ID, *correction.OriginalJournalLineID)
 	require.NotNil(t, correction.OriginalAccountID)
 	require.Equal(t, fixture.originalAccount.ID, *correction.OriginalAccountID)
+	require.Len(t, correction.ReclassificationLines, 2)
+	require.Equal(t, fixture.originalLine.ID, correction.ReclassificationLines[0].OriginalJournalLineID)
+	require.Equal(t, fixture.secondOriginalLine.ID, correction.ReclassificationLines[1].OriginalJournalLineID)
 	require.Len(t, correction.Events, 2)
 
 	_, err = fixture.service.ReviewAccounting(correction.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
@@ -244,8 +272,11 @@ func TestPurchaseCOAReclassificationCreatesAuditJournalWithoutCashBankMutation(t
 	require.True(t, adjustmentJournal.IsAutoGenerated)
 	require.True(t, adjustmentJournal.TotalDebit.Equal(decimal.NewFromInt(100_000)))
 	require.True(t, adjustmentJournal.TotalCredit.Equal(decimal.NewFromInt(100_000)))
-	require.True(t, hasCOAReclassificationLine(adjustmentJournal.Lines, uint64(fixture.replacementCOA.ID), decimal.NewFromInt(100_000), decimal.Zero))
-	require.True(t, hasCOAReclassificationLine(adjustmentJournal.Lines, uint64(fixture.originalAccount.ID), decimal.Zero, decimal.NewFromInt(100_000)))
+	require.Len(t, adjustmentJournal.Lines, 4)
+	require.True(t, hasCOAReclassificationLine(adjustmentJournal.Lines, uint64(fixture.replacementCOA.ID), decimal.NewFromInt(60_000), decimal.Zero))
+	require.True(t, hasCOAReclassificationLine(adjustmentJournal.Lines, uint64(fixture.replacementCOA.ID), decimal.NewFromInt(40_000), decimal.Zero))
+	require.True(t, hasCOAReclassificationLine(adjustmentJournal.Lines, uint64(fixture.originalAccount.ID), decimal.Zero, decimal.NewFromInt(60_000)))
+	require.True(t, hasCOAReclassificationLine(adjustmentJournal.Lines, uint64(fixture.secondOriginalAccount.ID), decimal.Zero, decimal.NewFromInt(40_000)))
 
 	var originalJournalAfter models.SSOTJournalEntry
 	var originalLinesAfter []models.SSOTJournalLine
@@ -263,6 +294,21 @@ func TestPurchaseCOAReclassificationCreatesAuditJournalWithoutCashBankMutation(t
 	require.Equal(t, cashBankBefore.Balance, cashBankAfter.Balance)
 	require.Equal(t, cashBankBefore.BookBalanceIDR, cashBankAfter.BookBalanceIDR)
 	require.Zero(t, cashBankTransactionCount)
+}
+
+func TestPurchaseCOAReclassificationRejectsDuplicateSourceLine(t *testing.T) {
+	fixture := newPurchaseCOAReclassificationFixture(t)
+
+	_, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+		PurchaseID:             &fixture.purchase.ID,
+		OriginalJournalLineIDs: []uint64{fixture.originalLine.ID, fixture.originalLine.ID},
+		ProposedAccountID:      &fixture.replacementCOA.ID,
+		CorrectionType:         models.PostedTransactionCorrectionTypeCOAReclassification,
+		Reason:                 "Menguji perlindungan baris jurnal ganda.",
+	}, fixture.accounting.ID, fixture.accounting.Role)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tidak boleh dipilih lebih dari sekali")
 }
 
 func hasCOAReclassificationLine(lines []models.SSOTJournalLine, accountID uint64, debitAmount, creditAmount decimal.Decimal) bool {

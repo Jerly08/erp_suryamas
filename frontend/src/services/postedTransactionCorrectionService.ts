@@ -59,6 +59,20 @@ export interface PostedTransactionCorrectionEvent {
   actor?: CorrectionActor;
 }
 
+export interface PostedTransactionCorrectionReclassificationLine {
+  id: number;
+  correction_id: number;
+  original_journal_line_id: number;
+  original_account_id: number;
+  proposed_account_id: number;
+  line_number: number;
+  description?: string;
+  debit_amount: number;
+  credit_amount: number;
+  original_account?: { id: number; code: string; name: string };
+  proposed_account?: { id: number; code: string; name: string };
+}
+
 export interface PostedTransactionCorrection {
   id: number;
   target_type: 'PURCHASE' | 'PAYMENT' | 'SALE';
@@ -114,6 +128,7 @@ export interface PostedTransactionCorrection {
   completer?: CorrectionActor;
   original_account?: { id: number; code: string; name: string };
   proposed_account?: { id: number; code: string; name: string };
+  reclassification_lines?: PostedTransactionCorrectionReclassificationLine[];
   documents?: PostedTransactionCorrectionDocument[];
   events?: PostedTransactionCorrectionEvent[];
 }
@@ -124,6 +139,7 @@ export interface CreatePostedTransactionCorrectionRequest {
   sale_id?: number;
   linked_payment_id?: number;
   original_journal_line_id?: number;
+  original_journal_line_ids?: number[];
   proposed_account_id?: number;
   correction_type: PostedTransactionCorrectionType;
   reason: string;
@@ -166,6 +182,9 @@ export interface LegacySalesCreditPaymentCandidate {
 
 export interface PurchaseCOAReclassificationJournalLineCandidate {
   id: number;
+  journal_entry_id: number;
+  journal_entry_number: string;
+  journal_entry_date: string;
   line_number: number;
   account_id: number;
   account_code: string;
@@ -173,6 +192,7 @@ export interface PurchaseCOAReclassificationJournalLineCandidate {
   description?: string;
   debit_amount: number;
   credit_amount: number;
+  bulk_selectable: boolean;
 }
 
 export interface COAReclassificationAccountCandidate {

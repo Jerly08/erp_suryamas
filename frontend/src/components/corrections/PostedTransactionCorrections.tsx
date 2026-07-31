@@ -8,6 +8,7 @@ import {
   Badge,
   Box,
   Button,
+  Checkbox,
   Divider,
   Flex,
   FormControl,
@@ -725,6 +726,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
   onSuccess,
 }) => {
   const toast = useToast();
+  const sourceJournalBackground = useColorModeValue('gray.50', 'whiteAlpha.100');
   const [saving, setSaving] = useState(false);
   const [correctionType, setCorrectionType] = useState<PostedTransactionCorrectionType>('MISSING_PAYMENT_PROOF');
   const [reason, setReason] = useState('');
@@ -740,7 +742,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
   const [coaJournalLineCandidates, setCOAJournalLineCandidates] = useState<PurchaseCOAReclassificationJournalLineCandidate[]>([]);
   const [coaAccounts, setCOAAccounts] = useState<COAReclassificationAccountCandidate[]>([]);
   const [loadingCOAOptions, setLoadingCOAOptions] = useState(false);
-  const [originalJournalLineId, setOriginalJournalLineId] = useState<number | undefined>();
+  const [selectedOriginalJournalLineIds, setSelectedOriginalJournalLineIds] = useState<number[]>([]);
   const [proposedAccountId, setProposedAccountId] = useState<number | undefined>();
   const isSalesCreditCorrection = Boolean(target?.saleId);
   const isPurchaseCOAReclassification = correctionType === 'COA_RECLASSIFICATION';
@@ -762,7 +764,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
     setPaymentCandidates([]);
     setCOAJournalLineCandidates([]);
     setCOAAccounts([]);
-    setOriginalJournalLineId(undefined);
+    setSelectedOriginalJournalLineIds([]);
     setProposedAccountId(undefined);
   }, [isOpen, isSalesCreditCorrection]);
 
@@ -828,6 +830,36 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
   const wantsAmount = correctionType === 'PAYMENT_AMOUNT';
   const wantsSource = correctionType === 'SOURCE_BANK';
   const wantsDestination = correctionType === 'DESTINATION_ACCOUNT';
+  const sourceJournal = coaJournalLineCandidates[0];
+  const selectedOriginalAccountIds = new Set(
+    coaJournalLineCandidates
+      .filter((line) => selectedOriginalJournalLineIds.includes(line.id))
+      .map((line) => line.account_id),
+  );
+  const bulkSelectableLineIds = coaJournalLineCandidates
+    .filter((line) => line.bulk_selectable)
+    .map((line) => line.id);
+  const allBulkSelectableLinesSelected = bulkSelectableLineIds.length > 0
+    && bulkSelectableLineIds.every((lineId) => selectedOriginalJournalLineIds.includes(lineId));
+
+  const toggleCOAJournalLine = (lineId: number) => {
+    setSelectedOriginalJournalLineIds((current) => (
+      current.includes(lineId)
+        ? current.filter((id) => id !== lineId)
+        : [...current, lineId]
+    ));
+    setProposedAccountId(undefined);
+  };
+
+  const toggleAllBulkSelectableLines = () => {
+    setSelectedOriginalJournalLineIds((current) => {
+      if (allBulkSelectableLinesSelected) {
+        return current.filter((lineId) => !bulkSelectableLineIds.includes(lineId));
+      }
+      return Array.from(new Set([...current, ...bulkSelectableLineIds]));
+    });
+    setProposedAccountId(undefined);
+  };
 
   const handleSubmit = async () => {
     if (!target || !token) return;
@@ -843,8 +875,8 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
       toast({ title: 'Tanggal koreksi dan penerimaan pelanggan wajib dipilih', status: 'warning', duration: 3500 });
       return;
     }
-    if (isPurchaseCOAReclassification && (!originalJournalLineId || !proposedAccountId)) {
-      toast({ title: 'Baris jurnal asal dan COA pengganti wajib dipilih', status: 'warning', duration: 3500 });
+    if (isPurchaseCOAReclassification && (selectedOriginalJournalLineIds.length === 0 || !proposedAccountId)) {
+      toast({ title: 'Minimal satu baris jurnal asal dan COA pengganti wajib dipilih', status: 'warning', duration: 3500 });
       return;
     }
     setSaving(true);
@@ -854,7 +886,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
         payment_id: target.paymentId,
         sale_id: target.saleId,
         linked_payment_id: linkedPaymentId,
-        original_journal_line_id: isPurchaseCOAReclassification ? originalJournalLineId : undefined,
+        original_journal_line_ids: isPurchaseCOAReclassification ? selectedOriginalJournalLineIds : undefined,
         proposed_account_id: isPurchaseCOAReclassification ? proposedAccountId : undefined,
         correction_type: correctionType,
         reason: reason.trim(),
@@ -892,7 +924,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
         <ModalCloseButton isDisabled={saving} />
         <ModalBody flex="1" minH="0" overflowY="auto">
           <VStack align="stretch" spacing={4}>
-            <Alert status="warning" variant="left-accent"><AlertIcon /><AlertDescription>{isSalesCreditCorrection ? 'Pengajuan ini hanya untuk sale kredit lama yang salah tercatat sebagai kas/bank. Sistem akan menolak jika penerimaan pelanggan belum memenuhi syarat audit.' : isPurchaseCOAReclassification ? 'Accounting memilih baris jurnal pembelian dan COA pengganti. Pengajuan langsung menunggu Finance Manager. Jika disetujui, sistem membuat jurnal reklasifikasi baru tanpa mengubah jurnal asal atau mutasi kas/bank.' : 'Pengajuan ini tidak mengubah transaksi atau jurnal asal. Accounting akan menentukan perlakuan, lalu Finance Manager memberi keputusan.'}</AlertDescription></Alert>
+            <Alert status="warning" variant="left-accent"><AlertIcon /><AlertDescription>{isSalesCreditCorrection ? 'Pengajuan ini hanya untuk sale kredit lama yang salah tercatat sebagai kas/bank. Sistem akan menolak jika penerimaan pelanggan belum memenuhi syarat audit.' : isPurchaseCOAReclassification ? 'Accounting memilih satu atau beberapa baris jurnal pembelian dan satu COA pengganti. Pengajuan langsung menunggu Finance Manager. Jika disetujui, sistem membuat jurnal reklasifikasi baru tanpa mengubah jurnal asal atau mutasi kas/bank.' : 'Pengajuan ini tidak mengubah transaksi atau jurnal asal. Accounting akan menentukan perlakuan, lalu Finance Manager memberi keputusan.'}</AlertDescription></Alert>
             <Box borderWidth="1px" borderRadius="md" p={3}>
               <Text fontWeight="semibold">Transaksi asal</Text>
               <Text fontSize="sm" color="gray.500">{target?.code || '-'}</Text>
@@ -936,35 +968,53 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
             {isPurchaseCOAReclassification && (
               <VStack align="stretch" spacing={4} borderWidth="1px" borderRadius="md" p={3}>
                 <Text fontWeight="semibold">Reklasifikasi COA</Text>
+                <Box borderWidth="1px" borderRadius="md" p={3} bg={sourceJournalBackground}>
+                  <Text fontWeight="semibold" fontSize="sm">Jurnal asal (otomatis)</Text>
+                  <Text fontSize="sm" color="gray.600">
+                    {sourceJournal
+                      ? `${sourceJournal.journal_entry_number || `#${sourceJournal.journal_entry_id}`} | ${new Date(sourceJournal.journal_entry_date).toLocaleDateString('id-ID')}`
+                      : loadingCOAOptions ? 'Memuat jurnal pembelian...' : 'Jurnal pembelian belum tersedia'}
+                  </Text>
+                  <Text mt={1} fontSize="xs" color="gray.500">Jurnal sumber ditentukan dari transaksi pembelian dan tidak perlu diinput ulang.</Text>
+                </Box>
                 <FormControl isRequired>
-                  <FormLabel>Baris jurnal asal</FormLabel>
-                  <SearchableSelect
-                    options={coaJournalLineCandidates.map((line) => ({
-                      id: line.id,
-                      code: line.account_code,
-                      name: `${line.account_name} | ${line.debit_amount > 0 ? `Debit ${formatCurrency(line.debit_amount)}` : `Kredit ${formatCurrency(line.credit_amount)}`}${line.description ? ` | ${line.description}` : ''}`,
-                    }))}
-                    value={originalJournalLineId}
-                    onChange={(value) => {
-                      const lineID = Number(value);
-                      setOriginalJournalLineId(Number.isInteger(lineID) && lineID > 0 ? lineID : undefined);
-                      setProposedAccountId(undefined);
-                    }}
-                    placeholder={loadingCOAOptions ? 'Memuat jurnal pembelian...' : 'Cari akun atau deskripsi jurnal asal'}
-                    isLoading={loadingCOAOptions}
-                    allowClear
-                  />
-                  <FormHelperText>Hanya baris non-kas/bank dari jurnal pembelian terposting yang dapat direklasifikasi.</FormHelperText>
-                  {!loadingCOAOptions && coaJournalLineCandidates.length === 0 && <Text mt={2} fontSize="sm" color="orange.600">Tidak ada baris jurnal pembelian yang memenuhi syarat untuk koreksi COA otomatis.</Text>}
+                  <HStack justify="space-between" align="center" mb={2}>
+                    <FormLabel mb={0}>Baris jurnal asal</FormLabel>
+                    <Button size="sm" variant="outline" onClick={toggleAllBulkSelectableLines} isDisabled={loadingCOAOptions || bulkSelectableLineIds.length === 0}>
+                      {allBulkSelectableLinesSelected ? 'Batalkan pilih semua' : 'Pilih semua baris item'}
+                    </Button>
+                  </HStack>
+                  <Box borderWidth="1px" borderRadius="md" maxH="240px" overflowY="auto" p={2}>
+                    <VStack align="stretch" spacing={1}>
+                      {coaJournalLineCandidates.map((line) => (
+                        <Checkbox
+                          key={line.id}
+                          isChecked={selectedOriginalJournalLineIds.includes(line.id)}
+                          onChange={() => toggleCOAJournalLine(line.id)}
+                          alignItems="flex-start"
+                          py={1}
+                        >
+                          <Box>
+                            <Text fontSize="sm" fontWeight="medium">
+                              Baris {line.line_number}: {line.account_code} - {line.account_name}
+                            </Text>
+                            <Text fontSize="xs" color="gray.500">
+                              {line.debit_amount > 0 ? `Debit ${formatCurrency(line.debit_amount)}` : `Kredit ${formatCurrency(line.credit_amount)}`}
+                              {line.description ? ` | ${line.description}` : ''}
+                            </Text>
+                          </Box>
+                        </Checkbox>
+                      ))}
+                      {!loadingCOAOptions && coaJournalLineCandidates.length === 0 && <Text fontSize="sm" color="orange.600">Tidak ada baris jurnal pembelian yang memenuhi syarat untuk koreksi COA otomatis.</Text>}
+                    </VStack>
+                  </Box>
+                  <FormHelperText>{selectedOriginalJournalLineIds.length} baris dipilih. Pilih semua hanya mencentang baris debit item; PPN dan baris lain tetap dapat dipilih satu per satu bila diperlukan.</FormHelperText>
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>COA pengganti</FormLabel>
                   <SearchableSelect
                     options={coaAccounts
-                      .filter((account) => {
-                        const original = coaJournalLineCandidates.find((line) => line.id === originalJournalLineId);
-                        return account.id !== original?.account_id;
-                      })
+                      .filter((account) => !selectedOriginalAccountIds.has(account.id))
                       .map((account) => ({ id: account.id, code: account.code, name: account.name }))}
                     value={proposedAccountId}
                     onChange={(value) => {
@@ -975,7 +1025,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
                     isLoading={loadingCOAOptions}
                     allowClear
                   />
-                  <FormHelperText>Daftar ini hanya memuat akun aktif, bukan header, dan bukan akun kas/bank.</FormHelperText>
+                  <FormHelperText>Satu COA pengganti dipakai untuk seluruh baris dalam pengajuan ini. Buat pengajuan terpisah bila target COA-nya berbeda.</FormHelperText>
                 </FormControl>
               </VStack>
             )}

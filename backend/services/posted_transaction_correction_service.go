@@ -63,6 +63,7 @@ func (s *PostedTransactionCorrectionService) Create(
 		return nil, fmt.Errorf("nominal koreksi tidak boleh negatif")
 	}
 	correctionType := strings.ToUpper(strings.TrimSpace(request.CorrectionType))
+	var coaOriginalJournalLineIDs []uint64
 	if correctionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
 		if request.SaleID == nil || request.LinkedPaymentID == nil {
 			return nil, fmt.Errorf("koreksi penjualan kredit harus memilih penjualan dan pembayaran pelanggan yang sudah ada")
@@ -74,8 +75,12 @@ func (s *PostedTransactionCorrectionService) Create(
 		if !canRequestPostedCOAReclassification(role) {
 			return nil, ErrPostedTransactionCorrectionDenied
 		}
-		if request.PurchaseID == nil || request.OriginalJournalLineID == nil || request.ProposedAccountID == nil {
-			return nil, fmt.Errorf("pembelian, baris jurnal asal, dan COA pengganti wajib dipilih untuk koreksi COA")
+		if request.PurchaseID == nil || request.ProposedAccountID == nil {
+			return nil, fmt.Errorf("pembelian dan COA pengganti wajib dipilih untuk koreksi COA")
+		}
+		coaOriginalJournalLineIDs, err = normalizePurchaseCOAReclassificationLineIDs(request)
+		if err != nil {
+			return nil, err
 		}
 		if request.PaymentID != nil || request.SaleID != nil || request.LinkedPaymentID != nil {
 			return nil, fmt.Errorf("koreksi COA transaksi terposting hanya tersedia untuk pembelian")
@@ -87,30 +92,24 @@ func (s *PostedTransactionCorrectionService) Create(
 	var correction models.PostedTransactionCorrection
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if correctionType == models.PostedTransactionCorrectionTypeCOAReclassification {
-			target, data, err := s.resolvePurchaseCOAReclassificationTarget(
+			target, dataRows, err := s.resolvePurchaseCOAReclassificationTargets(
 				tx,
 				*request.PurchaseID,
-				*request.OriginalJournalLineID,
+				coaOriginalJournalLineIDs,
 				*request.ProposedAccountID,
-				false,
+				true,
 			)
 			if err != nil {
 				return err
 			}
-
-			var activeCount int64
-			if err := tx.Model(&models.PostedTransactionCorrection{}).
-				Where("correction_type = ? AND original_journal_line_id = ? AND status IN ?", correctionType, data.originalLine.ID, activeCorrectionStatuses()).
-				Count(&activeCount).Error; err != nil {
+			if err := s.ensureNoActivePurchaseCOAReclassification(tx, coaOriginalJournalLineIDs); err != nil {
 				return err
-			}
-			if activeCount > 0 {
-				return fmt.Errorf("masih ada pengajuan koreksi COA aktif untuk baris jurnal ini")
 			}
 
 			now := time.Now().UTC()
-			originalLineID := data.originalLine.ID
-			originalAccountID := data.originalAccount.ID
+			first := dataRows[0]
+			originalLineID := first.originalLine.ID
+			originalAccountID := first.originalAccount.ID
 			correction = models.PostedTransactionCorrection{
 				TargetType:             target.targetType,
 				TargetCode:             target.targetCode,
@@ -126,12 +125,28 @@ func (s *PostedTransactionCorrectionService) Create(
 				RequestedBy:            userID,
 				RequestedAt:            now,
 				AccountingResolution:   models.PostedTransactionCorrectionResolutionJournalReclass,
-				AccountingNotes:        fmt.Sprintf("Accounting memilih reklasifikasi %s (%s) ke %s (%s).", data.originalAccount.Code, data.originalAccount.Name, data.proposedAccount.Code, data.proposedAccount.Name),
+				AccountingNotes:        fmt.Sprintf("Accounting memilih %d baris jurnal untuk direklasifikasi ke %s (%s).", len(dataRows), first.proposedAccount.Code, first.proposedAccount.Name),
 				ProposedAccountID:      request.ProposedAccountID,
 				AccountingReviewedBy:   &userID,
 				AccountingReviewedAt:   &now,
 			}
 			if err := tx.Create(&correction).Error; err != nil {
+				return err
+			}
+			correctionLines := make([]models.PostedTransactionCorrectionReclassificationLine, 0, len(dataRows))
+			for _, data := range dataRows {
+				correctionLines = append(correctionLines, models.PostedTransactionCorrectionReclassificationLine{
+					CorrectionID:          correction.ID,
+					OriginalJournalLineID: data.originalLine.ID,
+					OriginalAccountID:     data.originalAccount.ID,
+					ProposedAccountID:     data.proposedAccount.ID,
+					LineNumber:            data.originalLine.LineNumber,
+					Description:           data.originalLine.Description,
+					DebitAmount:           data.originalLine.DebitAmount.Round(2),
+					CreditAmount:          data.originalLine.CreditAmount.Round(2),
+				})
+			}
+			if err := tx.Create(&correctionLines).Error; err != nil {
 				return err
 			}
 			if err := s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventSubmitted, reason, userID, role); err != nil {
@@ -710,6 +725,9 @@ func (s *PostedTransactionCorrectionService) withCorrectionRelations(db *gorm.DB
 		Preload("Completer").
 		Preload("OriginalAccount").
 		Preload("ProposedAccount").
+		Preload("ReclassificationLines", func(db *gorm.DB) *gorm.DB { return db.Order("line_number ASC, id ASC") }).
+		Preload("ReclassificationLines.OriginalAccount").
+		Preload("ReclassificationLines.ProposedAccount").
 		Preload("Documents", func(db *gorm.DB) *gorm.DB { return db.Order("uploaded_at ASC, id ASC") }).
 		Preload("Documents.Uploader").
 		Preload("Events", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC, id ASC") }).

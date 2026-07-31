@@ -15,14 +15,18 @@ import (
 // PurchaseCOAReclassificationJournalLineCandidate is a non-cash/bank line
 // from the original purchase journal that Accounting may reclassify.
 type PurchaseCOAReclassificationJournalLineCandidate struct {
-	ID           uint64  `json:"id"`
-	LineNumber   int     `json:"line_number"`
-	AccountID    uint    `json:"account_id"`
-	AccountCode  string  `json:"account_code"`
-	AccountName  string  `json:"account_name"`
-	Description  string  `json:"description"`
-	DebitAmount  float64 `json:"debit_amount"`
-	CreditAmount float64 `json:"credit_amount"`
+	ID                 uint64    `json:"id"`
+	JournalEntryID     uint64    `json:"journal_entry_id"`
+	JournalEntryNumber string    `json:"journal_entry_number"`
+	JournalEntryDate   time.Time `json:"journal_entry_date"`
+	LineNumber         int       `json:"line_number"`
+	AccountID          uint      `json:"account_id"`
+	AccountCode        string    `json:"account_code"`
+	AccountName        string    `json:"account_name"`
+	Description        string    `json:"description"`
+	DebitAmount        float64   `json:"debit_amount"`
+	CreditAmount       float64   `json:"credit_amount"`
+	BulkSelectable     bool      `json:"bulk_selectable"`
 }
 
 // COAReclassificationAccountCandidate is an active leaf COA that is not linked
@@ -61,6 +65,10 @@ func (s *PostedTransactionCorrectionService) ListPurchaseCOAReclassificationCand
 	if err != nil {
 		return nil, err
 	}
+	bulkExcludedAccounts, err := purchaseCOAReclassificationBulkExcludedAccountIDs(s.db)
+	if err != nil {
+		return nil, err
+	}
 
 	result := make([]PurchaseCOAReclassificationJournalLineCandidate, 0, len(journal.Lines))
 	for _, line := range journal.Lines {
@@ -81,17 +89,44 @@ func (s *PostedTransactionCorrectionService) ListPurchaseCOAReclassificationCand
 			continue
 		}
 		result = append(result, PurchaseCOAReclassificationJournalLineCandidate{
-			ID:           line.ID,
-			LineNumber:   line.LineNumber,
-			AccountID:    line.Account.ID,
-			AccountCode:  line.Account.Code,
-			AccountName:  line.Account.Name,
-			Description:  line.Description,
-			DebitAmount:  debit.InexactFloat64(),
-			CreditAmount: credit.InexactFloat64(),
+			ID:                 line.ID,
+			JournalEntryID:     journal.ID,
+			JournalEntryNumber: journal.EntryNumber,
+			JournalEntryDate:   journal.EntryDate,
+			LineNumber:         line.LineNumber,
+			AccountID:          line.Account.ID,
+			AccountCode:        line.Account.Code,
+			AccountName:        line.Account.Name,
+			Description:        line.Description,
+			DebitAmount:        debit.InexactFloat64(),
+			CreditAmount:       credit.InexactFloat64(),
+			BulkSelectable:     debit.GreaterThan(decimal.Zero) && !accountIDInSet(bulkExcludedAccounts, line.Account.ID),
 		})
 	}
 	return result, nil
+}
+
+// purchaseCOAReclassificationBulkExcludedAccountIDs keeps the bulk item
+// selector from silently including configured tax input. Accounting can still
+// select any eligible line one-by-one when a tax reclassification is intended.
+func purchaseCOAReclassificationBulkExcludedAccountIDs(tx *gorm.DB) (map[uint]struct{}, error) {
+	excluded := make(map[uint]struct{})
+	var settings models.TaxAccountSettings
+	if err := tx.Where("is_active = ?", true).Order("id DESC").First(&settings).Error; err != nil {
+		if errorsIsRecordNotFound(err) {
+			return excluded, nil
+		}
+		return nil, err
+	}
+	if settings.PurchaseInputVATAccountID != 0 {
+		excluded[settings.PurchaseInputVATAccountID] = struct{}{}
+	}
+	return excluded, nil
+}
+
+func accountIDInSet(values map[uint]struct{}, accountID uint) bool {
+	_, found := values[accountID]
+	return found
 }
 
 func (s *PostedTransactionCorrectionService) ListCOAReclassificationAccounts(
@@ -125,37 +160,84 @@ func (s *PostedTransactionCorrectionService) ListCOAReclassificationAccounts(
 	return result, nil
 }
 
-func (s *PostedTransactionCorrectionService) resolvePurchaseCOAReclassificationTarget(
+func normalizePurchaseCOAReclassificationLineIDs(request models.PostedTransactionCorrectionCreateRequest) ([]uint64, error) {
+	lineIDs := append([]uint64(nil), request.OriginalJournalLineIDs...)
+	if len(lineIDs) == 0 && request.OriginalJournalLineID != nil {
+		lineIDs = []uint64{*request.OriginalJournalLineID}
+	}
+	if len(lineIDs) == 0 {
+		return nil, fmt.Errorf("pilih minimal satu baris jurnal asal untuk koreksi COA")
+	}
+
+	unique := make(map[uint64]struct{}, len(lineIDs))
+	for _, lineID := range lineIDs {
+		if lineID == 0 {
+			return nil, fmt.Errorf("baris jurnal asal tidak valid")
+		}
+		if _, exists := unique[lineID]; exists {
+			return nil, fmt.Errorf("baris jurnal asal tidak boleh dipilih lebih dari sekali")
+		}
+		unique[lineID] = struct{}{}
+	}
+	return lineIDs, nil
+}
+
+func (s *PostedTransactionCorrectionService) resolvePurchaseCOAReclassificationTargets(
 	tx *gorm.DB,
 	purchaseID uint,
-	originalJournalLineID uint64,
+	originalJournalLineIDs []uint64,
 	proposedAccountID uint,
 	lock bool,
-) (*postedCorrectionTarget, *purchaseCOAReclassificationData, error) {
-	data, err := loadPurchaseCOAReclassificationData(tx, purchaseID, originalJournalLineID, proposedAccountID, lock)
-	if err != nil {
-		return nil, nil, err
+) (*postedCorrectionTarget, []*purchaseCOAReclassificationData, error) {
+	if len(originalJournalLineIDs) == 0 {
+		return nil, nil, fmt.Errorf("pilih minimal satu baris jurnal asal untuk koreksi COA")
+	}
+
+	dataRows := make([]*purchaseCOAReclassificationData, 0, len(originalJournalLineIDs))
+	var sourceJournalID uint64
+	for _, originalJournalLineID := range originalJournalLineIDs {
+		data, err := loadPurchaseCOAReclassificationData(tx, purchaseID, originalJournalLineID, proposedAccountID, lock)
+		if err != nil {
+			return nil, nil, err
+		}
+		if sourceJournalID != 0 && data.originalJournal.ID != sourceJournalID {
+			return nil, nil, fmt.Errorf("semua baris koreksi harus berasal dari jurnal pembelian yang sama")
+		}
+		sourceJournalID = data.originalJournal.ID
+		dataRows = append(dataRows, data)
+	}
+
+	first := dataRows[0]
+	lineSnapshots := make([]map[string]interface{}, 0, len(dataRows))
+	for _, data := range dataRows {
+		lineSnapshots = append(lineSnapshots, map[string]interface{}{
+			"original_journal_line_id": data.originalLine.ID,
+			"line_number":              data.originalLine.LineNumber,
+			"description":              data.originalLine.Description,
+			"original_account": map[string]interface{}{
+				"id":   data.originalAccount.ID,
+				"code": data.originalAccount.Code,
+				"name": data.originalAccount.Name,
+			},
+			"proposed_account": map[string]interface{}{
+				"id":   data.proposedAccount.ID,
+				"code": data.proposedAccount.Code,
+				"name": data.proposedAccount.Name,
+			},
+			"debit_amount":  data.originalLine.DebitAmount.Round(2).InexactFloat64(),
+			"credit_amount": data.originalLine.CreditAmount.Round(2).InexactFloat64(),
+		})
 	}
 
 	snapshot, err := marshalCorrectionSnapshot(map[string]interface{}{
-		"purchase_code":            data.purchase.Code,
-		"purchase_date":            data.purchase.Date,
-		"vendor":                   data.purchase.Vendor.Name,
-		"original_journal_id":      data.originalJournal.ID,
-		"original_journal_date":    data.originalJournal.EntryDate,
-		"original_journal_line_id": data.originalLine.ID,
-		"original_account": map[string]interface{}{
-			"id":   data.originalAccount.ID,
-			"code": data.originalAccount.Code,
-			"name": data.originalAccount.Name,
-		},
-		"proposed_account": map[string]interface{}{
-			"id":   data.proposedAccount.ID,
-			"code": data.proposedAccount.Code,
-			"name": data.proposedAccount.Name,
-		},
-		"debit_amount":  data.originalLine.DebitAmount.Round(2).InexactFloat64(),
-		"credit_amount": data.originalLine.CreditAmount.Round(2).InexactFloat64(),
+		"purchase_code":           first.purchase.Code,
+		"purchase_date":           first.purchase.Date,
+		"vendor":                  first.purchase.Vendor.Name,
+		"original_journal_id":     first.originalJournal.ID,
+		"original_journal_number": first.originalJournal.EntryNumber,
+		"original_journal_date":   first.originalJournal.EntryDate,
+		"line_count":              len(lineSnapshots),
+		"lines":                   lineSnapshots,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -163,11 +245,38 @@ func (s *PostedTransactionCorrectionService) resolvePurchaseCOAReclassificationT
 
 	return &postedCorrectionTarget{
 		targetType:        models.PostedTransactionCorrectionTargetPurchase,
-		targetCode:        data.purchase.Code,
-		purchaseID:        &data.purchase.ID,
-		originalJournalID: data.originalJournal.ID,
+		targetCode:        first.purchase.Code,
+		purchaseID:        &first.purchase.ID,
+		originalJournalID: first.originalJournal.ID,
 		sourceSnapshot:    snapshot,
-	}, data, nil
+	}, dataRows, nil
+}
+
+func (s *PostedTransactionCorrectionService) ensureNoActivePurchaseCOAReclassification(
+	tx *gorm.DB,
+	originalJournalLineIDs []uint64,
+) error {
+	var legacyCount int64
+	if err := tx.Model(&models.PostedTransactionCorrection{}).
+		Where("correction_type = ? AND original_journal_line_id IN ? AND status IN ?", models.PostedTransactionCorrectionTypeCOAReclassification, originalJournalLineIDs, activeCorrectionStatuses()).
+		Count(&legacyCount).Error; err != nil {
+		return err
+	}
+	if legacyCount > 0 {
+		return fmt.Errorf("masih ada pengajuan koreksi COA aktif untuk salah satu baris jurnal yang dipilih")
+	}
+
+	var batchCount int64
+	if err := tx.Model(&models.PostedTransactionCorrectionReclassificationLine{}).
+		Joins("JOIN posted_transaction_corrections correction ON correction.id = posted_transaction_correction_reclassification_lines.correction_id").
+		Where("correction.deleted_at IS NULL AND correction.correction_type = ? AND correction.status IN ? AND posted_transaction_correction_reclassification_lines.original_journal_line_id IN ?", models.PostedTransactionCorrectionTypeCOAReclassification, activeCorrectionStatuses(), originalJournalLineIDs).
+		Count(&batchCount).Error; err != nil {
+		return err
+	}
+	if batchCount > 0 {
+		return fmt.Errorf("masih ada pengajuan koreksi COA aktif untuk salah satu baris jurnal yang dipilih")
+	}
+	return nil
 }
 
 func loadPurchaseCOAReclassificationData(
@@ -267,7 +376,9 @@ func loadPostedPurchaseJournalForCOAReclassification(
 	}
 
 	sourceID := uint64(purchase.ID)
-	journalQuery := tx.Preload("Lines.Account").
+	journalQuery := tx.Preload("Lines", func(db *gorm.DB) *gorm.DB {
+		return db.Order("line_number ASC, id ASC")
+	}).Preload("Lines.Account").
 		Where("source_type = ? AND source_id = ? AND status = ? AND deleted_at IS NULL", models.SSOTSourceTypePurchase, sourceID, models.SSOTStatusPosted).
 		Order("entry_date ASC, id ASC")
 	if lock {
@@ -303,59 +414,81 @@ func (s *PostedTransactionCorrectionService) executePurchaseCOAReclassification(
 ) (*models.SSOTJournalEntry, string, error) {
 	if correction.TargetType != models.PostedTransactionCorrectionTargetPurchase ||
 		correction.CorrectionType != models.PostedTransactionCorrectionTypeCOAReclassification ||
-		correction.PurchaseID == nil || correction.OriginalJournalLineID == nil ||
-		correction.OriginalAccountID == nil || correction.ProposedAccountID == nil {
+		correction.PurchaseID == nil || correction.OriginalJournalEntryID == 0 {
 		return nil, "", fmt.Errorf("data koreksi COA transaksi terposting belum lengkap")
 	}
 
-	data, err := loadPurchaseCOAReclassificationData(
-		tx,
-		*correction.PurchaseID,
-		*correction.OriginalJournalLineID,
-		*correction.ProposedAccountID,
-		true,
-	)
+	correctionLines, err := loadPurchaseCOAReclassificationLinesForExecution(tx, correction)
 	if err != nil {
 		return nil, "", err
 	}
-	if data.originalJournal.ID != correction.OriginalJournalEntryID || data.originalAccount.ID != *correction.OriginalAccountID {
-		return nil, "", fmt.Errorf("jurnal atau COA asal berubah dari snapshot koreksi; Accounting perlu membuat pengajuan baru")
+
+	dataRows := make([]*purchaseCOAReclassificationData, 0, len(correctionLines))
+	for _, correctionLine := range correctionLines {
+		data, err := loadPurchaseCOAReclassificationData(
+			tx,
+			*correction.PurchaseID,
+			correctionLine.OriginalJournalLineID,
+			correctionLine.ProposedAccountID,
+			true,
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		if data.originalJournal.ID != correction.OriginalJournalEntryID ||
+			data.originalAccount.ID != correctionLine.OriginalAccountID ||
+			data.proposedAccount.ID != correctionLine.ProposedAccountID {
+			return nil, "", fmt.Errorf("jurnal atau COA asal berubah dari snapshot koreksi; Accounting perlu membuat pengajuan baru")
+		}
+		if correctionLine.ID != 0 &&
+			(data.originalLine.LineNumber != correctionLine.LineNumber ||
+				data.originalLine.Description != correctionLine.Description ||
+				!data.originalLine.DebitAmount.Round(2).Equal(correctionLine.DebitAmount.Round(2)) ||
+				!data.originalLine.CreditAmount.Round(2).Equal(correctionLine.CreditAmount.Round(2))) {
+			return nil, "", fmt.Errorf("jurnal atau COA asal berubah dari snapshot koreksi; Accounting perlu membuat pengajuan baru")
+		}
+		dataRows = append(dataRows, data)
 	}
 
-	amount := data.originalLine.DebitAmount.Round(2)
-	wasDebit := amount.GreaterThan(decimal.Zero)
-	if !wasDebit {
-		amount = data.originalLine.CreditAmount.Round(2)
-	}
-	if !amount.GreaterThan(decimal.Zero) {
-		return nil, "", fmt.Errorf("nominal baris jurnal asal tidak valid")
-	}
+	lines := make([]JournalLineRequest, 0, len(dataRows)*2)
+	totalAmount := decimal.Zero
+	for _, data := range dataRows {
+		amount := data.originalLine.DebitAmount.Round(2)
+		wasDebit := amount.GreaterThan(decimal.Zero)
+		if !wasDebit {
+			amount = data.originalLine.CreditAmount.Round(2)
+		}
+		if !amount.GreaterThan(decimal.Zero) {
+			return nil, "", fmt.Errorf("nominal baris jurnal asal tidak valid")
+		}
+		totalAmount = totalAmount.Add(amount)
 
-	lines := make([]JournalLineRequest, 0, 2)
-	if wasDebit {
+		if wasDebit {
+			lines = append(lines,
+				JournalLineRequest{
+					AccountID:    uint64(data.proposedAccount.ID),
+					DebitAmount:  amount,
+					CreditAmount: decimal.Zero,
+					Description:  fmt.Sprintf("Reklasifikasi dari %s - %s", data.originalAccount.Code, data.originalAccount.Name),
+				},
+				JournalLineRequest{
+					AccountID:    uint64(data.originalAccount.ID),
+					DebitAmount:  decimal.Zero,
+					CreditAmount: amount,
+					Description:  fmt.Sprintf("Reklasifikasi ke %s - %s", data.proposedAccount.Code, data.proposedAccount.Name),
+				},
+			)
+			continue
+		}
+
 		lines = append(lines,
 			JournalLineRequest{
-				AccountID:    uint64(data.proposedAccount.ID),
+				AccountID:    uint64(data.originalAccount.ID),
 				DebitAmount:  amount,
 				CreditAmount: decimal.Zero,
 				Description:  fmt.Sprintf("Reklasifikasi dari %s - %s", data.originalAccount.Code, data.originalAccount.Name),
 			},
 			JournalLineRequest{
-				AccountID:    uint64(data.originalAccount.ID),
-				DebitAmount:  decimal.Zero,
-				CreditAmount: amount,
-				Description:  fmt.Sprintf("Reklasifikasi ke %s - %s", data.proposedAccount.Code, data.proposedAccount.Name),
-			},
-		)
-	} else {
-		lines = append(lines,
-			JournalLineRequest{
-				AccountID:    uint64(data.originalAccount.ID),
-				DebitAmount:  amount,
-				CreditAmount: decimal.Zero,
-				Description:  fmt.Sprintf("Reklasifikasi dari %s - %s", data.originalAccount.Code, data.originalAccount.Name),
-			},
-			JournalLineRequest{
 				AccountID:    uint64(data.proposedAccount.ID),
 				DebitAmount:  decimal.Zero,
 				CreditAmount: amount,
@@ -364,15 +497,16 @@ func (s *PostedTransactionCorrectionService) executePurchaseCOAReclassification(
 		)
 	}
 
-	adjustmentOf := data.originalJournal.ID
+	first := dataRows[0]
+	adjustmentOf := first.originalJournal.ID
 	journal, err := NewUnifiedJournalService(tx).CreateJournalEntryWithTx(tx, &JournalEntryRequest{
 		EntryDate:                 time.Now().UTC(),
-		Reference:                 fmt.Sprintf("KOREKSI-COA-%s-%d", data.purchase.Code, correction.ID),
-		Description:               fmt.Sprintf("Reklasifikasi COA transaksi terposting %s", data.purchase.Code),
-		Notes:                     fmt.Sprintf("Koreksi transaksi terposting #%d. FM menyetujui pemindahan %s (%s) ke %s (%s). Jurnal asal #%d tidak diubah dan tidak ada mutasi kas/bank.", correction.ID, data.originalAccount.Code, data.originalAccount.Name, data.proposedAccount.Code, data.proposedAccount.Name, data.originalJournal.ID),
+		Reference:                 fmt.Sprintf("KOREKSI-COA-%s-%d", first.purchase.Code, correction.ID),
+		Description:               fmt.Sprintf("Reklasifikasi %d baris COA transaksi terposting %s", len(dataRows), first.purchase.Code),
+		Notes:                     fmt.Sprintf("Koreksi transaksi terposting #%d. FM menyetujui reklasifikasi %d baris jurnal pembelian. Jurnal asal #%d tidak diubah dan tidak ada mutasi kas/bank.", correction.ID, len(dataRows), first.originalJournal.ID),
 		CreatedBy:                 uint64(userID),
 		SourceType:                models.SSOTSourceTypeAdjustment,
-		SourceID:                  uint64(data.purchase.ID),
+		SourceID:                  uint64(first.purchase.ID),
 		AdjustmentOf:              &adjustmentOf,
 		AdjustmentCategoryCode:    models.JournalAdjustmentCategoryPostedCOAReclassification,
 		RequestedByFinanceManager: true,
@@ -383,26 +517,46 @@ func (s *PostedTransactionCorrectionService) executePurchaseCOAReclassification(
 	if err != nil {
 		return nil, "", fmt.Errorf("gagal membuat jurnal reklasifikasi COA: %w", err)
 	}
-	if err := tx.Model(journal).Update("source_code", data.purchase.Code).Error; err != nil {
+	if err := tx.Model(journal).Update("source_code", first.purchase.Code).Error; err != nil {
 		return nil, "", err
 	}
 
-	direction := "Debit"
-	if !wasDebit {
-		direction = "Kredit"
-	}
 	completionNotes := fmt.Sprintf(
-		"FM menyetujui reklasifikasi %s %s (%s) ke %s (%s) sebesar %s. Sistem membuat jurnal koreksi #%d yang menaut ke jurnal asal #%d. Jurnal asal serta mutasi kas/bank tidak diubah.",
-		direction,
-		data.originalAccount.Code,
-		data.originalAccount.Name,
-		data.proposedAccount.Code,
-		data.proposedAccount.Name,
-		formatCorrectionDecimal(amount),
+		"FM menyetujui reklasifikasi %d baris jurnal sebesar %s. Sistem membuat jurnal koreksi #%d yang menaut ke jurnal asal #%d. Jurnal asal serta mutasi kas/bank tidak diubah.",
+		len(dataRows),
+		formatCorrectionDecimal(totalAmount),
 		journal.ID,
-		data.originalJournal.ID,
+		first.originalJournal.ID,
 	)
 	return journal, completionNotes, nil
+}
+
+func loadPurchaseCOAReclassificationLinesForExecution(
+	tx *gorm.DB,
+	correction models.PostedTransactionCorrection,
+) ([]models.PostedTransactionCorrectionReclassificationLine, error) {
+	var correctionLines []models.PostedTransactionCorrectionReclassificationLine
+	if err := tx.
+		Where("correction_id = ?", correction.ID).
+		Order("line_number ASC, id ASC").
+		Find(&correctionLines).Error; err != nil {
+		return nil, err
+	}
+	if len(correctionLines) > 0 {
+		return correctionLines, nil
+	}
+
+	// Corrections created before the batch audit table retain their original
+	// one-line fields, so they remain executable without data migration.
+	if correction.OriginalJournalLineID == nil || correction.OriginalAccountID == nil || correction.ProposedAccountID == nil {
+		return nil, fmt.Errorf("data koreksi COA transaksi terposting belum lengkap")
+	}
+	return []models.PostedTransactionCorrectionReclassificationLine{{
+		CorrectionID:          correction.ID,
+		OriginalJournalLineID: *correction.OriginalJournalLineID,
+		OriginalAccountID:     *correction.OriginalAccountID,
+		ProposedAccountID:     *correction.ProposedAccountID,
+	}}, nil
 }
 
 func formatCorrectionDecimal(amount decimal.Decimal) string {

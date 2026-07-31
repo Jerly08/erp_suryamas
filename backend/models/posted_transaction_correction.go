@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -32,9 +33,9 @@ const (
 	// credit sale by linking the existing customer receipt to the invoice.
 	// It never edits the original sale or payment journal.
 	PostedTransactionCorrectionTypeSalesCreditClassification = "SALES_CREDIT_CLASSIFICATION"
-	// COAReclassification moves one non cash/bank journal line to the correct
-	// active COA through a new adjustment journal. The original journal stays
-	// immutable and the correction is approved directly by Finance Manager.
+	// COAReclassification moves one or more non cash/bank journal lines to the
+	// correct active COA through a new adjustment journal. The original journal
+	// stays immutable and the correction is approved directly by Finance Manager.
 	PostedTransactionCorrectionTypeCOAReclassification = "COA_RECLASSIFICATION"
 	PostedTransactionCorrectionTypeOther               = "OTHER"
 )
@@ -112,19 +113,44 @@ type PostedTransactionCorrection struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
-	Purchase        *Purchase                             `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
-	Payment         *Payment                              `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
-	PurchasePayment *PurchasePayment                      `json:"purchase_payment,omitempty" gorm:"foreignKey:PurchasePaymentID"`
-	Sale            *Sale                                 `json:"sale,omitempty" gorm:"foreignKey:SaleID"`
-	LinkedPayment   *Payment                              `json:"linked_payment,omitempty" gorm:"foreignKey:LinkedPaymentID"`
-	Requester       *User                                 `json:"requester,omitempty" gorm:"foreignKey:RequestedBy"`
-	AccountingUser  *User                                 `json:"accounting_user,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
-	FinanceManager  *User                                 `json:"finance_manager,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
-	Completer       *User                                 `json:"completer,omitempty" gorm:"foreignKey:CompletedBy"`
-	OriginalAccount *Account                              `json:"original_account,omitempty" gorm:"foreignKey:OriginalAccountID"`
-	ProposedAccount *Account                              `json:"proposed_account,omitempty" gorm:"foreignKey:ProposedAccountID"`
-	Documents       []PostedTransactionCorrectionDocument `json:"documents,omitempty" gorm:"foreignKey:CorrectionID"`
-	Events          []PostedTransactionCorrectionEvent    `json:"events,omitempty" gorm:"foreignKey:CorrectionID"`
+	Purchase              *Purchase                                         `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
+	Payment               *Payment                                          `json:"payment,omitempty" gorm:"foreignKey:PaymentID"`
+	PurchasePayment       *PurchasePayment                                  `json:"purchase_payment,omitempty" gorm:"foreignKey:PurchasePaymentID"`
+	Sale                  *Sale                                             `json:"sale,omitempty" gorm:"foreignKey:SaleID"`
+	LinkedPayment         *Payment                                          `json:"linked_payment,omitempty" gorm:"foreignKey:LinkedPaymentID"`
+	Requester             *User                                             `json:"requester,omitempty" gorm:"foreignKey:RequestedBy"`
+	AccountingUser        *User                                             `json:"accounting_user,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
+	FinanceManager        *User                                             `json:"finance_manager,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	Completer             *User                                             `json:"completer,omitempty" gorm:"foreignKey:CompletedBy"`
+	OriginalAccount       *Account                                          `json:"original_account,omitempty" gorm:"foreignKey:OriginalAccountID"`
+	ProposedAccount       *Account                                          `json:"proposed_account,omitempty" gorm:"foreignKey:ProposedAccountID"`
+	ReclassificationLines []PostedTransactionCorrectionReclassificationLine `json:"reclassification_lines,omitempty" gorm:"foreignKey:CorrectionID"`
+	Documents             []PostedTransactionCorrectionDocument             `json:"documents,omitempty" gorm:"foreignKey:CorrectionID"`
+	Events                []PostedTransactionCorrectionEvent                `json:"events,omitempty" gorm:"foreignKey:CorrectionID"`
+}
+
+// PostedTransactionCorrectionReclassificationLine captures every journal line
+// included in a batch COA reclassification. It preserves the source values at
+// submission time so the approval and resulting adjustment remain auditable.
+type PostedTransactionCorrectionReclassificationLine struct {
+	ID                    uint            `json:"id" gorm:"primaryKey"`
+	CorrectionID          uint            `json:"correction_id" gorm:"not null;uniqueIndex:idx_posted_correction_reclass_source_line;index"`
+	OriginalJournalLineID uint64          `json:"original_journal_line_id" gorm:"not null;uniqueIndex:idx_posted_correction_reclass_source_line;index"`
+	OriginalAccountID     uint            `json:"original_account_id" gorm:"not null;index"`
+	ProposedAccountID     uint            `json:"proposed_account_id" gorm:"not null;index"`
+	LineNumber            int             `json:"line_number" gorm:"not null"`
+	Description           string          `json:"description" gorm:"type:text"`
+	DebitAmount           decimal.Decimal `json:"debit_amount" gorm:"type:decimal(20,2);not null;default:0"`
+	CreditAmount          decimal.Decimal `json:"credit_amount" gorm:"type:decimal(20,2);not null;default:0"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+
+	OriginalAccount *Account `json:"original_account,omitempty" gorm:"foreignKey:OriginalAccountID"`
+	ProposedAccount *Account `json:"proposed_account,omitempty" gorm:"foreignKey:ProposedAccountID"`
+}
+
+func (PostedTransactionCorrectionReclassificationLine) TableName() string {
+	return "posted_transaction_correction_reclassification_lines"
 }
 
 type PostedTransactionCorrectionDocument struct {
@@ -160,6 +186,7 @@ type PostedTransactionCorrectionCreateRequest struct {
 	SaleID                        *uint    `json:"sale_id"`
 	LinkedPaymentID               *uint    `json:"linked_payment_id"`
 	OriginalJournalLineID         *uint64  `json:"original_journal_line_id"`
+	OriginalJournalLineIDs        []uint64 `json:"original_journal_line_ids"`
 	ProposedAccountID             *uint    `json:"proposed_account_id"`
 	CorrectionType                string   `json:"correction_type" binding:"required"`
 	Reason                        string   `json:"reason" binding:"required"`
