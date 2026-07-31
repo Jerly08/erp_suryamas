@@ -2414,7 +2414,7 @@ func (s *PaymentService) createReceivablePaymentJournalWithSSOT(tx *gorm.DB, pay
 		SourceType:  models.SSOTSourceTypePayment,
 		SourceID:    paymentID,
 		Reference:   payment.Code,
-		EntryDate:   payment.Date,
+		EntryDate:   paymentJournalEntryDate(payment.Date),
 		Description: fmt.Sprintf("Customer Payment %s", payment.Code),
 		Lines:       journalLines,
 		AutoPost:    true,
@@ -2516,7 +2516,7 @@ func (s *PaymentService) createReceivablePaymentJournalWithSSOTFixed(tx *gorm.DB
 		SourceType:  models.SSOTSourceTypePayment,
 		SourceID:    paymentID,
 		Reference:   payment.Code,
-		EntryDate:   payment.Date,
+		EntryDate:   paymentJournalEntryDate(payment.Date),
 		Description: fmt.Sprintf("Customer Payment %s", payment.Code),
 		Lines:       journalLines,
 		AutoPost:    !cashBankAlreadyUpdated, // Disable AutoPost if cash bank already updated
