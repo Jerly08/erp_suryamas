@@ -73,9 +73,33 @@ func (s *PurchaseService) setApprovalBasisAndBase(purchase *models.Purchase) {
 	fmt.Printf("✅ All purchases require approval - RequiresApproval set to true\n")
 }
 
+func validateUniquePurchaseRequestItemIDs(items []models.PurchaseItemRequest) error {
+	selectedPurchaseRequestItems := make(map[uint]struct{}, len(items))
+	for _, itemReq := range items {
+		if itemReq.PurchaseRequestItemID == nil {
+			continue
+		}
+
+		purchaseRequestItemID := *itemReq.PurchaseRequestItemID
+		if purchaseRequestItemID == 0 {
+			return fmt.Errorf("purchase_request_item_id must be greater than zero")
+		}
+		if _, exists := selectedPurchaseRequestItems[purchaseRequestItemID]; exists {
+			return fmt.Errorf("purchase request item %d is selected more than once", purchaseRequestItemID)
+		}
+		selectedPurchaseRequestItems[purchaseRequestItemID] = struct{}{}
+	}
+
+	return nil
+}
+
 // calculatePurchaseTotals calculates all purchase totals with proper accounting
 func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, items []models.PurchaseItemRequest) error {
 	fmt.Printf("ℹ Starting purchase totals calculation for %d items\n", len(items))
+	if err := validateUniquePurchaseRequestItemIDs(items); err != nil {
+		return err
+	}
+
 	subtotalBeforeDiscount := 0.0
 	itemDiscountAmount := 0.0
 	hasInventoryValuationItem := false
@@ -378,6 +402,10 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 
 // updatePurchaseItems updates purchase items
 func (s *PurchaseService) updatePurchaseItems(purchase *models.Purchase, items []models.PurchaseItemRequest) error {
+	if err := validateUniquePurchaseRequestItemIDs(items); err != nil {
+		return err
+	}
+
 	// Clear existing items
 	purchase.PurchaseItems = []models.PurchaseItem{}
 
