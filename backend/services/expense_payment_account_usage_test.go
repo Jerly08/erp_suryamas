@@ -110,6 +110,17 @@ func TestIntercompanyReceivableAccountIsAllowedForDirectCOAPayment(t *testing.T)
 	require.NoError(t, validateExpensePaymentAccountUsage(account, 350000000, 0, false))
 }
 
+func TestIntercompReceivableAccountIsAllowedForDirectCOAPayment(t *testing.T) {
+	account := models.Account{
+		Code: "1106-001",
+		Name: "INTERCOMP - TOMBROK JAYA PERMAI",
+		Type: models.AccountTypeAsset,
+	}
+
+	require.True(t, isAllowedExpensePaymentAccount(account))
+	require.NoError(t, validateExpensePaymentAccountUsage(account, 200000000, 0, false))
+}
+
 func TestIntercompanyReceivableAccountRejectsPPhWithholding(t *testing.T) {
 	account := models.Account{
 		Code: "1107-002",

@@ -774,8 +774,10 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
     } catch (error: any) {
       console.error('Error creating expense payment:', error);
       toast({
-        title: 'Error creating payment',
-        description: error.message || 'Failed to create expense payment',
+        title: isAccountingCOAReview ? 'Gagal menyimpan COA kontra' : 'Gagal menyimpan pembayaran',
+        description: error.message || (isAccountingCOAReview
+          ? 'COA kontra belum dapat disimpan. Periksa kembali data yang dipilih.'
+          : 'Pembayaran belum dapat disimpan. Periksa kembali data yang diisi.'),
         status: 'error',
         duration: 5000,
       });

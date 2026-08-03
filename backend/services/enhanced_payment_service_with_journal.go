@@ -295,6 +295,7 @@ func isIntercompanyReceivableAccount(account models.Account) bool {
 	}
 	label := strings.ToLower(strings.TrimSpace(account.Code + " " + account.Name))
 	return strings.Contains(label, "intercompany") ||
+		strings.Contains(label, "intercomp") ||
 		(strings.Contains(label, "antar") && strings.Contains(label, "perusahaan")) ||
 		(strings.Contains(label, "piutang") && strings.Contains(label, "afiliasi"))
 }

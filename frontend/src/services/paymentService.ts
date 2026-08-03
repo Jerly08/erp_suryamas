@@ -454,8 +454,17 @@ class PaymentService {
 
       const response = await api.put(`${this.getSSOTPaymentBase()}/${id}/draft`, ssotData);
       return response.data.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('PaymentService - Error updating draft payment:', error);
+
+      // Accounting COA completion returns a useful validation detail from the
+      // backend. Preserve it so the form can explain what must be corrected.
+      if (error.response?.data?.details) {
+        throw new Error(error.response.data.details);
+      }
+      if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      }
       throw error;
     }
   }
