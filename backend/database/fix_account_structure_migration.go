@@ -99,7 +99,7 @@ func fixAccountTypes(db *gorm.DB) {
 		{"2103", "LIABILITY"}, // PPN KELUARAN (Output VAT)
 		{"3000", "EQUITY"},    // EQUITY header
 		{"3101", "EQUITY"},    // Modal Pemilik
-		{"3104", "EQUITY"},    // Ekuitas Saldo Awal
+		{"3105", "EQUITY"},    // Ekuitas Saldo Awal
 		{"3201", "EQUITY"},    // Laba Ditahan
 		{"4000", "REVENUE"},   // REVENUE header
 		{"4101", "REVENUE"},   // Pendapatan Penjualan

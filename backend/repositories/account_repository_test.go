@@ -262,7 +262,7 @@ func TestAccountRepoCreatePostsOpeningBalanceJournal(t *testing.T) {
 	seedAccount(t, db, &equityHeader)
 
 	openingEquity := models.Account{
-		Code:     "3104",
+		Code:     "3105",
 		Name:     "EKUITAS SALDO AWAL",
 		Type:     models.AccountTypeEquity,
 		Category: models.CategoryEquity,

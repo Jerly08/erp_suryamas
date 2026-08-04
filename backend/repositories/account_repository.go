@@ -283,7 +283,7 @@ func accountOpeningBalanceUsesDebit(accountType string, amount float64) bool {
 
 func (r *AccountRepo) resolveOpeningBalanceEquityAccount(tx *gorm.DB) (*models.Account, error) {
 	var account models.Account
-	if err := tx.Where("code = ? AND deleted_at IS NULL", "3104").First(&account).Error; err == nil {
+	if err := tx.Where("code = ? AND deleted_at IS NULL", "3105").First(&account).Error; err == nil {
 		return &account, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, utils.NewDatabaseError("find opening balance equity account", err)
@@ -298,7 +298,7 @@ func (r *AccountRepo) resolveOpeningBalanceEquityAccount(tx *gorm.DB) (*models.A
 	}
 
 	account = models.Account{
-		Code:             "3104",
+		Code:             "3105",
 		Name:             "EKUITAS SALDO AWAL",
 		Description:      "Akun default untuk jurnal saldo awal / migrasi neraca pembukaan",
 		Type:             models.AccountTypeEquity,

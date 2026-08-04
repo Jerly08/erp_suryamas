@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	openingBalanceEquityCode = "3104"
+	openingBalanceEquityCode = "3105"
 	openingBalanceEquityName = "EKUITAS SALDO AWAL"
 )
 
