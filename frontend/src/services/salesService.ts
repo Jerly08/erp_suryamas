@@ -395,10 +395,27 @@ export interface SalesFilter {
   limit?: number;
   status?: string;
   customer_id?: string;
+  project_id?: string;
   start_date?: string;
   end_date?: string;
   search?: string;
 }
+
+type SalesReportFilter = Pick<
+  SalesFilter,
+  "start_date" | "end_date" | "status" | "customer_id" | "project_id" | "search"
+>;
+
+const buildSalesReportParams = (filters: SalesReportFilter): URLSearchParams => {
+  const params = new URLSearchParams();
+  if (filters.start_date) params.append("start_date", filters.start_date);
+  if (filters.end_date) params.append("end_date", filters.end_date);
+  if (filters.status) params.append("status", filters.status);
+  if (filters.customer_id) params.append("customer_id", filters.customer_id);
+  if (filters.project_id) params.append("project_id", filters.project_id);
+  if (filters.search) params.append("search", filters.search);
+  return params;
+};
 
 export interface SalesResult {
   data: Sale[];
@@ -721,6 +738,7 @@ class SalesService {
     if (filters.end_date) params.append("end_date", filters.end_date);
     if (filters.status) params.append("status", filters.status);
     if (filters.customer_id) params.append("customer_id", filters.customer_id);
+    if (filters.project_id) params.append("project_id", filters.project_id);
     if (filters.search) params.append("search", filters.search);
 
     const response = await api.get(`${API_ENDPOINTS.SALES_SUMMARY}?${params}`);
@@ -798,16 +816,9 @@ class SalesService {
   }
 
   async exportSalesReportPDF(
-    startDate?: string,
-    endDate?: string,
-    status?: string,
-    search?: string,
+    filters: SalesReportFilter = {},
   ): Promise<Blob> {
-    const params = new URLSearchParams();
-    if (startDate) params.append("start_date", startDate);
-    if (endDate) params.append("end_date", endDate);
-    if (status) params.append("status", status);
-    if (search) params.append("search", search);
+    const params = buildSalesReportParams(filters);
 
     const response = await api.get(
       `${API_ENDPOINTS.SALES_REPORT_PDF}?${params}`,
@@ -819,16 +830,9 @@ class SalesService {
   }
 
   async exportSalesReportCSV(
-    startDate?: string,
-    endDate?: string,
-    status?: string,
-    search?: string,
+    filters: SalesReportFilter = {},
   ): Promise<Blob> {
-    const params = new URLSearchParams();
-    if (startDate) params.append("start_date", startDate);
-    if (endDate) params.append("end_date", endDate);
-    if (status) params.append("status", status);
-    if (search) params.append("search", search);
+    const params = buildSalesReportParams(filters);
 
     const response = await api.get(
       `${API_ENDPOINTS.SALES_REPORT_CSV}?${params}`,
@@ -1063,22 +1067,14 @@ class SalesService {
   }
 
   async downloadSalesReportPDF(
-    startDate?: string,
-    endDate?: string,
-    status?: string,
-    search?: string,
+    filters: SalesReportFilter = {},
   ): Promise<void> {
     try {
-      const blob = await this.exportSalesReportPDF(
-        startDate,
-        endDate,
-        status,
-        search,
-      );
+      const blob = await this.exportSalesReportPDF(filters);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      const filename = `Sales_Report_${startDate || "all"}_to_${endDate || "all"}.pdf`;
+      const filename = `Sales_Report_${filters.start_date || "all"}_to_${filters.end_date || "all"}.pdf`;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
@@ -1091,22 +1087,14 @@ class SalesService {
   }
 
   async downloadSalesReportCSV(
-    startDate?: string,
-    endDate?: string,
-    status?: string,
-    search?: string,
+    filters: SalesReportFilter = {},
   ): Promise<void> {
     try {
-      const blob = await this.exportSalesReportCSV(
-        startDate,
-        endDate,
-        status,
-        search,
-      );
+      const blob = await this.exportSalesReportCSV(filters);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      const filename = `Sales_Report_${startDate || "all"}_to_${endDate || "all"}.csv`;
+      const filename = `Sales_Report_${filters.start_date || "all"}_to_${filters.end_date || "all"}.csv`;
       link.download = filename;
       document.body.appendChild(link);
       link.click();

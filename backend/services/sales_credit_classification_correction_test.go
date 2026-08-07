@@ -46,6 +46,7 @@ func newSalesCreditCorrectionFixture(t *testing.T) salesCreditCorrectionFixture 
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 		&models.PostedTransactionCorrection{},
+		&models.PostedTransactionCorrectionReclassificationLine{},
 		&models.PostedTransactionCorrectionDocument{},
 		&models.PostedTransactionCorrectionEvent{},
 	))

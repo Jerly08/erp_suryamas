@@ -50,7 +50,8 @@ func (r *purchaseRequestRepository) withDefaultPreloads(query *gorm.DB) *gorm.DB
 		Preload("DirectorApprover").
 		Preload("Canceller").
 		Preload("VendorInvoiceRequester").
-		Preload("VendorInvoiceSubmitter")
+		Preload("VendorInvoiceSubmitter").
+		Preload("VendorInvoiceReviewer")
 
 	if r.db.Migrator().HasTable(&models.PurchasePayment{}) {
 		query = query.

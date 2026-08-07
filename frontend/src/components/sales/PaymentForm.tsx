@@ -430,23 +430,11 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   }, [isOpen, watchAccountID]);
 
   const loadAccounts = async () => {
-    // Check if user is authenticated and has required permissions
-    if (!token || !user) {
+    // The cash-bank API is the source of truth for role permissions.
+    if (!token) {
       toast({
         title: t("sales.messages.authRequired"),
         description: t("sales.messages.pleaseLogin"),
-        status: "error",
-        duration: 5000,
-      });
-      return;
-    }
-
-    // Check if user has permission to view accounts (based on RBAC)
-    const allowedRoles = ["admin", "finance", "director", "employee"];
-    if (!allowedRoles.includes(user.role.toLowerCase())) {
-      toast({
-        title: t("sales.messages.accessDenied"),
-        description: t("messages.toast.accessDeniedDesc"),
         status: "error",
         duration: 5000,
       });
@@ -478,12 +466,15 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
       // Provide more specific error messages based on the error
       let errorMessage = t("messages.toast.serverErrorDesc");
 
+      const errorStatus = error?.response?.status || error?.status;
       if (
+        errorStatus === 403 ||
         error.message?.includes("403") ||
         error.message?.includes("Forbidden")
       ) {
         errorMessage = t("messages.toast.accessDeniedDesc");
       } else if (
+        errorStatus === 401 ||
         error.message?.includes("401") ||
         error.message?.includes("Unauthorized")
       ) {

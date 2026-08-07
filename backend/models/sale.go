@@ -192,6 +192,7 @@ const (
 type SalesFilter struct {
 	Status     string `json:"status"`
 	CustomerID string `json:"customer_id"`
+	ProjectID  string `json:"project_id"`
 	StartDate  string `json:"start_date"`
 	EndDate    string `json:"end_date"`
 	Search     string `json:"search"`

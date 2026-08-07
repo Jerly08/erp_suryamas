@@ -40,6 +40,7 @@ func newPostedTransactionCorrectionFixture(t *testing.T) postedTransactionCorrec
 		&models.SSOTJournalEntry{},
 		&models.SSOTJournalLine{},
 		&models.PostedTransactionCorrection{},
+		&models.PostedTransactionCorrectionReclassificationLine{},
 		&models.PostedTransactionCorrectionDocument{},
 		&models.PostedTransactionCorrectionEvent{},
 	))
@@ -134,13 +135,11 @@ func newPostedTransactionCorrectionFixture(t *testing.T) postedTransactionCorrec
 
 func TestPostedTransactionCorrectionLifecyclePreservesOriginalTransaction(t *testing.T) {
 	fixture := newPostedTransactionCorrectionFixture(t)
-	requestedAmount := 17_600_000.0
 
 	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
 		PurchaseID:         &fixture.purchase.ID,
-		CorrectionType:     models.PostedTransactionCorrectionTypePaymentAmount,
-		Reason:             "Nominal pembayaran pada bukti bank berbeda dengan transaksi asal.",
-		RequestedAmount:    &requestedAmount,
+		CorrectionType:     models.PostedTransactionCorrectionTypeMissingPaymentProof,
+		Reason:             "Bukti pembayaran bank perlu dilengkapi.",
 		RequestedReference: "KOPRA-20260727-001",
 	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
 	require.NoError(t, err)
@@ -240,7 +239,7 @@ func TestPostedTransactionCorrectionRequiresPostedJournalAndAccountingRole(t *te
 
 	_, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
 		PurchaseID:     &noJournalPurchase.ID,
-		CorrectionType: models.PostedTransactionCorrectionTypePurchaseDate,
+		CorrectionType: models.PostedTransactionCorrectionTypeMissingPaymentProof,
 		Reason:         "Tanggal transaksi perlu dicek.",
 	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
 	require.Error(t, err)
@@ -248,7 +247,7 @@ func TestPostedTransactionCorrectionRequiresPostedJournalAndAccountingRole(t *te
 
 	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
 		PurchaseID:     &fixture.purchase.ID,
-		CorrectionType: models.PostedTransactionCorrectionTypePurchaseDate,
+		CorrectionType: models.PostedTransactionCorrectionTypeMissingPaymentProof,
 		Reason:         "Tanggal transaksi perlu dicek.",
 	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
 	require.NoError(t, err)
@@ -297,7 +296,7 @@ func TestAccountingCanSubmitPostedTransactionCorrection(t *testing.T) {
 
 	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
 		PurchaseID:     &fixture.purchase.ID,
-		CorrectionType: models.PostedTransactionCorrectionTypePurchaseDate,
+		CorrectionType: models.PostedTransactionCorrectionTypeMissingPaymentProof,
 		Reason:         "Accounting menemukan tanggal purchase perlu dikoreksi melalui jurnal audit.",
 	}, fixture.accounting.ID, fixture.accounting.Role)
 	require.NoError(t, err)
@@ -309,4 +308,18 @@ func TestAccountingCanSubmitPostedTransactionCorrection(t *testing.T) {
 	}, fixture.accounting.ID, fixture.accounting.Role)
 	require.NoError(t, err)
 	require.Equal(t, models.PostedTransactionCorrectionStatusPendingFinanceManager, reviewed.Status)
+}
+
+func TestPostedTransactionCorrectionRejectsUnsupportedWorkflow(t *testing.T) {
+	fixture := newPostedTransactionCorrectionFixture(t)
+	requestedAmount := 17_600_000.0
+
+	_, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+		PurchaseID:      &fixture.purchase.ID,
+		CorrectionType:  models.PostedTransactionCorrectionTypePaymentAmount,
+		Reason:          "Nominal pembayaran pada bukti bank berbeda dengan transaksi asal.",
+		RequestedAmount: &requestedAmount,
+	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "belum didukung")
 }

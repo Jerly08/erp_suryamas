@@ -186,6 +186,7 @@ type PayrollRunCreateRequest struct {
 type PayrollItemCreateRequest struct {
 	EmployeeName          string  `json:"employee_name" binding:"required"`
 	EmployeeCode          string  `json:"employee_code"`
+	ImportRowNumber       int     `json:"import_row_number,omitempty"`
 	WorkingDay            float64 `json:"working_day"`
 	WorkUnit              string  `json:"work_unit"`
 	PaymentVia            string  `json:"payment_via"`
@@ -220,6 +221,20 @@ type PayrollItemCreateRequest struct {
 	Notes                 string  `json:"notes"`
 }
 
+// PayrollImportValidationIssue keeps import feedback tied to the original Excel row.
+// It is used only by the import preview and request validation; it is not persisted.
+type PayrollImportValidationIssue struct {
+	RowNumber             int     `json:"row_number"`
+	EmployeeName          string  `json:"employee_name"`
+	EmployeeCode          string  `json:"employee_code,omitempty"`
+	GrossAmount           float64 `json:"gross_amount"`
+	EmployeeBPJS          float64 `json:"employee_bpjs"`
+	OtherDeduction        float64 `json:"other_deduction"`
+	EmployeeLoanDeduction float64 `json:"employee_loan_deduction"`
+	NetPay                float64 `json:"net_pay"`
+	Message               string  `json:"message"`
+}
+
 type PayrollRejectRequest struct {
 	Reason string `json:"reason" binding:"required"`
 }
@@ -248,13 +263,14 @@ type PayrollRunResponse struct {
 }
 
 type PayrollImportPreviewResponse struct {
-	Items                []PayrollItemCreateRequest `json:"items"`
-	Summary              PayrollImportSummary       `json:"summary"`
-	Warnings             []string                   `json:"warnings"`
-	Headers              []string                   `json:"headers"`
-	SuggestedPeriodStart string                     `json:"suggested_period_start,omitempty"`
-	SuggestedPeriodEnd   string                     `json:"suggested_period_end,omitempty"`
-	SuggestedPaymentDate string                     `json:"suggested_payment_date,omitempty"`
+	Items                []PayrollItemCreateRequest     `json:"items"`
+	Summary              PayrollImportSummary           `json:"summary"`
+	Warnings             []string                       `json:"warnings"`
+	ValidationIssues     []PayrollImportValidationIssue `json:"validation_issues"`
+	Headers              []string                       `json:"headers"`
+	SuggestedPeriodStart string                         `json:"suggested_period_start,omitempty"`
+	SuggestedPeriodEnd   string                         `json:"suggested_period_end,omitempty"`
+	SuggestedPaymentDate string                         `json:"suggested_payment_date,omitempty"`
 }
 
 type PayrollImportSummary struct {

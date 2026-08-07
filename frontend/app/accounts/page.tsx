@@ -57,7 +57,7 @@ import {
   Code,
   Divider,
 } from '@chakra-ui/react';
-import { FiPlus, FiEdit, FiTrash2, FiDownload, FiSearch, FiSettings, FiInfo, FiHelpCircle } from 'react-icons/fi';
+import { FiPlus, FiEdit, FiTrash2, FiDownload, FiSearch, FiSettings, FiInfo, FiHelpCircle, FiFileText, FiChevronDown } from 'react-icons/fi';
 import AccountForm from '@/components/accounts/AccountForm';
 import AccountTreeView from '@/components/accounts/AccountTreeView';
 import AdminDeleteDialog from '@/components/accounts/AdminDeleteDialog';
@@ -97,6 +97,7 @@ const AccountsPage = () => {
   const [isHeaderMode, setIsHeaderMode] = useState(false); // Track if creating header account
   const [isAdminDeleteOpen, setIsAdminDeleteOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState<Account | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'excel' | null>(null);
   const toast = useToast();
 
   // Theme-aware colors (hooks must be called unconditionally and before any early returns)
@@ -392,8 +393,20 @@ const AccountsPage = () => {
 
   // Handle download PDF
   const handleDownloadPDF = async () => {
+    if (!token) {
+      toast({
+        title: 'Sesi tidak tersedia',
+        description: 'Silakan masuk kembali sebelum mengunduh daftar COA.',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setExportingFormat('pdf');
     try {
-      const blob = await accountService.exportAccountsPDF(token!);
+      const blob = await accountService.exportAccountsPDF(token);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.style.display = 'none';
@@ -403,27 +416,41 @@ const AccountsPage = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       toast({
-        title: 'Download successful',
-        description: 'Chart of Accounts PDF has been downloaded successfully.',
+        title: 'PDF berhasil diunduh',
+        description: 'Daftar Bagan Akun telah disiapkan dalam format PDF.',
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
     } catch (err: any) {
       toast({
-        title: 'Download failed',
-        description: err.message || 'Failed to download PDF',
+        title: 'Unduh PDF gagal',
+        description: err.message || 'Daftar Bagan Akun tidak dapat diunduh saat ini.',
         status: 'error',
         duration: 5000,
         isClosable: true,
       });
+    } finally {
+      setExportingFormat(null);
     }
   };
 
   // Handle download Excel
   const handleDownloadExcel = async () => {
+    if (!token) {
+      toast({
+        title: 'Sesi tidak tersedia',
+        description: 'Silakan masuk kembali sebelum mengunduh daftar COA.',
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setExportingFormat('excel');
     try {
-      const blob = await accountService.exportAccountsExcel(token!);
+      const blob = await accountService.exportAccountsExcel(token);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.style.display = 'none';
@@ -433,20 +460,22 @@ const AccountsPage = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       toast({
-        title: 'Download successful',
-        description: 'Chart of Accounts Excel has been downloaded successfully.',
+        title: 'Excel berhasil diunduh',
+        description: 'Daftar Bagan Akun telah disiapkan dalam format Excel.',
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
     } catch (err: any) {
       toast({
-        title: 'Download failed',
-        description: err.message || 'Failed to download Excel',
+        title: 'Unduh Excel gagal',
+        description: err.message || 'Daftar Bagan Akun tidak dapat diunduh saat ini.',
         status: 'error',
         duration: 5000,
         isClosable: true,
       });
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -524,7 +553,13 @@ const AccountsPage = () => {
     <CompanyTypeGuard moduleName="Accounts">
       <SimpleLayout>
         <Box>
-          <Flex justify="space-between" align="center" mb={6}>
+          <Flex
+            justify="space-between"
+            align={{ base: 'flex-start', lg: 'center' }}
+            direction={{ base: 'column', lg: 'row' }}
+            gap={4}
+            mb={6}
+          >
             <HStack spacing={3}>
               <Heading size="xl" color={headingColor} fontWeight="600">{t('accounts.chartOfAccounts')}</Heading>
               <Popover placement="bottom-start">
@@ -611,53 +646,89 @@ const AccountsPage = () => {
                 </PopoverContent>
               </Popover>
             </HStack>
-            {canCreate && (
-              <HStack spacing={3}>
-                <Tooltip
-                  label={t('accounts.guide.headerTooltip')}
-                  placement="bottom"
-                  hasArrow
-                >
-                  <Button
-                    variant="outline"
-                    colorScheme="blue"
-                    leftIcon={<FiPlus />}
-                    onClick={handleCreateHeader}
-                    size="md"
-                    px={6}
-                    py={2}
-                    borderRadius="md"
-                    fontWeight="medium"
-                    _hover={{
-                      transform: 'translateY(-1px)',
-                      boxShadow: 'md'
-                    }}
-                  >
-                    {t('accounts.addHeaderAccount')}
-                  </Button>
-                </Tooltip>
-                <Tooltip
-                  label={t('accounts.guide.accountTooltip')}
-                  placement="bottom"
-                  hasArrow
-                >
-                  <Button
-                    colorScheme="blue"
-                    leftIcon={<FiPlus />}
-                    onClick={handleCreate}
-                    size="md"
-                    px={6}
-                    py={2}
-                    borderRadius="md"
-                    fontWeight="medium"
-                    _hover={{
-                      transform: 'translateY(-1px)',
-                      boxShadow: 'lg'
-                    }}
-                  >
-                    {t('accounts.addAccount')}
-                  </Button>
-                </Tooltip>
+            {(canCreate || canExport) && (
+              <HStack spacing={3} flexWrap="wrap" justify={{ base: 'flex-start', lg: 'flex-end' }}>
+                {canExport && (
+                  <Menu placement="bottom-end" strategy="fixed" isLazy>
+                    <MenuButton
+                      as={Button}
+                      leftIcon={<FiDownload />}
+                      rightIcon={<FiChevronDown />}
+                      colorScheme="green"
+                      variant="outline"
+                      size="md"
+                      px={6}
+                      py={2}
+                      borderRadius="md"
+                      fontWeight="medium"
+                      isLoading={exportingFormat !== null}
+                      isDisabled={exportingFormat !== null}
+                      _hover={{
+                        transform: 'translateY(-1px)',
+                        boxShadow: 'md'
+                      }}
+                    >
+                      Unduh Daftar COA
+                    </MenuButton>
+                    <MenuList zIndex={1500} minW="220px">
+                      <MenuItem icon={<FiFileText />} onClick={handleDownloadPDF}>
+                        Unduh PDF
+                      </MenuItem>
+                      <MenuItem icon={<FiDownload />} onClick={handleDownloadExcel}>
+                        Unduh Excel
+                      </MenuItem>
+                    </MenuList>
+                  </Menu>
+                )}
+                {canCreate && (
+                  <>
+                    <Tooltip
+                      label={t('accounts.guide.headerTooltip')}
+                      placement="bottom"
+                      hasArrow
+                    >
+                      <Button
+                        variant="outline"
+                        colorScheme="blue"
+                        leftIcon={<FiPlus />}
+                        onClick={handleCreateHeader}
+                        size="md"
+                        px={6}
+                        py={2}
+                        borderRadius="md"
+                        fontWeight="medium"
+                        _hover={{
+                          transform: 'translateY(-1px)',
+                          boxShadow: 'md'
+                        }}
+                      >
+                        {t('accounts.addHeaderAccount')}
+                      </Button>
+                    </Tooltip>
+                    <Tooltip
+                      label={t('accounts.guide.accountTooltip')}
+                      placement="bottom"
+                      hasArrow
+                    >
+                      <Button
+                        colorScheme="blue"
+                        leftIcon={<FiPlus />}
+                        onClick={handleCreate}
+                        size="md"
+                        px={6}
+                        py={2}
+                        borderRadius="md"
+                        fontWeight="medium"
+                        _hover={{
+                          transform: 'translateY(-1px)',
+                          boxShadow: 'lg'
+                        }}
+                      >
+                        {t('accounts.addAccount')}
+                      </Button>
+                    </Tooltip>
+                  </>
+                )}
               </HStack>
             )}
           </Flex>

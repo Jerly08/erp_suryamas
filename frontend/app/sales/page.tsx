@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import SimpleLayout from "@/components/layout/SimpleLayout";
 import ProtectedModule from "@/components/common/ProtectedModule";
+import SearchableSelect from "@/components/common/SearchableSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import CompanyTypeGuard from "@/components/common/CompanyTypeGuard";
 import { useModulePermissions } from "@/hooks/usePermissions";
@@ -18,6 +19,9 @@ import salesService, {
   SalesCodeCounter,
   SalesFilter,
 } from "@/services/salesService";
+import contactService from "@/services/contactService";
+import { projectService, type Project } from "@/services/projectService";
+import type { Contact } from "@/types/contact";
 import {
   Box,
   Heading,
@@ -140,7 +144,7 @@ export default function SalesPage() {
 }
 
 const SalesPageContent: React.FC = () => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
   const { canCreate, canEdit, canDelete, canExport } =
@@ -201,6 +205,8 @@ const SalesPageContent: React.FC = () => {
       limit: 10,
       search: "",
       status: "",
+      customer_id: "",
+      project_id: "",
       start_date: "",
       end_date: "",
     },
@@ -222,6 +228,39 @@ const SalesPageContent: React.FC = () => {
       saving: false,
       error: null,
     });
+  const [filterCustomers, setFilterCustomers] = useState<Contact[]>([]);
+  const [filterProjects, setFilterProjects] = useState<Project[]>([]);
+  const [loadingFilterOptions, setLoadingFilterOptions] = useState(false);
+
+  const loadFilterOptions = useCallback(async () => {
+    if (!token) {
+      setFilterCustomers([]);
+      setFilterProjects([]);
+      return;
+    }
+
+    setLoadingFilterOptions(true);
+    const [customersResult, projectsResult] = await Promise.allSettled([
+      contactService.getContacts(token, "CUSTOMER"),
+      projectService.getAll(),
+    ]);
+
+    if (customersResult.status === "fulfilled") {
+      setFilterCustomers(customersResult.value);
+    } else {
+      console.error("Failed to load sales customer filters:", customersResult.reason);
+      setFilterCustomers([]);
+    }
+
+    if (projectsResult.status === "fulfilled") {
+      setFilterProjects(projectsResult.value);
+    } else {
+      console.error("Failed to load sales project filters:", projectsResult.reason);
+      setFilterProjects([]);
+    }
+
+    setLoadingFilterOptions(false);
+  }, [token]);
 
   // Load sales data
   const loadSales = async (newFilter?: Partial<SalesFilter>) => {
@@ -329,6 +368,10 @@ const SalesPageContent: React.FC = () => {
     loadSales();
     loadSalesSummary();
   }, []);
+
+  useEffect(() => {
+    loadFilterOptions();
+  }, [loadFilterOptions]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -523,12 +566,14 @@ const SalesPageContent: React.FC = () => {
   // Export handlers
   const handleExportPDF = async () => {
     try {
-      await salesService.downloadSalesReportPDF(
-        state.filter.start_date || undefined,
-        state.filter.end_date || undefined,
-        state.filter.status || undefined,
-        state.filter.search || undefined,
-      );
+      await salesService.downloadSalesReportPDF({
+        start_date: state.filter.start_date || undefined,
+        end_date: state.filter.end_date || undefined,
+        status: state.filter.status || undefined,
+        customer_id: state.filter.customer_id || undefined,
+        project_id: state.filter.project_id || undefined,
+        search: state.filter.search || undefined,
+      });
       handleSuccess(
         "Sales report PDF has been downloaded",
         toast,
@@ -546,12 +591,14 @@ const SalesPageContent: React.FC = () => {
 
   const handleExportCSV = async () => {
     try {
-      await salesService.downloadSalesReportCSV(
-        state.filter.start_date || undefined,
-        state.filter.end_date || undefined,
-        state.filter.status || undefined,
-        state.filter.search || undefined,
-      );
+      await salesService.downloadSalesReportCSV({
+        start_date: state.filter.start_date || undefined,
+        end_date: state.filter.end_date || undefined,
+        status: state.filter.status || undefined,
+        customer_id: state.filter.customer_id || undefined,
+        project_id: state.filter.project_id || undefined,
+        search: state.filter.search || undefined,
+      });
       handleSuccess(
         "Sales report CSV has been downloaded",
         toast,
@@ -816,6 +863,72 @@ const SalesPageContent: React.FC = () => {
                 </InputGroup>
               </Box>
 
+              <Box flex="1" minW="240px">
+                <Text
+                  fontSize="sm"
+                  fontWeight="medium"
+                  mb={2}
+                  color={textColor}
+                >
+                  {t("sales.filterByCustomer")}
+                </Text>
+                <SearchableSelect
+                  options={filterCustomers.map((customer) => ({
+                    id: customer.id,
+                    code: customer.code,
+                    name: customer.name,
+                    active: customer.is_active,
+                  }))}
+                  placeholder={t("sales.allCustomers")}
+                  value={state.filter.customer_id || ""}
+                  onChange={(value) =>
+                    handleFilterChange(
+                      "customer_id",
+                      value ? value.toString() : "",
+                    )
+                  }
+                  isLoading={loadingFilterOptions}
+                  displayFormat={(customer) =>
+                    customer.code
+                      ? `${customer.code} - ${customer.name}`
+                      : customer.name
+                  }
+                />
+              </Box>
+
+              <Box flex="1" minW="240px">
+                <Text
+                  fontSize="sm"
+                  fontWeight="medium"
+                  mb={2}
+                  color={textColor}
+                >
+                  {t("sales.filterByProject")}
+                </Text>
+                <SearchableSelect
+                  options={filterProjects.map((project) => ({
+                    id: project.id,
+                    code: project.code,
+                    name: project.name,
+                    active: project.status === "ACTIVE",
+                  }))}
+                  placeholder={t("sales.allProjects")}
+                  value={state.filter.project_id || ""}
+                  onChange={(value) =>
+                    handleFilterChange(
+                      "project_id",
+                      value ? value.toString() : "",
+                    )
+                  }
+                  isLoading={loadingFilterOptions}
+                  displayFormat={(project) =>
+                    project.code
+                      ? `${project.code} - ${project.name}`
+                      : project.name
+                  }
+                />
+              </Box>
+
               <Box minW="180px">
                 <Text
                   fontSize="sm"
@@ -886,6 +999,8 @@ const SalesPageContent: React.FC = () => {
                       ...prev.filter,
                       search: "",
                       status: "",
+                      customer_id: "",
+                      project_id: "",
                       start_date: "",
                       end_date: "",
                       page: 1,
@@ -894,6 +1009,8 @@ const SalesPageContent: React.FC = () => {
                   loadSales({
                     search: "",
                     status: "",
+                    customer_id: "",
+                    project_id: "",
                     start_date: "",
                     end_date: "",
                     page: 1,
@@ -902,6 +1019,8 @@ const SalesPageContent: React.FC = () => {
                   loadSalesSummary({
                     search: "",
                     status: "",
+                    customer_id: "",
+                    project_id: "",
                     start_date: "",
                     end_date: "",
                     page: 1,

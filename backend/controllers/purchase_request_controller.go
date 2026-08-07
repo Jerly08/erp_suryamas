@@ -378,6 +378,86 @@ func (c *PurchaseRequestController) SubmitInvoiceRevision(ctx *gin.Context) {
 	})
 }
 
+func (c *PurchaseRequestController) UploadPostPurchaseVendorInvoiceDocuments(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form", "details": err.Error()})
+		return
+	}
+
+	documentFiles := append([]*multipart.FileHeader{}, form.File["documents"]...)
+	documentFiles = append(documentFiles, form.File["invoice_documents"]...)
+	documentFiles = append(documentFiles, form.File["attachments"]...)
+	documentFiles = append(documentFiles, form.File["document"]...)
+	if len(documentFiles) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Vendor invoice document is required"})
+		return
+	}
+	if err := validatePurchaseRequestDocumentFiles(documentFiles); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+	documents, savedPaths, err := c.preparePurchaseRequestDocumentRecords(
+		ctx,
+		uint(id),
+		documentFiles,
+		userID,
+		models.PurchaseRequestDocumentPostPurchaseVendorInvoice,
+	)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	pr, err := c.service.UploadPostPurchaseVendorInvoiceDocuments(uint(id), userID, userRole, documents)
+	if err != nil {
+		cleanupUploadedFiles(savedPaths)
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"message": "Vendor invoice uploaded for verification",
+		"data":    pr,
+	})
+}
+
+func (c *PurchaseRequestController) ReviewPostPurchaseVendorInvoice(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestVendorInvoiceVerificationPayload
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid verification payload", "details": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+	pr, err := c.service.ReviewPostPurchaseVendorInvoice(uint(id), userID, userRole, payload)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Vendor invoice verification updated",
+		"data":    pr,
+	})
+}
+
 func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)

@@ -132,6 +132,9 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 	if len(response.Data.Items) != 1 {
 		t.Fatalf("expected one imported row, got %d", len(response.Data.Items))
 	}
+	if len(response.Data.ValidationIssues) != 0 {
+		t.Fatalf("expected no validation issues for valid payroll import, got %#v", response.Data.ValidationIssues)
+	}
 
 	item := response.Data.Items[0]
 	if response.Data.SuggestedPaymentDate != "2026-06-25" {
@@ -183,6 +186,33 @@ func TestImportPayrollPreviewPreservesFormattedExcelAmounts(t *testing.T) {
 			t.Errorf("%s = %v, expected %v", assertion.name, assertion.actual, assertion.expected)
 		}
 	}
+}
+
+func TestPayrollNegativeNetPayIssueIncludesImportRowAndCalculation(t *testing.T) {
+	item := models.PayrollItemCreateRequest{
+		ImportRowNumber:       12,
+		EmployeeName:          "Budi Santoso",
+		EmployeeCode:          "EMP-012",
+		BaseSalary:            1_000_000,
+		BPJSTKJHTEmployee:     150_000,
+		BPJSTKJPEmployee:      50_000,
+		BPJSKesehatanEmployee: 100_000,
+		OtherDeduction:        800_000,
+		EmployeeLoanDeduction: 50_000,
+	}
+
+	payrollImportItemTotals(&item)
+	issue := payrollNegativeNetPayIssue(&item, 2)
+
+	require.NotNil(t, issue)
+	require.Equal(t, 12, issue.RowNumber)
+	require.Equal(t, "Budi Santoso", issue.EmployeeName)
+	require.Equal(t, "EMP-012", issue.EmployeeCode)
+	require.Equal(t, float64(1_000_000), issue.GrossAmount)
+	require.Equal(t, float64(300_000), issue.EmployeeBPJS)
+	require.Equal(t, float64(800_000), issue.OtherDeduction)
+	require.Equal(t, float64(50_000), issue.EmployeeLoanDeduction)
+	require.Equal(t, float64(-150_000), issue.NetPay)
 }
 
 func TestDownloadPayrollImportTemplateMatchesRequestedHeaderOrder(t *testing.T) {
@@ -689,6 +719,63 @@ func TestCreatePayrollRunRejectsRangeOverlappingClosedPeriod(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("expected no payroll run to be created, got %d", count)
 	}
+}
+
+func TestCreatePayrollRunRejectsNegativeNetPayWithValidationIssue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupPayrollApprovalTestDB(t)
+
+	hrUser := models.User{
+		Username: "hr-negative-net",
+		Email:    "hr-negative-net@example.com",
+		Password: "password",
+		Role:     models.RoleHR,
+		IsActive: true,
+	}
+	require.NoError(t, db.Create(&hrUser).Error)
+
+	body := `{
+		"period_start":"2026-05-01",
+		"period_end":"2026-05-31",
+		"payment_date":"2026-05-31",
+		"items":[{
+			"employee_name":"Staff Negative",
+			"employee_code":"EMP-NEG",
+			"import_row_number":9,
+			"base_salary":1000000,
+			"bpjs_tk_jht_employee":150000,
+			"bpjs_tk_jp_employee":50000,
+			"bpjs_kesehatan_employee":100000,
+			"other_deduction":800000,
+			"employee_loan_deduction":50000
+		}]
+	}`
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/payroll", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("role", models.RoleHR)
+	ctx.Set("user_id", hrUser.ID)
+
+	NewPayrollController(db).CreatePayrollRun(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	var response struct {
+		Code             string                                `json:"code"`
+		Error            string                                `json:"error"`
+		ValidationIssues []models.PayrollImportValidationIssue `json:"validation_issues"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, "PAYROLL_NEGATIVE_NET_PAY", response.Code)
+	require.Len(t, response.ValidationIssues, 1)
+	require.Equal(t, 9, response.ValidationIssues[0].RowNumber)
+	require.Equal(t, "Staff Negative", response.ValidationIssues[0].EmployeeName)
+	require.Equal(t, float64(-150_000), response.ValidationIssues[0].NetPay)
+
+	var count int64
+	require.NoError(t, db.Model(&models.PayrollRun{}).Count(&count).Error)
+	require.Zero(t, count)
 }
 
 func TestApprovePayrollRunRejectsClosedPeriodEvenWithoutJournalAmount(t *testing.T) {

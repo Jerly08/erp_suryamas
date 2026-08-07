@@ -6,7 +6,7 @@ import SimpleLayout from '@/components/layout/SimpleLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModulePermissions } from '@/hooks/usePermissions';
 import cashBankService, { CashBank } from '@/services/cashbankService';
-import payrollService, { PayrollBPJSPaymentStatus, PayrollImportPreview, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollRunsSummary, PayrollSalaryPaymentStatus, PayrollStatus } from '@/services/payrollService';
+import payrollService, { PayrollBPJSPaymentStatus, PayrollImportPreview, PayrollImportValidationIssue, PayrollItem, PayrollPPhPaymentStatus, PayrollRun, PayrollRunsSummary, PayrollSalaryPaymentStatus, PayrollStatus } from '@/services/payrollService';
 import { isAccountingRole, isFinanceManagerRole, isFinanceStaffRole, isHRRole, normalizeRole } from '@/utils/roles';
 import { filterOperationalCashBankAccounts, filterActiveLeafAccounts } from '@/utils/accountFilters';
 import accountService from '@/services/accountService';
@@ -140,7 +140,7 @@ const getPayrollItemBPJSEmployee = (item: PayrollItem) => {
     Number(item.bpjs_tk_jkk_employee || 0) +
     Number(item.bpjs_tk_jkm_employee || 0) +
     Number(item.bpjs_kesehatan_employee || 0);
-  if (splitTotal > 0) return splitTotal;
+  if (splitTotal > 0.01) return splitTotal;
   return Number(item.bpjs_tk_jht || 0) + Number(item.bpjs_tk_jp || 0) + Number(item.bpjs_kesehatan || 0);
 };
 
@@ -162,7 +162,38 @@ const getPayrollItemBPJSKesehatan = (item: PayrollItem) => (
 
 const getPayrollItemEmployeeLoanDeduction = (item: PayrollItem) => Number(item.employee_loan_deduction || 0);
 
-const getPayrollItemNetPay = (item: PayrollItem) => Math.max(0, Number(item.base_salary || 0) + getPayrollItemBonus(item) - getPayrollItemBPJSEmployee(item) - Number(item.other_deduction || 0) - getPayrollItemEmployeeLoanDeduction(item));
+const roundPayrollMoney = (amount: number) => Math.round(amount * 100) / 100;
+
+const getPayrollItemNetPay = (item: PayrollItem) => roundPayrollMoney(
+  Number(item.base_salary || 0) +
+  getPayrollItemBonus(item) -
+  getPayrollItemBPJSEmployee(item) -
+  Number(item.other_deduction || 0) -
+  getPayrollItemEmployeeLoanDeduction(item),
+);
+
+type PayrollNegativeNetPayIssue = PayrollImportValidationIssue & { index: number };
+
+const getPayrollImportNegativeNetPayIssues = (items: PayrollItem[]): PayrollNegativeNetPayIssue[] => (
+  items.reduce<PayrollNegativeNetPayIssue[]>((issues, item, index) => {
+    const netPay = getPayrollItemNetPay(item);
+    if (netPay >= 0) return issues;
+
+    issues.push({
+      index,
+      row_number: Number(item.import_row_number || index + 2),
+      employee_name: item.employee_name,
+      employee_code: item.employee_code,
+      gross_amount: roundPayrollMoney(Number(item.base_salary || 0) + getPayrollItemBonus(item)),
+      employee_bpjs: roundPayrollMoney(getPayrollItemBPJSEmployee(item)),
+      other_deduction: roundPayrollMoney(Number(item.other_deduction || 0)),
+      employee_loan_deduction: roundPayrollMoney(getPayrollItemEmployeeLoanDeduction(item)),
+      net_pay: netPay,
+      message: 'Gaji bersih tidak boleh negatif. Periksa penghasilan dan potongan karyawan pada baris ini.',
+    });
+    return issues;
+  }, [])
+);
 
 const recalculatePayrollItem = (item: PayrollItem): PayrollItem => {
   const bpjs = getPayrollItemBPJS(item);
@@ -400,6 +431,21 @@ const getApiErrorMessage = (error: unknown, fallback: string) => {
   return apiError?.details ? `${message}: ${apiError.details}` : message;
 };
 
+const getPayrollImportSubmitErrorMessage = (error: unknown, fallback: string) => {
+  const validationIssues = (error as {
+    response?: { data?: { validation_issues?: PayrollImportValidationIssue[] } };
+  }).response?.data?.validation_issues;
+
+  if (validationIssues?.length) {
+    return validationIssues
+      .slice(0, 3)
+      .map((issue) => `Baris ${issue.row_number} (${issue.employee_name}): ${issue.message}`)
+      .join(' | ');
+  }
+
+  return getApiErrorMessage(error, fallback);
+};
+
 const payrollImportHeaders = [
   'PAYMENT DATE',
   'PAYMENT PERIOD',
@@ -510,6 +556,10 @@ export default function PayrollPage() {
   const softPanelBg = useColorModeValue('blue.50', 'whiteAlpha.100');
   const inputBg = useColorModeValue('white', 'whiteAlpha.50');
   const modalHeaderGradient = useColorModeValue('linear(to-r, teal.50, blue.50)', 'linear(to-r, whiteAlpha.100, whiteAlpha.50)');
+  const invalidPayrollRowBg = useColorModeValue('red.50', 'red.900');
+  const invalidPayrollRowBorder = useColorModeValue('red.300', 'red.500');
+  const importNegativeNetPayIssues = importPreview ? getPayrollImportNegativeNetPayIssues(importPreview.items) : [];
+  const importNegativeNetPayIssueIndexes = new Set(importNegativeNetPayIssues.map((issue) => issue.index));
 
   const loadPayroll = useCallback(async () => {
     setLoading(true);
@@ -839,6 +889,7 @@ export default function PayrollPage() {
       const preview = await payrollService.previewPayrollImport(importFile);
       const normalizedItems = preview.items.map(recalculatePayrollItem);
       const normalizedPreview = recalculatePayrollImportPreview(preview, normalizedItems);
+      const negativeNetPayIssues = getPayrollImportNegativeNetPayIssues(normalizedItems);
       setImportPreview(normalizedPreview);
       setImportDraft((prev) => ({
         ...prev,
@@ -847,9 +898,11 @@ export default function PayrollPage() {
         payment_date: preview.suggested_payment_date || prev.payment_date,
       }));
       toast({
-        title: 'Preview import berhasil',
-        description: `${normalizedPreview.summary.imported_rows} baris payroll siap direview.`,
-        status: 'success',
+        title: negativeNetPayIssues.length > 0 ? 'Preview import perlu diperbaiki' : 'Preview import berhasil',
+        description: negativeNetPayIssues.length > 0
+          ? `${negativeNetPayIssues.length} baris menghasilkan gaji bersih negatif. Periksa baris yang ditandai merah sebelum submit.`
+          : `${normalizedPreview.summary.imported_rows} baris payroll siap direview.`,
+        status: negativeNetPayIssues.length > 0 ? 'warning' : 'success',
         duration: 3000,
         isClosable: true,
       });
@@ -889,6 +942,18 @@ export default function PayrollPage() {
       return;
     }
 
+    const negativeNetPayIssues = getPayrollImportNegativeNetPayIssues(importPreview.items);
+    if (negativeNetPayIssues.length > 0) {
+      toast({
+        title: 'Payroll belum bisa disubmit',
+        description: `${negativeNetPayIssues.length} baris menghasilkan gaji bersih negatif. Perbaiki baris yang ditandai merah terlebih dahulu.`,
+        status: 'error',
+        duration: 4500,
+        isClosable: true,
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
       await payrollService.createPayrollRun({
@@ -910,7 +975,7 @@ export default function PayrollPage() {
     } catch (error: unknown) {
       toast({
         title: 'Gagal submit payroll import',
-        description: getApiErrorMessage(error, 'Payroll import belum bisa disubmit.'),
+        description: getPayrollImportSubmitErrorMessage(error, 'Payroll import belum bisa disubmit.'),
         status: 'error',
         duration: 4000,
         isClosable: true,
@@ -1777,6 +1842,22 @@ export default function PayrollPage() {
                         </Alert>
                       )}
 
+                      {importNegativeNetPayIssues.length > 0 && (
+                        <Alert status="error" borderRadius="xl" alignItems="flex-start">
+                          <AlertIcon mt={1} />
+                          <AlertDescription>
+                            <Text fontWeight="semibold">Gaji bersih negatif terdeteksi. Payroll belum dapat disubmit.</Text>
+                            <VStack align="stretch" spacing={1} mt={2}>
+                              {importNegativeNetPayIssues.map((issue) => (
+                                <Text key={`${issue.row_number}-${issue.index}`} fontSize="sm">
+                                  Baris {issue.row_number} - {issue.employee_name || 'Karyawan tanpa nama'}: {formatCurrency(issue.gross_amount)} - BPJS karyawan {formatCurrency(issue.employee_bpjs)} - potongan lain {formatCurrency(issue.other_deduction)} - pinjaman {formatCurrency(issue.employee_loan_deduction)} = {formatCurrency(issue.net_pay)}.
+                                </Text>
+                              ))}
+                            </VStack>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
                       <Box>
                         <Heading size="sm" mb={3}>
                           Review Grid Payroll Import
@@ -1813,8 +1894,15 @@ export default function PayrollPage() {
                               </Tr>
                             </Thead>
                             <Tbody>
-                              {importPreview.items.map((item, index) => (
-                                <Tr key={`${item.employee_code || item.employee_name}-${index}`}>
+                              {importPreview.items.map((item, index) => {
+                                const hasNegativeNetPay = importNegativeNetPayIssueIndexes.has(index);
+                                return (
+                                  <Tr
+                                    key={`${item.employee_code || item.employee_name}-${index}`}
+                                    bg={hasNegativeNetPay ? invalidPayrollRowBg : undefined}
+                                    borderLeftWidth={hasNegativeNetPay ? '3px' : undefined}
+                                    borderLeftColor={hasNegativeNetPay ? invalidPayrollRowBorder : undefined}
+                                  >
                                   <Td>{item.working_day || '-'}</Td>
                                   <Td>{item.employee_code || '-'}</Td>
                                   <Td>{item.work_unit || '-'}</Td>
@@ -1859,11 +1947,13 @@ export default function PayrollPage() {
                                   <Td isNumeric minW="150px">
                                     <CurrencyInput size="sm" value={item.employee_loan_deduction || 0} onChange={(value) => updateImportPreviewItem(index, 'employee_loan_deduction', value)} showLabel={false} min={0} />
                                   </Td>
-                                  <Td isNumeric fontWeight="bold" color="blue.600">
-                                    {formatCurrency(getPayrollItemNetPay(item))}
-                                  </Td>
-                                </Tr>
-                              ))}
+                                    <Td isNumeric fontWeight="bold" color={hasNegativeNetPay ? 'red.600' : 'blue.600'}>
+                                      <Text>{formatCurrency(getPayrollItemNetPay(item))}</Text>
+                                      {hasNegativeNetPay && <Badge colorScheme="red" mt={1}>Perlu diperbaiki</Badge>}
+                                    </Td>
+                                  </Tr>
+                                );
+                              })}
                             </Tbody>
                           </Table>
                         </TableContainer>
@@ -1876,7 +1966,7 @@ export default function PayrollPage() {
                 <Button variant="ghost" mr={3} onClick={closeImportModal}>
                   Batal
                 </Button>
-                <Button colorScheme="blue" onClick={handleSubmitImportedPayroll} isLoading={submitting} isDisabled={!importPreview?.items.length}>
+                <Button colorScheme="blue" onClick={handleSubmitImportedPayroll} isLoading={submitting} isDisabled={!importPreview?.items.length || importNegativeNetPayIssues.length > 0}>
                   Submit Import ke Finance Manager
                 </Button>
               </ModalFooter>

@@ -217,11 +217,19 @@ export default function PurchaseRequestsPage() {
   const [isCancellingRequest, setIsCancellingRequest] = useState(false);
   const [isUploadingRealizationDocuments, setIsUploadingRealizationDocuments] =
     useState(false);
+  const [isUploadingPostPurchaseVendorInvoice, setIsUploadingPostPurchaseVendorInvoice] =
+    useState(false);
+  const [isReviewingPostPurchaseVendorInvoice, setIsReviewingPostPurchaseVendorInvoice] =
+    useState(false);
   const [pendingAdditionalDocuments, setPendingAdditionalDocuments] = useState<
     File[]
   >([]);
   const [pendingRealizationDocuments, setPendingRealizationDocuments] =
     useState<File[]>([]);
+  const [postPurchaseVendorInvoiceDocuments, setPostPurchaseVendorInvoiceDocuments] =
+    useState<File[]>([]);
+  const [postPurchaseVendorInvoiceReviewNotes, setPostPurchaseVendorInvoiceReviewNotes] =
+    useState("");
   const { canCreate, canEdit, canApprove } = usePermissions();
   const formatCurrency = (value: number) => {
     const numericValue = Number(value) || 0;
@@ -249,12 +257,20 @@ export default function PurchaseRequestsPage() {
       timeZoneName: "short",
     });
   };
-  const getDocumentUploaderName = (document: PurchaseRequestDocument) => {
-    const uploader = document.uploader;
-    if (!uploader) return "";
-    const fullName = `${uploader.first_name || ""} ${uploader.last_name || ""}`.trim();
-    return fullName || uploader.username || uploader.email || "";
+  const getUserDisplayName = (
+    account?: {
+      first_name?: string;
+      last_name?: string;
+      username?: string;
+      email?: string;
+    } | null,
+  ) => {
+    if (!account) return "";
+    const fullName = `${account.first_name || ""} ${account.last_name || ""}`.trim();
+    return fullName || account.username || account.email || "";
   };
+  const getDocumentUploaderName = (document: PurchaseRequestDocument) =>
+    getUserDisplayName(document.uploader);
   const getDocumentUploadMeta = (document: PurchaseRequestDocument) => {
     const pieces = [formatFileSize(document.file_size)];
     const uploaderName = getDocumentUploaderName(document);
@@ -902,6 +918,126 @@ export default function PurchaseRequestsPage() {
     setInvoiceRevisionDocuments((files) =>
       files.filter((_, fileIndex) => fileIndex !== index),
     );
+  };
+
+  const handlePostPurchaseVendorInvoiceDocumentChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (selectedFiles.length === 0) return;
+
+    const invalidFile = selectedFiles.find((file) => validateDocument(file));
+    if (invalidFile) {
+      toast({
+        title: "Invoice aktual tidak bisa diunggah",
+        description: validateDocument(invalidFile) || undefined,
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    setPostPurchaseVendorInvoiceDocuments((currentFiles) => {
+      const existing = new Set(
+        currentFiles.map((file) => `${file.name}-${file.size}`),
+      );
+      const uniqueFiles = selectedFiles.filter(
+        (file) => !existing.has(`${file.name}-${file.size}`),
+      );
+      return [...currentFiles, ...uniqueFiles];
+    });
+  };
+
+  const handleRemovePostPurchaseVendorInvoiceDocument = (index: number) => {
+    setPostPurchaseVendorInvoiceDocuments((files) =>
+      files.filter((_, fileIndex) => fileIndex !== index),
+    );
+  };
+
+  const handleUploadPostPurchaseVendorInvoice = async () => {
+    if (!selectedRequest || postPurchaseVendorInvoiceDocuments.length === 0) {
+      return;
+    }
+
+    try {
+      setIsUploadingPostPurchaseVendorInvoice(true);
+      await purchaseRequestService.uploadPostPurchaseVendorInvoiceDocuments(
+        selectedRequest.id,
+        postPurchaseVendorInvoiceDocuments,
+      );
+      const refreshed = await purchaseRequestService.getById(selectedRequest.id);
+      setSelectedRequest(refreshed);
+      setPostPurchaseVendorInvoiceDocuments([]);
+      setPostPurchaseVendorInvoiceReviewNotes("");
+      initializeReviewForm(refreshed);
+      await fetchData();
+      toast({
+        title: "Invoice aktual dikirim untuk verifikasi",
+        description:
+          "Dokumen ditambahkan tanpa mengubah nominal PR, PO, pembayaran, jurnal, atau approval yang sudah ada.",
+        status: "success",
+        duration: 5000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal upload invoice aktual",
+        description: getDocumentUploadErrorMessage(err),
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsUploadingPostPurchaseVendorInvoice(false);
+    }
+  };
+
+  const handleReviewPostPurchaseVendorInvoice = async (
+    decision: "VERIFIED" | "NEEDS_CLARIFICATION",
+  ) => {
+    if (!selectedRequest) return;
+
+    const notes = postPurchaseVendorInvoiceReviewNotes.trim();
+    if (decision === "NEEDS_CLARIFICATION" && !notes) {
+      toast({
+        title: "Catatan klarifikasi wajib diisi",
+        description:
+          "Jelaskan informasi atau dokumen yang masih perlu dilengkapi oleh pengunggah.",
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    try {
+      setIsReviewingPostPurchaseVendorInvoice(true);
+      const updated = await purchaseRequestService.reviewPostPurchaseVendorInvoice(
+        selectedRequest.id,
+        { decision, notes: notes || undefined },
+      );
+      setSelectedRequest(updated);
+      setPostPurchaseVendorInvoiceReviewNotes(updated.vendor_invoice_review_notes || "");
+      initializeReviewForm(updated);
+      await fetchData();
+      toast({
+        title:
+          decision === "VERIFIED"
+            ? "Invoice aktual telah diverifikasi"
+            : "Klarifikasi invoice aktual dikirim",
+        description:
+          "Verifikasi dokumen tidak mengubah nominal PR, PO, pembayaran, jurnal, atau approval yang sudah ada.",
+        status: "success",
+        duration: 5000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal memverifikasi invoice aktual",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsReviewingPostPurchaseVendorInvoice(false);
+    }
   };
 
   const handleInvoiceRevisionItemChange = (
@@ -1775,7 +1911,18 @@ export default function PurchaseRequestsPage() {
 
   const canCancelPurchaseRequest = (pr?: PurchaseRequest | null) => {
     if (!pr || !canCancelPurchaseRequests) return false;
-    if (pr.status !== "APPROVED") return false;
+    const isUnsubmittedRequesterRevision =
+      pr.status === "AWAITING_REVISION" &&
+      pr.reapproval_reason === "REQUESTER_REVISION" &&
+      pr.current_approval_stage === "FINALIZED" &&
+      !pr.revision_submitted_by &&
+      !pr.revision_submitted_at &&
+      Boolean(pr.finance_manager_approved_by) &&
+      Boolean(pr.finance_manager_approved_at);
+
+    if (pr.status !== "APPROVED" && !isUnsubmittedRequesterRevision) {
+      return false;
+    }
     return !getPurchaseRealizationSummary(pr).hasPurchase;
   };
 
@@ -2274,6 +2421,8 @@ export default function PurchaseRequestsPage() {
       );
       setPendingAdditionalDocuments([]);
       setPendingRealizationDocuments([]);
+      setPostPurchaseVendorInvoiceDocuments([]);
+      setPostPurchaseVendorInvoiceReviewNotes(detail.vendor_invoice_review_notes || "");
       setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
       setInvoiceRevisionDocuments([]);
       setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
@@ -2336,6 +2485,10 @@ export default function PurchaseRequestsPage() {
         );
         setPendingAdditionalDocuments([]);
         setPendingRealizationDocuments([]);
+        setPostPurchaseVendorInvoiceDocuments([]);
+        setPostPurchaseVendorInvoiceReviewNotes(
+          detail.vendor_invoice_review_notes || "",
+        );
         setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
         setInvoiceRevisionDocuments([]);
         setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
@@ -2682,8 +2835,20 @@ export default function PurchaseRequestsPage() {
   const selectedRequestRealizationDocuments = selectedRequestDocuments.filter(
     (document) => (document.document_type || "").toUpperCase() === "REALIZATION_DOCUMENT",
   );
+  const selectedRequestPostPurchaseVendorInvoiceDocuments =
+    selectedRequestDocuments.filter(
+      (document) =>
+        (document.document_type || "").toUpperCase() ===
+        "POST_PURCHASE_VENDOR_INVOICE",
+    );
   const selectedRequestSupportingDocuments = selectedRequestDocuments.filter(
-    (document) => (document.document_type || "").toUpperCase() !== "REALIZATION_DOCUMENT",
+    (document) => {
+      const documentType = (document.document_type || "").toUpperCase();
+      return (
+        documentType !== "REALIZATION_DOCUMENT" &&
+        documentType !== "POST_PURCHASE_VENDOR_INVOICE"
+      );
+    },
   );
   const createDueDatePreview = getCalculatedDueDateInput(
     vendorInvoiceReceivedDate,
@@ -2733,6 +2898,25 @@ export default function PurchaseRequestsPage() {
         isFinanceTeamRole(roleNorm) ||
         selectedRequest.requester_id === Number(user?.id)),
   );
+  const canUploadSelectedRequestPostPurchaseVendorInvoice = Boolean(
+    selectedRequest &&
+      selectedRequest.requires_vendor_invoice &&
+      selectedRequestRealizationSummary.hasPurchase &&
+      (selectedRequest.status === "APPROVED" ||
+        selectedRequest.status === "COMPLETED") &&
+      (roleNorm === "admin" ||
+        isFinanceTeamRole(roleNorm) ||
+        selectedRequest.requester_id === Number(user?.id)),
+  );
+  const canReviewSelectedRequestPostPurchaseVendorInvoice = Boolean(
+    selectedRequest &&
+      selectedRequest.requires_vendor_invoice &&
+      selectedRequestRealizationSummary.hasPurchase &&
+      (selectedRequest.status === "APPROVED" ||
+        selectedRequest.status === "COMPLETED") &&
+      selectedRequest.vendor_invoice_status === "PENDING_VERIFICATION" &&
+      isFinanceTeamRole(roleNorm),
+  );
 
   const getVendorInvoiceStatusBadge = (pr?: PurchaseRequest | null) => {
     if (!pr?.requires_vendor_invoice) {
@@ -2744,6 +2928,12 @@ export default function PurchaseRequestsPage() {
         return <Badge colorScheme="orange">Invoice Menunggu Review</Badge>;
       case "APPROVED":
         return <Badge colorScheme="green">Invoice Aktual Approved</Badge>;
+      case "PENDING_VERIFICATION":
+        return <Badge colorScheme="orange">Menunggu Verifikasi Invoice</Badge>;
+      case "VERIFIED":
+        return <Badge colorScheme="green">Invoice Aktual Terverifikasi</Badge>;
+      case "NEEDS_CLARIFICATION":
+        return <Badge colorScheme="red">Perlu Klarifikasi Invoice</Badge>;
       case "AWAITING_INVOICE":
       default:
         return <Badge colorScheme="yellow">Menunggu Invoice Aktual</Badge>;
@@ -2755,6 +2945,16 @@ export default function PurchaseRequestsPage() {
       return (
         <Badge mt={1} colorScheme="purple">
           Invoice Aktual
+        </Badge>
+      );
+    }
+    if (
+      (documentType || "").toUpperCase() ===
+      "POST_PURCHASE_VENDOR_INVOICE"
+    ) {
+      return (
+        <Badge mt={1} colorScheme="cyan">
+          Invoice Aktual Pasca-PO
         </Badge>
       );
     }
@@ -3769,6 +3969,18 @@ export default function PurchaseRequestsPage() {
                                 ).toLocaleString()}
                               </Text>
                             )}
+                            {selectedRequest.vendor_invoice_reviewed_at && (
+                              <Text fontSize="xs" color={mutedTextColor}>
+                                Diverifikasi oleh{" "}
+                                {getUserDisplayName(
+                                  selectedRequest.vendor_invoice_reviewer,
+                                ) || "Finance/Accounting"}
+                                {" pada "}
+                                {new Date(
+                                  selectedRequest.vendor_invoice_reviewed_at,
+                                ).toLocaleString()}
+                              </Text>
+                            )}
                           </Flex>
                         </Box>
                         {(selectedRequest.revision_opened_at ||
@@ -4753,7 +4965,11 @@ export default function PurchaseRequestsPage() {
                   >
                     <Flex align="center" gap={2} wrap="wrap">
                       <Icon as={FiEdit3} color="purple.500" />
-                      <Text fontWeight="bold">Revisi Invoice Aktual</Text>
+                      <Text fontWeight="bold">
+                        {selectedRequestRealizationSummary.hasPurchase
+                          ? "Invoice Aktual Vendor"
+                          : "Revisi Invoice Aktual"}
+                      </Text>
                       {getVendorInvoiceStatusBadge(selectedRequest)}
                     </Flex>
                     {selectedRequest.vendor_invoice_submitter && (
@@ -4961,6 +5177,233 @@ export default function PurchaseRequestsPage() {
                           Submit Invoice Aktual
                         </Button>
                       </Flex>
+                    </Box>
+                  ) : selectedRequestRealizationSummary.hasPurchase ? (
+                    <Box>
+                      <Text fontSize="sm" color={mutedTextColor} mb={3}>
+                        Invoice aktual tetap dapat dilampirkan setelah PO dibuat.
+                        Dokumen ini diverifikasi terpisah dan tidak mengubah nilai
+                        PR, PO, pembayaran, jurnal, atau approval yang sudah ada.
+                      </Text>
+
+                      {selectedRequestPostPurchaseVendorInvoiceDocuments.length >
+                      0 ? (
+                        <Box
+                          borderWidth="1px"
+                          borderColor={borderColor}
+                          rounded="md"
+                        >
+                          {selectedRequestPostPurchaseVendorInvoiceDocuments.map(
+                            (document, index) => (
+                              <Flex
+                                key={document.id}
+                                align={{ base: "flex-start", md: "center" }}
+                                justify="space-between"
+                                direction={{ base: "column", md: "row" }}
+                                gap={3}
+                                p={3}
+                                borderTopWidth={index === 0 ? "0" : "1px"}
+                                borderColor={borderColor}
+                              >
+                                <Flex align="center" gap={3} minW={0}>
+                                  <Icon as={FiFileText} color="purple.500" />
+                                  <Box minW={0}>
+                                    <Text fontWeight="medium" noOfLines={1}>
+                                      {document.file_name}
+                                    </Text>
+                                    <Text fontSize="xs" color={mutedTextColor}>
+                                      {getDocumentUploadMeta(document)}
+                                    </Text>
+                                    {getDocumentTypeBadge(document.document_type)}
+                                  </Box>
+                                </Flex>
+                                <Button
+                                  onClick={() => handleDownloadDocument(document)}
+                                  leftIcon={<FiDownload />}
+                                  size="sm"
+                                  variant="outline"
+                                  colorScheme="purple"
+                                >
+                                  Buka
+                                </Button>
+                              </Flex>
+                            ),
+                          )}
+                        </Box>
+                      ) : (
+                        <Box p={3} rounded="md" bg={notePanelBg} color={notePanelColor}>
+                          <Text fontSize="sm" fontWeight="semibold">
+                            Invoice aktual belum diunggah.
+                          </Text>
+                        </Box>
+                      )}
+
+                      {selectedRequest.vendor_invoice_status ===
+                        "NEEDS_CLARIFICATION" &&
+                        selectedRequest.vendor_invoice_review_notes && (
+                          <Box
+                            mt={3}
+                            p={3}
+                            rounded="md"
+                            bg={notePanelBg}
+                            color={notePanelColor}
+                          >
+                            <Text fontSize="sm" fontWeight="semibold">
+                              Klarifikasi dari Finance/Accounting
+                            </Text>
+                            <Text fontSize="sm" mt={1} whiteSpace="pre-wrap">
+                              {selectedRequest.vendor_invoice_review_notes}
+                            </Text>
+                          </Box>
+                        )}
+
+                      {canUploadSelectedRequestPostPurchaseVendorInvoice && (
+                        <Box
+                          mt={3}
+                          pt={3}
+                          borderTopWidth="1px"
+                          borderColor={borderColor}
+                        >
+                          <Button
+                            as="label"
+                            leftIcon={<FiPaperclip />}
+                            size="sm"
+                            variant="outline"
+                            colorScheme="purple"
+                            cursor="pointer"
+                            isLoading={isUploadingPostPurchaseVendorInvoice}
+                          >
+                            Pilih Invoice Aktual
+                            <Input
+                              type="file"
+                              multiple
+                              accept={ACCEPTED_DOCUMENT_TYPES}
+                              display="none"
+                              onChange={handlePostPurchaseVendorInvoiceDocumentChange}
+                            />
+                          </Button>
+                          <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                            Format PDF, Word, Excel, CSV, TXT, JPG, PNG, atau WebP.
+                            Maksimal 50MB per file.
+                          </Text>
+
+                          {postPurchaseVendorInvoiceDocuments.length > 0 && (
+                            <Box mt={3}>
+                              {postPurchaseVendorInvoiceDocuments.map(
+                                (file, index) => (
+                                  <Flex
+                                    key={`${file.name}-${file.size}-${index}`}
+                                    align="center"
+                                    justify="space-between"
+                                    gap={3}
+                                    py={2}
+                                    borderTopWidth={index === 0 ? "0" : "1px"}
+                                    borderColor={borderColor}
+                                  >
+                                    <Flex align="center" gap={2} minW={0}>
+                                      <Icon as={FiFileText} color="purple.500" />
+                                      <Box minW={0}>
+                                        <Text
+                                          fontSize="sm"
+                                          fontWeight="medium"
+                                          noOfLines={1}
+                                        >
+                                          {file.name}
+                                        </Text>
+                                        <Text fontSize="xs" color={mutedTextColor}>
+                                          {formatFileSize(file.size)}
+                                        </Text>
+                                      </Box>
+                                    </Flex>
+                                    <IconButton
+                                      aria-label={`Hapus invoice ${file.name}`}
+                                      icon={<FiX />}
+                                      size="sm"
+                                      variant="ghost"
+                                      colorScheme="red"
+                                      onClick={() =>
+                                        handleRemovePostPurchaseVendorInvoiceDocument(
+                                          index,
+                                        )
+                                      }
+                                    />
+                                  </Flex>
+                                ),
+                              )}
+                              <Flex justify="flex-end" mt={3}>
+                                <Button
+                                  leftIcon={<FiCheck />}
+                                  size="sm"
+                                  colorScheme="purple"
+                                  onClick={handleUploadPostPurchaseVendorInvoice}
+                                  isLoading={isUploadingPostPurchaseVendorInvoice}
+                                  loadingText="Mengunggah..."
+                                >
+                                  Kirim untuk Verifikasi
+                                </Button>
+                              </Flex>
+                            </Box>
+                          )}
+                        </Box>
+                      )}
+
+                      {canReviewSelectedRequestPostPurchaseVendorInvoice && (
+                        <Box
+                          mt={3}
+                          pt={3}
+                          borderTopWidth="1px"
+                          borderColor={borderColor}
+                        >
+                          <FormControl>
+                            <FormLabel fontSize="sm" color={textColor}>
+                              Catatan Verifikasi
+                            </FormLabel>
+                            <Textarea
+                              value={postPurchaseVendorInvoiceReviewNotes}
+                              onChange={(event) =>
+                                setPostPurchaseVendorInvoiceReviewNotes(
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Wajib diisi bila perlu klarifikasi."
+                              rows={3}
+                              bg={inputBg}
+                              borderColor={inputBorderColor}
+                              color={textColor}
+                              _hover={{ borderColor: inputBorderColor }}
+                              _focusVisible={fieldFocusStyles}
+                              _placeholder={{ color: mutedTextColor }}
+                            />
+                          </FormControl>
+                          <Flex justify="flex-end" gap={2} mt={3} wrap="wrap">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              colorScheme="orange"
+                              onClick={() =>
+                                handleReviewPostPurchaseVendorInvoice(
+                                  "NEEDS_CLARIFICATION",
+                                )
+                              }
+                              isLoading={isReviewingPostPurchaseVendorInvoice}
+                            >
+                              Minta Klarifikasi
+                            </Button>
+                            <Button
+                              leftIcon={<FiCheck />}
+                              size="sm"
+                              colorScheme="green"
+                              onClick={() =>
+                                handleReviewPostPurchaseVendorInvoice("VERIFIED")
+                              }
+                              isLoading={isReviewingPostPurchaseVendorInvoice}
+                              loadingText="Menyimpan..."
+                            >
+                              Verifikasi Invoice
+                            </Button>
+                          </Flex>
+                        </Box>
+                      )}
                     </Box>
                   ) : (
                     <Box p={3} rounded="md" bg={notePanelBg} color={notePanelColor}>
@@ -5625,6 +6068,14 @@ export default function PurchaseRequestsPage() {
                   menghapus histori approval. Tindakan ini hanya bisa dilakukan
                   jika PR belum dibuat pembelian.
                 </Text>
+                {selectedRequest?.status === "AWAITING_REVISION" &&
+                  selectedRequest.reapproval_reason ===
+                    "REQUESTER_REVISION" && (
+                    <Text mb={3} fontSize="sm" color={mutedTextColor}>
+                      Pembatalan akan menghentikan revisi PIC yang belum dikirim
+                      ulang. Riwayat approval dan revisi tetap tersimpan.
+                    </Text>
+                  )}
                 <FormControl isRequired>
                   <FormLabel>Alasan pembatalan</FormLabel>
                   <Textarea

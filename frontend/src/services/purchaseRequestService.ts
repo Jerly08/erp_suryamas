@@ -147,6 +147,7 @@ export interface PurchaseRequestRevisionSnapshot {
   finance_manager_approved_at?: string | null;
   director_approved_by?: number | null;
   director_approved_at?: string | null;
+  uploader?: User;
   opener?: User;
   submitter?: User;
 }
@@ -168,12 +169,18 @@ export interface PurchaseRequest {
     | "AWAITING_INVOICE"
     | "PENDING_APPROVAL"
     | "APPROVED"
+    | "PENDING_VERIFICATION"
+    | "VERIFIED"
+    | "NEEDS_CLARIFICATION"
     | string;
   vendor_invoice_requested_by?: number | null;
   vendor_invoice_requested_at?: string | null;
   vendor_invoice_submitted_by?: number | null;
   vendor_invoice_submitted_at?: string | null;
   vendor_invoice_revision_notes?: string;
+  vendor_invoice_reviewed_by?: number | null;
+  vendor_invoice_reviewed_at?: string | null;
+  vendor_invoice_review_notes?: string;
   revision_opened_by?: number | null;
   revision_opened_at?: string | null;
   revision_reason?: string;
@@ -226,6 +233,7 @@ export interface PurchaseRequest {
   revision_submitter?: User;
   vendor_invoice_requester?: User;
   vendor_invoice_submitter?: User;
+  vendor_invoice_reviewer?: User;
   project?: {
     id: number;
     code: string;
@@ -293,6 +301,11 @@ export interface PurchaseRequestInvoiceRevisionItemPayload {
 export interface PurchaseRequestInvoiceRevisionPayload {
   notes?: string;
   items: PurchaseRequestInvoiceRevisionItemPayload[];
+}
+
+export interface PurchaseRequestVendorInvoiceVerificationPayload {
+  decision: "VERIFIED" | "NEEDS_CLARIFICATION";
+  notes?: string;
 }
 
 export interface PurchaseRequestOpenRevisionPayload {
@@ -407,6 +420,26 @@ export const purchaseRequestService = {
     return response.data;
   },
 
+  uploadPostPurchaseVendorInvoiceDocuments: async (
+    id: number,
+    documents: File[],
+  ): Promise<PurchaseRequest> => {
+    const formData = new FormData();
+    documents.forEach((file) => {
+      formData.append("invoice_documents", file);
+    });
+
+    const response = await api.post(
+      `${BASE_URL}/${id}/post-purchase-vendor-invoice-documents`,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
+      },
+    );
+    return response.data.data;
+  },
+
   getDocuments: async (id: number): Promise<PurchaseRequestDocument[]> => {
     const response = await api.get(`${BASE_URL}/${id}/documents`);
     return response.data;
@@ -500,6 +533,17 @@ export const purchaseRequestService = {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: PURCHASE_REQUEST_UPLOAD_TIMEOUT_MS,
     });
+    return response.data.data;
+  },
+
+  reviewPostPurchaseVendorInvoice: async (
+    id: number,
+    payload: PurchaseRequestVendorInvoiceVerificationPayload,
+  ): Promise<PurchaseRequest> => {
+    const response = await api.put(
+      `${BASE_URL}/${id}/post-purchase-vendor-invoice-verification`,
+      payload,
+    );
     return response.data.data;
   },
 

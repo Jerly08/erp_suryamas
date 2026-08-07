@@ -40,6 +40,9 @@ type PurchaseRequest struct {
 	VendorInvoiceSubmittedBy   *uint      `json:"vendor_invoice_submitted_by" gorm:"index"`
 	VendorInvoiceSubmittedAt   *time.Time `json:"vendor_invoice_submitted_at"`
 	VendorInvoiceRevisionNotes string     `json:"vendor_invoice_revision_notes" gorm:"type:text"`
+	VendorInvoiceReviewedBy    *uint      `json:"vendor_invoice_reviewed_by" gorm:"index"`
+	VendorInvoiceReviewedAt    *time.Time `json:"vendor_invoice_reviewed_at"`
+	VendorInvoiceReviewNotes   string     `json:"vendor_invoice_review_notes" gorm:"type:text"`
 
 	// Approval Tracking
 	ApprovedBy                *uint      `json:"approved_by" gorm:"index"`
@@ -77,6 +80,7 @@ type PurchaseRequest struct {
 	RevisionSubmitter      *User                             `json:"revision_submitter,omitempty" gorm:"foreignKey:RevisionSubmittedBy"`
 	VendorInvoiceRequester *User                             `json:"vendor_invoice_requester,omitempty" gorm:"foreignKey:VendorInvoiceRequestedBy"`
 	VendorInvoiceSubmitter *User                             `json:"vendor_invoice_submitter,omitempty" gorm:"foreignKey:VendorInvoiceSubmittedBy"`
+	VendorInvoiceReviewer  *User                             `json:"vendor_invoice_reviewer,omitempty" gorm:"foreignKey:VendorInvoiceReviewedBy"`
 }
 
 // PurchaseRequestItem represents the details of items requested
@@ -188,10 +192,11 @@ const (
 
 // Purchase request document type constants
 const (
-	PurchaseRequestDocumentSupporting        = "SUPPORTING_DOCUMENT"
-	PurchaseRequestDocumentVendorInvoice     = "VENDOR_INVOICE"
-	PurchaseRequestDocumentRequesterRevision = "REQUESTER_REVISION_DOCUMENT"
-	PurchaseRequestDocumentRealization       = "REALIZATION_DOCUMENT"
+	PurchaseRequestDocumentSupporting                = "SUPPORTING_DOCUMENT"
+	PurchaseRequestDocumentVendorInvoice             = "VENDOR_INVOICE"
+	PurchaseRequestDocumentPostPurchaseVendorInvoice = "POST_PURCHASE_VENDOR_INVOICE"
+	PurchaseRequestDocumentRequesterRevision         = "REQUESTER_REVISION_DOCUMENT"
+	PurchaseRequestDocumentRealization               = "REALIZATION_DOCUMENT"
 )
 
 // Purchase request reapproval reasons
@@ -203,10 +208,13 @@ const (
 
 // Purchase request vendor invoice status constants
 const (
-	PRVendorInvoiceStatusNotRequired     = "NOT_REQUIRED"
-	PRVendorInvoiceStatusAwaitingInvoice = "AWAITING_INVOICE"
-	PRVendorInvoiceStatusPendingApproval = "PENDING_APPROVAL"
-	PRVendorInvoiceStatusApproved        = "APPROVED"
+	PRVendorInvoiceStatusNotRequired         = "NOT_REQUIRED"
+	PRVendorInvoiceStatusAwaitingInvoice     = "AWAITING_INVOICE"
+	PRVendorInvoiceStatusPendingApproval     = "PENDING_APPROVAL"
+	PRVendorInvoiceStatusApproved            = "APPROVED"
+	PRVendorInvoiceStatusPendingVerification = "PENDING_VERIFICATION"
+	PRVendorInvoiceStatusVerified            = "VERIFIED"
+	PRVendorInvoiceStatusNeedsClarification  = "NEEDS_CLARIFICATION"
 )
 
 // Request DTOs
@@ -262,6 +270,11 @@ type PurchaseRequestInvoiceRevisionItemPayload struct {
 type PurchaseRequestInvoiceRevisionPayload struct {
 	Notes string                                      `json:"notes"`
 	Items []PurchaseRequestInvoiceRevisionItemPayload `json:"items" binding:"required,min=1"`
+}
+
+type PurchaseRequestVendorInvoiceVerificationPayload struct {
+	Decision string `json:"decision" binding:"required"`
+	Notes    string `json:"notes"`
 }
 
 type PurchaseRequestOpenRevisionPayload struct {

@@ -129,6 +129,7 @@ func NewSalesController(salesServiceV2 *services.SalesServiceV2, paymentService 
 // @Param limit query int false "Items per page" default(10)
 // @Param status query string false "Sales status filter"
 // @Param customer_id query string false "Customer ID filter"
+// @Param project_id query string false "Project ID filter"
 // @Param start_date query string false "Start date filter (YYYY-MM-DD)"
 // @Param end_date query string false "End date filter (YYYY-MM-DD)"
 // @Param search query string false "Search term"
@@ -160,6 +161,7 @@ func (sc *SalesController) GetSales(c *gin.Context) {
 	// Get filter parameters
 	status := c.Query("status")
 	customerID := c.Query("customer_id")
+	projectID := c.Query("project_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	search := c.Query("search")
@@ -167,6 +169,7 @@ func (sc *SalesController) GetSales(c *gin.Context) {
 	filter := models.SalesFilter{
 		Status:     status,
 		CustomerID: customerID,
+		ProjectID:  projectID,
 		StartDate:  startDate,
 		EndDate:    endDate,
 		Search:     search,
@@ -174,8 +177,8 @@ func (sc *SalesController) GetSales(c *gin.Context) {
 		Limit:      limit,
 	}
 
-	log.Printf("🔍 Fetching sales with filters: page=%d, limit=%d, status=%s, customer_id=%s",
-		page, limit, status, customerID)
+	log.Printf("🔍 Fetching sales with filters: page=%d, limit=%d, status=%s, customer_id=%s, project_id=%s",
+		page, limit, status, customerID, projectID)
 
 	result, err := sc.salesServiceV2.GetSales(filter)
 	if err != nil {
@@ -1084,6 +1087,7 @@ func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 
 	status := c.Query("status")
 	customerID := c.Query("customer_id")
+	projectID := c.Query("project_id")
 	startDateStr := c.Query("start_date")
 	endDateStr := c.Query("end_date")
 	search := c.Query("search")
@@ -1110,13 +1114,14 @@ func (sc *SalesController) GetSalesSummary(c *gin.Context) {
 	filter := models.SalesFilter{
 		Status:     status,
 		CustomerID: customerID,
+		ProjectID:  projectID,
 		StartDate:  startDateStr,
 		EndDate:    endDateStr,
 		Search:     search,
 	}
 
-	log.Printf("📅 Summary filters: status=%s, customer=%s, start=%s, end=%s, search=%s",
-		filter.Status, filter.CustomerID, filter.StartDate, filter.EndDate, filter.Search)
+	log.Printf("📅 Summary filters: status=%s, customer=%s, project=%s, start=%s, end=%s, search=%s",
+		filter.Status, filter.CustomerID, filter.ProjectID, filter.StartDate, filter.EndDate, filter.Search)
 
 	// Get summary from service
 	summary, err := sc.salesServiceV2.GetSalesSummary(filter)
@@ -1266,6 +1271,7 @@ func (sc *SalesController) ExportSalesReportPDF(c *gin.Context) {
 	endDate := c.Query("end_date")
 	status := c.Query("status")
 	customerID := c.Query("customer_id")
+	projectID := c.Query("project_id")
 	search := c.Query("search")
 
 	// If no dates provided, default to last 30 days to keep report size reasonable
@@ -1277,7 +1283,16 @@ func (sc *SalesController) ExportSalesReportPDF(c *gin.Context) {
 	}
 
 	// Collect sales data via service and generate PDF
-	filter := models.SalesFilter{StartDate: startDate, EndDate: endDate, Status: status, CustomerID: customerID, Search: search, Page: 1, Limit: 10000}
+	filter := models.SalesFilter{
+		StartDate:  startDate,
+		EndDate:    endDate,
+		Status:     status,
+		CustomerID: customerID,
+		ProjectID:  projectID,
+		Search:     search,
+		Page:       1,
+		Limit:      10000,
+	}
 	res, err := sc.salesServiceV2.GetSales(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1311,8 +1326,18 @@ func (sc *SalesController) ExportSalesReportCSV(c *gin.Context) {
 	// Collect sales data via service
 	status := c.Query("status")
 	customerID := c.Query("customer_id")
+	projectID := c.Query("project_id")
 	search := c.Query("search")
-	filter := models.SalesFilter{StartDate: startDate, EndDate: endDate, Status: status, CustomerID: customerID, Search: search, Page: 1, Limit: 10000}
+	filter := models.SalesFilter{
+		StartDate:  startDate,
+		EndDate:    endDate,
+		Status:     status,
+		CustomerID: customerID,
+		ProjectID:  projectID,
+		Search:     search,
+		Page:       1,
+		Limit:      10000,
+	}
 	res, err := sc.salesServiceV2.GetSales(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

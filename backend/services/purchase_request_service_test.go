@@ -679,6 +679,154 @@ func TestVendorInvoiceRevisionRejectedWhenPurchaseAlreadyLinked(t *testing.T) {
 	require.ErrorContains(t, err, "already linked to purchase")
 }
 
+func TestPostPurchaseVendorInvoiceVerificationPreservesFinancialWorkflow(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "post-po-invoice-requester", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "post-po-invoice-staff", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "post-po-invoice-manager", models.RoleFinanceManager)
+	vendor := seedPurchaseRequestTestVendor(t, db, "POST-PO-INVOICE")
+	product := seedPurchaseRequestTestProduct(t, db, "POST-PO-INVOICE")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		VendorID:   &vendor.ID,
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+
+	approveItems := []models.PurchaseRequestReviewItemPayload{
+		{ItemID: pr.Items[0].ID, Decision: models.PRItemDecisionApproved},
+	}
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
+		Items:                approveItems,
+		RequireVendorInvoice: true,
+	})
+	require.NoError(t, err)
+	_, err = service.ReviewPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestReviewPayload{
+		Items: approveItems,
+	})
+	require.NoError(t, err)
+
+	linkedPurchase := models.Purchase{
+		Code:              "PO-POST-PO-INVOICE",
+		VendorID:          vendor.ID,
+		UserID:            financeManager.ID,
+		PurchaseRequestID: &pr.ID,
+		Status:            models.PurchaseStatusDraft,
+		TotalAmount:       100000,
+		PaymentMethod:     "CREDIT",
+	}
+	require.NoError(t, db.Create(&linkedPurchase).Error)
+
+	beforeUpload, err := service.GetPurchaseRequestByID(pr.ID, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusApproved, beforeUpload.Status)
+	require.Equal(t, models.PRVendorInvoiceStatusAwaitingInvoice, beforeUpload.VendorInvoiceStatus)
+
+	uploaded, err := service.UploadPostPurchaseVendorInvoiceDocuments(
+		pr.ID,
+		requester.ID,
+		requester.Role,
+		[]models.PurchaseRequestDocument{{
+			FileName: "invoice-actual.pdf",
+			FilePath: "/uploads/purchase-requests/invoice-actual.pdf",
+			FileSize: 2048,
+			MimeType: "application/pdf",
+		}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, beforeUpload.Status, uploaded.Status)
+	require.Equal(t, beforeUpload.CurrentApprovalStage, uploaded.CurrentApprovalStage)
+	require.Equal(t, beforeUpload.TotalEstimatedAmount, uploaded.TotalEstimatedAmount)
+	require.Equal(t, beforeUpload.ApprovalRevision, uploaded.ApprovalRevision)
+	require.Equal(t, models.PRVendorInvoiceStatusPendingVerification, uploaded.VendorInvoiceStatus)
+	require.NotNil(t, uploaded.VendorInvoiceSubmittedBy)
+	require.Equal(t, requester.ID, *uploaded.VendorInvoiceSubmittedBy)
+	require.Nil(t, uploaded.VendorInvoiceReviewedBy)
+	require.Empty(t, uploaded.VendorInvoiceReviewNotes)
+	require.Len(t, uploaded.Documents, 1)
+	require.Equal(t, models.PurchaseRequestDocumentPostPurchaseVendorInvoice, uploaded.Documents[0].DocumentType)
+	require.Equal(t, beforeUpload.ApprovalRevision, uploaded.Documents[0].ApprovalRevision)
+
+	var purchaseAfterUpload models.Purchase
+	require.NoError(t, db.First(&purchaseAfterUpload, linkedPurchase.ID).Error)
+	require.Equal(t, linkedPurchase.Status, purchaseAfterUpload.Status)
+	require.Equal(t, linkedPurchase.TotalAmount, purchaseAfterUpload.TotalAmount)
+	require.Equal(t, linkedPurchase.PaymentMethod, purchaseAfterUpload.PaymentMethod)
+
+	_, err = service.ReviewPostPurchaseVendorInvoice(
+		pr.ID,
+		financeManager.ID,
+		financeManager.Role,
+		models.PurchaseRequestVendorInvoiceVerificationPayload{
+			Decision: models.PRVendorInvoiceStatusNeedsClarification,
+		},
+	)
+	require.ErrorContains(t, err, "verification notes are required")
+
+	clarified, err := service.ReviewPostPurchaseVendorInvoice(
+		pr.ID,
+		financeManager.ID,
+		financeManager.Role,
+		models.PurchaseRequestVendorInvoiceVerificationPayload{
+			Decision: models.PRVendorInvoiceStatusNeedsClarification,
+			Notes:    "Mohon unggah invoice dengan nomor vendor yang terlihat.",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRVendorInvoiceStatusNeedsClarification, clarified.VendorInvoiceStatus)
+	require.Equal(t, "Mohon unggah invoice dengan nomor vendor yang terlihat.", clarified.VendorInvoiceReviewNotes)
+	require.NotNil(t, clarified.VendorInvoiceReviewedBy)
+	require.Equal(t, financeManager.ID, *clarified.VendorInvoiceReviewedBy)
+	require.Equal(t, beforeUpload.TotalEstimatedAmount, clarified.TotalEstimatedAmount)
+	require.Equal(t, beforeUpload.Status, clarified.Status)
+
+	pendingVerification, err := service.UploadPostPurchaseVendorInvoiceDocuments(
+		pr.ID,
+		requester.ID,
+		requester.Role,
+		[]models.PurchaseRequestDocument{{
+			FileName: "invoice-actual-revised.pdf",
+			FilePath: "/uploads/purchase-requests/invoice-actual-revised.pdf",
+			FileSize: 4096,
+			MimeType: "application/pdf",
+		}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRVendorInvoiceStatusPendingVerification, pendingVerification.VendorInvoiceStatus)
+	require.Nil(t, pendingVerification.VendorInvoiceReviewedBy)
+	require.Empty(t, pendingVerification.VendorInvoiceReviewNotes)
+	require.Len(t, pendingVerification.Documents, 2)
+
+	verified, err := service.ReviewPostPurchaseVendorInvoice(
+		pr.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestVendorInvoiceVerificationPayload{
+			Decision: models.PRVendorInvoiceStatusVerified,
+			Notes:    "Invoice aktual sesuai dokumen vendor.",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRVendorInvoiceStatusVerified, verified.VendorInvoiceStatus)
+	require.NotNil(t, verified.VendorInvoiceReviewedBy)
+	require.Equal(t, financeStaff.ID, *verified.VendorInvoiceReviewedBy)
+	require.Equal(t, beforeUpload.Status, verified.Status)
+	require.Equal(t, beforeUpload.CurrentApprovalStage, verified.CurrentApprovalStage)
+	require.Equal(t, beforeUpload.TotalEstimatedAmount, verified.TotalEstimatedAmount)
+
+	var purchaseAfterVerification models.Purchase
+	require.NoError(t, db.First(&purchaseAfterVerification, linkedPurchase.ID).Error)
+	require.Equal(t, linkedPurchase.Status, purchaseAfterVerification.Status)
+	require.Equal(t, linkedPurchase.TotalAmount, purchaseAfterVerification.TotalAmount)
+	require.Equal(t, linkedPurchase.PaymentMethod, purchaseAfterVerification.PaymentMethod)
+}
+
 func TestFinanceManagerInitialStageIsNotTreatedAsPriorApproval(t *testing.T) {
 	pr := &models.PurchaseRequest{
 		Status:               models.PRStatusPendingApproval,
@@ -873,6 +1021,125 @@ func TestFinanceManagerCanCancelApprovedPurchaseRequestBeforePurchase(t *testing
 	require.Equal(t, financeManager.ID, *cancelled.FinanceManagerApprovedBy)
 	require.NotNil(t, cancelled.Canceller)
 	require.Equal(t, financeManager.Username, cancelled.Canceller.Username)
+}
+
+func TestFinanceManagerCanCancelUnsubmittedRequesterRevisionBeforePurchase(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	approved, _, financeStaff, financeManager, _ := seedApprovedPurchaseRequestForCancelTest(t, db, service, "UNSUBMITTED-REQUESTER-REVISION")
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		approved.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "Kebutuhan dibatalkan sebelum PIC mengirim revisi"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusAwaitingRevision, opened.Status)
+	require.Equal(t, models.PRReapprovalReasonRequesterRevision, opened.ReapprovalReason)
+	require.Nil(t, opened.RevisionSubmittedBy)
+	require.Nil(t, opened.RevisionSubmittedAt)
+
+	cancelled, err := service.CancelPurchaseRequest(
+		opened.ID,
+		financeManager.ID,
+		financeManager.Role,
+		"Kebutuhan dibatalkan saat menunggu revisi PIC",
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusCancelled, cancelled.Status)
+	require.Equal(t, models.PRApprovalStageFinalized, cancelled.CurrentApprovalStage)
+	require.Equal(t, "Kebutuhan dibatalkan saat menunggu revisi PIC", cancelled.CancelledReason)
+	require.NotNil(t, cancelled.FinanceManagerApprovedBy)
+	require.NotNil(t, cancelled.FinanceManagerApprovedAt)
+	require.NotNil(t, cancelled.RevisionOpenedAt)
+	require.Nil(t, cancelled.RevisionSubmittedAt)
+	require.Len(t, cancelled.RevisionSnapshots, 1)
+}
+
+func TestCancelPurchaseRequestRejectsUnsubmittedRequesterRevisionWhenPurchaseAlreadyLinked(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	approved, _, financeStaff, financeManager, vendor := seedApprovedPurchaseRequestForCancelTest(t, db, service, "UNSUBMITTED-REQUESTER-REVISION-LINKED")
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		approved.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "PIC diminta revisi sebelum pembatalan"},
+	)
+	require.NoError(t, err)
+
+	purchase := models.Purchase{
+		Code:              "PO-CANCEL-REVISION-LINKED",
+		VendorID:          vendor.ID,
+		UserID:            financeManager.ID,
+		Status:            models.PurchaseStatusDraft,
+		PurchaseRequestID: &opened.ID,
+	}
+	require.NoError(t, db.Create(&purchase).Error)
+
+	_, err = service.CancelPurchaseRequest(
+		opened.ID,
+		financeManager.ID,
+		financeManager.Role,
+		"Tidak boleh membatalkan PR revisi yang sudah terealisasi",
+	)
+	require.ErrorContains(t, err, "already linked to purchase")
+	require.ErrorContains(t, err, "PO-CANCEL-REVISION-LINKED")
+
+	refreshed, err := service.GetPurchaseRequestByID(opened.ID, financeManager.ID, financeManager.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusAwaitingRevision, refreshed.Status)
+	require.Nil(t, refreshed.CancelledBy)
+	require.Nil(t, refreshed.CancelledAt)
+	require.Empty(t, refreshed.CancelledReason)
+}
+
+func TestCancelPurchaseRequestRejectsSubmittedRequesterRevision(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	approved, requester, financeStaff, financeManager, _ := seedApprovedPurchaseRequestForCancelTest(t, db, service, "SUBMITTED-REQUESTER-REVISION")
+	opened, err := service.OpenPurchaseRequestRequesterRevision(
+		approved.ID,
+		financeStaff.ID,
+		financeStaff.Role,
+		models.PurchaseRequestOpenRevisionPayload{Reason: "PIC perlu memperbarui nominal"},
+	)
+	require.NoError(t, err)
+
+	revised, err := service.SubmitPurchaseRequestRequesterRevision(
+		opened.ID,
+		requester.ID,
+		requester.Role,
+		models.PurchaseRequestRequesterRevisionPayload{
+			Notes: "PIC mengirim revisi untuk ditinjau ulang",
+			Items: []models.PurchaseRequestRequesterRevisionItemPayload{
+				{
+					ItemID:         opened.Items[0].ID,
+					Quantity:       1,
+					EstimatedPrice: 100000,
+				},
+			},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusPendingApproval, revised.Status)
+	require.NotNil(t, revised.RevisionSubmittedAt)
+
+	_, err = service.CancelPurchaseRequest(
+		revised.ID,
+		financeManager.ID,
+		financeManager.Role,
+		"Tidak boleh membatalkan revisi yang sudah dikirim",
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "can only be cancelled after finance manager approval")
 }
 
 func TestCancelPurchaseRequestRejectedForRequester(t *testing.T) {

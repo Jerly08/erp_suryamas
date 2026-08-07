@@ -20,6 +20,8 @@ type PurchaseRequestService interface {
 	OpenPurchaseRequestRequesterRevision(id uint, userID uint, userRole string, payload models.PurchaseRequestOpenRevisionPayload) (*models.PurchaseRequest, error)
 	SubmitPurchaseRequestRequesterRevision(id uint, userID uint, userRole string, payload models.PurchaseRequestRequesterRevisionPayload, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error)
 	SubmitPurchaseRequestInvoiceRevision(id uint, userID uint, userRole string, payload models.PurchaseRequestInvoiceRevisionPayload, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error)
+	UploadPostPurchaseVendorInvoiceDocuments(id uint, userID uint, userRole string, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error)
+	ReviewPostPurchaseVendorInvoice(id uint, userID uint, userRole string, payload models.PurchaseRequestVendorInvoiceVerificationPayload) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
 	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
 	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
@@ -733,6 +735,134 @@ func (s *purchaseRequestService) SubmitPurchaseRequestInvoiceRevision(id uint, u
 	return updated, nil
 }
 
+// UploadPostPurchaseVendorInvoiceDocuments stores an actual vendor invoice after
+// a PO exists. It deliberately does not reopen approvals or change PR, PO,
+// payment, or journal values; material differences use the correction workflow.
+func (s *purchaseRequestService) UploadPostPurchaseVendorInvoiceDocuments(id uint, userID uint, userRole string, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error) {
+	if len(documents) == 0 {
+		return nil, fmt.Errorf("vendor invoice document is required")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+
+	roleNorm := models.NormalizeRole(userRole)
+	canUpload := roleNorm == models.RoleAdmin || models.IsFinanceTeamRole(roleNorm) || pr.RequesterID == userID
+	if !canUpload {
+		return nil, fmt.Errorf("only the requester, finance team, or admin can upload vendor invoice documents")
+	}
+	if !pr.RequiresVendorInvoice {
+		return nil, fmt.Errorf("purchase request %s does not require vendor invoice verification", pr.PRNumber)
+	}
+	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusCompleted {
+		return nil, fmt.Errorf("vendor invoice can only be uploaded after purchase request approval")
+	}
+
+	linkedPurchases, err := s.getLinkedPurchasesForPurchaseRequest(pr.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(linkedPurchases) == 0 {
+		return nil, fmt.Errorf("post-purchase vendor invoice upload requires a linked purchase")
+	}
+
+	revision := pr.ApprovalRevision
+	if revision < 1 {
+		revision = 1
+	}
+	now := time.Now()
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		for index := range documents {
+			documents[index].PurchaseRequestID = pr.ID
+			documents[index].DocumentType = models.PurchaseRequestDocumentPostPurchaseVendorInvoice
+			documents[index].UploadedBy = userID
+			documents[index].ApprovalRevision = revision
+		}
+		if err := tx.Create(&documents).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&models.PurchaseRequest{}).Where("id = ?", pr.ID).Updates(map[string]interface{}{
+			"vendor_invoice_status":       models.PRVendorInvoiceStatusPendingVerification,
+			"vendor_invoice_submitted_by": userID,
+			"vendor_invoice_submitted_at": now,
+			"vendor_invoice_reviewed_by":  nil,
+			"vendor_invoice_reviewed_at":  nil,
+			"vendor_invoice_review_notes": "",
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetByID(pr.ID)
+}
+
+// ReviewPostPurchaseVendorInvoice records Finance/Accounting verification for a
+// post-PO invoice document. It never changes the underlying financial records.
+func (s *purchaseRequestService) ReviewPostPurchaseVendorInvoice(id uint, userID uint, userRole string, payload models.PurchaseRequestVendorInvoiceVerificationPayload) (*models.PurchaseRequest, error) {
+	roleNorm := models.NormalizeRole(userRole)
+	if !models.IsFinanceTeamRole(roleNorm) {
+		return nil, fmt.Errorf("only finance team can verify post-purchase vendor invoice documents")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+	if !pr.RequiresVendorInvoice {
+		return nil, fmt.Errorf("purchase request %s does not require vendor invoice verification", pr.PRNumber)
+	}
+	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusCompleted {
+		return nil, fmt.Errorf("vendor invoice can only be verified after purchase request approval")
+	}
+	if pr.VendorInvoiceStatus != models.PRVendorInvoiceStatusPendingVerification {
+		return nil, fmt.Errorf("vendor invoice is not awaiting verification")
+	}
+
+	linkedPurchases, err := s.getLinkedPurchasesForPurchaseRequest(pr.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(linkedPurchases) == 0 {
+		return nil, fmt.Errorf("post-purchase vendor invoice verification requires a linked purchase")
+	}
+
+	var documentCount int64
+	if err := s.db.Model(&models.PurchaseRequestDocument{}).
+		Where("purchase_request_id = ? AND document_type = ?", pr.ID, models.PurchaseRequestDocumentPostPurchaseVendorInvoice).
+		Count(&documentCount).Error; err != nil {
+		return nil, err
+	}
+	if documentCount == 0 {
+		return nil, fmt.Errorf("post-purchase vendor invoice document is required before verification")
+	}
+
+	decision := strings.ToUpper(strings.TrimSpace(payload.Decision))
+	if decision != models.PRVendorInvoiceStatusVerified && decision != models.PRVendorInvoiceStatusNeedsClarification {
+		return nil, fmt.Errorf("invalid vendor invoice verification decision")
+	}
+	notes := strings.TrimSpace(payload.Notes)
+	if decision == models.PRVendorInvoiceStatusNeedsClarification && notes == "" {
+		return nil, fmt.Errorf("verification notes are required when clarification is needed")
+	}
+
+	now := time.Now()
+	if err := s.db.Model(&models.PurchaseRequest{}).Where("id = ?", pr.ID).Updates(map[string]interface{}{
+		"vendor_invoice_status":       decision,
+		"vendor_invoice_reviewed_by":  userID,
+		"vendor_invoice_reviewed_at":  now,
+		"vendor_invoice_review_notes": notes,
+	}).Error; err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetByID(pr.ID)
+}
+
 func (s *purchaseRequestService) getLinkedPurchasesForPurchaseRequest(purchaseRequestID uint) ([]models.Purchase, error) {
 	var purchases []models.Purchase
 	err := s.db.Raw(`
@@ -1029,6 +1159,10 @@ func (s *purchaseRequestService) CancelPurchaseRequest(id uint, userID uint, use
 	case models.PRStatusApproved:
 		// Cancellation is intentionally limited to approved PRs that have not
 		// been realized yet, so the approval history remains intact.
+	case models.PRStatusAwaitingRevision:
+		if !canCancelUnsubmittedRequesterRevision(pr) {
+			return nil, fmt.Errorf("purchase request %s can only be cancelled after finance manager approval and before requester revision is submitted", pr.PRNumber)
+		}
 	case models.PRStatusCancelled:
 		return nil, fmt.Errorf("purchase request %s is already cancelled", pr.PRNumber)
 	case models.PRStatusCompleted:
@@ -1069,6 +1203,23 @@ func (s *purchaseRequestService) CancelPurchaseRequest(id uint, userID uint, use
 	}
 
 	return s.repo.GetByID(pr.ID)
+}
+
+// canCancelUnsubmittedRequesterRevision permits an approved PR to be cancelled
+// while it is waiting for a requester revision that has not been submitted yet.
+// It intentionally does not permit any revised PR to bypass its new approval flow.
+func canCancelUnsubmittedRequesterRevision(pr *models.PurchaseRequest) bool {
+	if pr == nil {
+		return false
+	}
+
+	return pr.Status == models.PRStatusAwaitingRevision &&
+		pr.ReapprovalReason == models.PRReapprovalReasonRequesterRevision &&
+		pr.CurrentApprovalStage == models.PRApprovalStageFinalized &&
+		pr.RevisionSubmittedBy == nil &&
+		pr.RevisionSubmittedAt == nil &&
+		pr.FinanceManagerApprovedBy != nil &&
+		pr.FinanceManagerApprovedAt != nil
 }
 
 func (s *purchaseRequestService) DeletePurchaseRequest(id uint) error {

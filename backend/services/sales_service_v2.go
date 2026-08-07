@@ -1920,6 +1920,27 @@ func (s *SalesServiceV2) CancelSale(saleID uint, reason string, userID uint) err
 	return nil
 }
 
+func applySalesSearchFilter(query *gorm.DB, search string) *gorm.DB {
+	searchTerm := strings.TrimSpace(search)
+	if searchTerm == "" {
+		return query
+	}
+
+	searchPattern := "%" + searchTerm + "%"
+	return query.
+		Joins("LEFT JOIN contacts ON contacts.id = sales.customer_id").
+		Joins("LEFT JOIN projects ON projects.id = sales.project_id").
+		Where(
+			"sales.invoice_number ILIKE ? OR sales.code ILIKE ? OR sales.reference ILIKE ? OR contacts.name ILIKE ? OR projects.code ILIKE ? OR projects.name ILIKE ?",
+			searchPattern,
+			searchPattern,
+			searchPattern,
+			searchPattern,
+			searchPattern,
+			searchPattern,
+		)
+}
+
 // GetSales retrieves sales with filters
 func (s *SalesServiceV2) GetSales(filter models.SalesFilter) (*models.SalesResult, error) {
 	query := s.db.Model(&models.Sale{}).Preload("Customer").Preload("SaleItems").Preload("Project")
@@ -1936,7 +1957,10 @@ func (s *SalesServiceV2) GetSales(filter models.SalesFilter) (*models.SalesResul
 		}
 	}
 	if filter.CustomerID != "" {
-		query = query.Where("customer_id = ?", filter.CustomerID)
+		query = query.Where("sales.customer_id = ?", filter.CustomerID)
+	}
+	if filter.ProjectID != "" {
+		query = query.Where("sales.project_id = ?", filter.ProjectID)
 	}
 	if filter.StartDate != "" {
 		// Ensure start date is inclusive from 00:00:00 local time
@@ -1958,13 +1982,7 @@ func (s *SalesServiceV2) GetSales(filter models.SalesFilter) (*models.SalesResul
 			query = query.Where("date <= ?", filter.EndDate)
 		}
 	}
-	if filter.Search != "" {
-		searchPattern := "%" + filter.Search + "%"
-		// Join contacts to allow searching by customer name as well
-		query = query.Joins("LEFT JOIN contacts ON contacts.id = sales.customer_id").
-			Where("sales.invoice_number ILIKE ? OR sales.code ILIKE ? OR sales.reference ILIKE ? OR contacts.name ILIKE ?",
-				searchPattern, searchPattern, searchPattern, searchPattern)
-	}
+	query = applySalesSearchFilter(query, filter.Search)
 
 	// Count total
 	var total int64
@@ -1973,7 +1991,7 @@ func (s *SalesServiceV2) GetSales(filter models.SalesFilter) (*models.SalesResul
 	// Apply pagination
 	offset := (filter.Page - 1) * filter.Limit
 	var sales []models.Sale
-	if err := query.Offset(offset).Limit(filter.Limit).Order("created_at DESC").Find(&sales).Error; err != nil {
+	if err := query.Offset(offset).Limit(filter.Limit).Order("sales.created_at DESC").Find(&sales).Error; err != nil {
 		return nil, fmt.Errorf("failed to get sales: %v", err)
 	}
 
@@ -2402,6 +2420,9 @@ func (s *SalesServiceV2) applySalesSummaryFilter(query *gorm.DB, filter models.S
 	if filter.CustomerID != "" {
 		query = query.Where("sales.customer_id = ?", filter.CustomerID)
 	}
+	if filter.ProjectID != "" {
+		query = query.Where("sales.project_id = ?", filter.ProjectID)
+	}
 
 	if filter.StartDate != "" {
 		if t, err := time.Parse("2006-01-02", filter.StartDate); err == nil {
@@ -2420,20 +2441,15 @@ func (s *SalesServiceV2) applySalesSummaryFilter(query *gorm.DB, filter models.S
 		}
 	}
 
-	if filter.Search != "" {
-		searchPattern := "%" + filter.Search + "%"
-		query = query.Joins("LEFT JOIN contacts ON contacts.id = sales.customer_id").
-			Where("sales.invoice_number ILIKE ? OR sales.code ILIKE ? OR sales.reference ILIKE ? OR contacts.name ILIKE ?",
-				searchPattern, searchPattern, searchPattern, searchPattern)
-	}
+	query = applySalesSearchFilter(query, filter.Search)
 
 	return query
 }
 
 // GetSalesSummary gets sales summary with filter awareness
 func (s *SalesServiceV2) GetSalesSummary(filter models.SalesFilter) (*models.SalesSummaryResponse, error) {
-	log.Printf("📊 Getting sales summary with filters: status=%s, customer=%s, start=%s, end=%s, search=%s",
-		filter.Status, filter.CustomerID, filter.StartDate, filter.EndDate, filter.Search)
+	log.Printf("📊 Getting sales summary with filters: status=%s, customer=%s, project=%s, start=%s, end=%s, search=%s",
+		filter.Status, filter.CustomerID, filter.ProjectID, filter.StartDate, filter.EndDate, filter.Search)
 
 	query := s.applySalesSummaryFilter(s.db.Model(&models.Sale{}), filter)
 

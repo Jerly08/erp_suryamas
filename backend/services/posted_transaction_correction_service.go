@@ -37,6 +37,9 @@ func (s *PostedTransactionCorrectionService) Create(
 	if err := validatePostedTransactionCorrectionType(request.CorrectionType); err != nil {
 		return nil, err
 	}
+	if !isSupportedPostedTransactionCorrectionWorkflow(request.CorrectionType) {
+		return nil, fmt.Errorf("jenis koreksi ini belum didukung oleh workflow otomatis")
+	}
 	reason := strings.TrimSpace(request.Reason)
 	if reason == "" {
 		return nil, fmt.Errorf("alasan koreksi wajib diisi")
@@ -776,6 +779,19 @@ func validatePostedTransactionCorrectionType(value string) error {
 		return nil
 	default:
 		return fmt.Errorf("jenis koreksi transaksi tidak dikenali")
+	}
+}
+
+// Existing correction records may still use legacy categories, but new requests
+// are limited to workflows with an explicit, auditable system implementation.
+func isSupportedPostedTransactionCorrectionWorkflow(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case models.PostedTransactionCorrectionTypeMissingPaymentProof,
+		models.PostedTransactionCorrectionTypeSalesCreditClassification,
+		models.PostedTransactionCorrectionTypeCOAReclassification:
+		return true
+	default:
+		return false
 	}
 }
 

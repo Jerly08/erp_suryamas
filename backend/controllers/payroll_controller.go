@@ -500,6 +500,45 @@ func payrollCalculatedNetPay(item *models.PayrollItemCreateRequest) float64 {
 	return roundPayrollMoney(payrollItemGross(item) - payrollCreateBPJSEmployeeTotal(item) - item.OtherDeduction - item.EmployeeLoanDeduction)
 }
 
+func payrollNegativeNetPayIssue(item *models.PayrollItemCreateRequest, fallbackRowNumber int) *models.PayrollImportValidationIssue {
+	if item == nil || item.NetPay >= 0 {
+		return nil
+	}
+
+	rowNumber := item.ImportRowNumber
+	if rowNumber <= 0 {
+		rowNumber = fallbackRowNumber
+	}
+
+	return &models.PayrollImportValidationIssue{
+		RowNumber:             rowNumber,
+		EmployeeName:          strings.TrimSpace(item.EmployeeName),
+		EmployeeCode:          strings.TrimSpace(item.EmployeeCode),
+		GrossAmount:           roundPayrollMoney(payrollItemGross(item)),
+		EmployeeBPJS:          roundPayrollMoney(payrollCreateBPJSEmployeeTotal(item)),
+		OtherDeduction:        roundPayrollMoney(item.OtherDeduction),
+		EmployeeLoanDeduction: roundPayrollMoney(item.EmployeeLoanDeduction),
+		NetPay:                roundPayrollMoney(item.NetPay),
+		Message:               "Gaji bersih tidak boleh negatif. Periksa penghasilan dan potongan karyawan pada baris ini.",
+	}
+}
+
+func payrollHasNegativeInput(item *models.PayrollItemCreateRequest) bool {
+	if item == nil {
+		return false
+	}
+
+	return item.BaseSalary < 0 || item.Bonus < 0 || item.PPh < 0 || item.BPJS < 0 ||
+		item.AttendanceAllowance < 0 || item.CompensationPKWT < 0 || item.Overtime < 0 ||
+		item.BPJSTKJHT < 0 || item.BPJSTKJP < 0 || item.BPJSKesehatan < 0 || item.Proportional < 0 ||
+		item.BPJSTKJHTEmployer < 0 || item.BPJSTKJHTEmployee < 0 ||
+		item.BPJSTKJPEmployer < 0 || item.BPJSTKJPEmployee < 0 ||
+		item.BPJSTKJKKEmployer < 0 || item.BPJSTKJKKEmployee < 0 ||
+		item.BPJSTKJKMEmployer < 0 || item.BPJSTKJKMEmployee < 0 ||
+		item.BPJSKesehatanEmployer < 0 || item.BPJSKesehatanEmployee < 0 ||
+		item.OtherDeduction < 0 || item.EmployeeLoanDeduction < 0
+}
+
 func normalizePayrollImportHeader(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	var builder strings.Builder
@@ -1595,9 +1634,10 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 	}
 
 	response := models.PayrollImportPreviewResponse{
-		Items:    []models.PayrollItemCreateRequest{},
-		Warnings: []string{},
-		Headers:  rawHeaders,
+		Items:            []models.PayrollItemCreateRequest{},
+		Warnings:         []string{},
+		ValidationIssues: []models.PayrollImportValidationIssue{},
+		Headers:          rawHeaders,
 	}
 
 	for rowIndex := headerRowIndex + 1; rowIndex < len(rows); rowIndex++ {
@@ -1632,6 +1672,7 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 		item := models.PayrollItemCreateRequest{
 			EmployeeName:          employeeName,
 			EmployeeCode:          employeeCode,
+			ImportRowNumber:       rowIndex + 1,
 			WorkingDay:            getPayrollImportNumber(row, headerIndex, "working_day"),
 			WorkUnit:              getPayrollImportValue(row, headerIndex, "work_unit"),
 			PaymentVia:            getPayrollImportValue(row, headerIndex, "payment_via"),
@@ -1662,6 +1703,9 @@ func (c *PayrollController) ImportPayrollPreview(ctx *gin.Context) {
 			NetPay:                netPay,
 		}
 		payrollImportItemTotals(&item)
+		if issue := payrollNegativeNetPayIssue(&item, rowIndex+1); issue != nil {
+			response.ValidationIssues = append(response.ValidationIssues, *issue)
+		}
 
 		response.Items = append(response.Items, item)
 		response.Summary.ImportedRows++
@@ -1771,6 +1815,32 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 		return
 	}
 
+	negativeNetPayIssues := make([]models.PayrollImportValidationIssue, 0)
+	for itemIndex := range req.Items {
+		reqItem := &req.Items[itemIndex]
+		if strings.TrimSpace(reqItem.EmployeeName) == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nama karyawan wajib diisi"})
+			return
+		}
+		if payrollHasNegativeInput(reqItem) {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nilai payroll tidak boleh negatif"})
+			return
+		}
+
+		payrollImportItemTotals(reqItem)
+		if issue := payrollNegativeNetPayIssue(reqItem, itemIndex+1); issue != nil {
+			negativeNetPayIssues = append(negativeNetPayIssues, *issue)
+		}
+	}
+	if len(negativeNetPayIssues) > 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"code":              "PAYROLL_NEGATIVE_NET_PAY",
+			"error":             "Terdapat baris payroll dengan gaji bersih negatif",
+			"validation_issues": negativeNetPayIssues,
+		})
+		return
+	}
+
 	tx := c.db.Begin()
 	if tx.Error != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start payroll transaction"})
@@ -1795,27 +1865,6 @@ func (c *PayrollController) CreatePayrollRun(ctx *gin.Context) {
 	}
 
 	for _, reqItem := range req.Items {
-		if strings.TrimSpace(reqItem.EmployeeName) == "" {
-			tx.Rollback()
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nama karyawan wajib diisi"})
-			return
-		}
-		payrollImportItemTotals(&reqItem)
-		if reqItem.BaseSalary < 0 || reqItem.Bonus < 0 || reqItem.PPh < 0 || reqItem.BPJS < 0 ||
-			reqItem.AttendanceAllowance < 0 ||
-			reqItem.CompensationPKWT < 0 || reqItem.Overtime < 0 || reqItem.BPJSTKJHT < 0 ||
-			reqItem.BPJSTKJP < 0 || reqItem.BPJSKesehatan < 0 || reqItem.Proportional < 0 ||
-			reqItem.BPJSTKJHTEmployer < 0 || reqItem.BPJSTKJHTEmployee < 0 ||
-			reqItem.BPJSTKJPEmployer < 0 || reqItem.BPJSTKJPEmployee < 0 ||
-			reqItem.BPJSTKJKKEmployer < 0 || reqItem.BPJSTKJKKEmployee < 0 ||
-			reqItem.BPJSTKJKMEmployer < 0 || reqItem.BPJSTKJKMEmployee < 0 ||
-			reqItem.BPJSKesehatanEmployer < 0 || reqItem.BPJSKesehatanEmployee < 0 ||
-			reqItem.OtherDeduction < 0 || reqItem.EmployeeLoanDeduction < 0 || reqItem.NetPay < 0 {
-			tx.Rollback()
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Nilai payroll tidak boleh negatif"})
-			return
-		}
-
 		item := models.PayrollItem{
 			EmployeeName:          strings.TrimSpace(reqItem.EmployeeName),
 			EmployeeCode:          strings.TrimSpace(reqItem.EmployeeCode),

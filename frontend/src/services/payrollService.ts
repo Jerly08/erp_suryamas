@@ -46,6 +46,7 @@ export interface PayrollDocument {
 export interface PayrollItem {
   id?: number;
   payroll_run_id?: number;
+  import_row_number?: number;
   employee_name: string;
   employee_code?: string;
   working_day?: number;
@@ -201,6 +202,18 @@ export interface PayrollPPhPaymentPayload {
 export type PayrollSalaryPaymentPayload = PayrollPPhPaymentPayload;
 export type PayrollBPJSPaymentPayload = PayrollPPhPaymentPayload;
 
+export interface PayrollImportValidationIssue {
+  row_number: number;
+  employee_name: string;
+  employee_code?: string;
+  gross_amount: number;
+  employee_bpjs: number;
+  other_deduction: number;
+  employee_loan_deduction: number;
+  net_pay: number;
+  message: string;
+}
+
 export interface PayrollImportPreview {
   items: PayrollItem[];
   summary: {
@@ -218,6 +231,7 @@ export interface PayrollImportPreview {
     total_overall: number;
   };
   warnings: string[];
+  validation_issues?: PayrollImportValidationIssue[];
   headers: string[];
   suggested_period_start?: string;
   suggested_period_end?: string;
