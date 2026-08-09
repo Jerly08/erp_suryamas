@@ -23,17 +23,25 @@ import {
   MenuList,
   MenuItem,
   Button,
+  Tooltip,
   useColorMode,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { FiMenu, FiChevronDown, FiLogOut } from 'react-icons/fi';
+import { FiMenu, FiChevronDown, FiChevronsRight, FiLogOut } from 'react-icons/fi';
 
 interface SimpleNavbarProps {
   onMenuClick?: () => void;
   isMenuOpen?: boolean;
+  onSidebarToggle?: () => void;
+  isSidebarCollapsed?: boolean;
 }
 
-const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = false }) => {
+const SimpleNavbar: React.FC<SimpleNavbarProps> = ({
+  onMenuClick,
+  isMenuOpen = false,
+  onSidebarToggle,
+  isSidebarCollapsed = false,
+}) => {
   const { user, logout } = useAuth();
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -83,6 +91,20 @@ const SimpleNavbar: React.FC<SimpleNavbarProps> = ({ onMenuClick, isMenuOpen = f
           size="sm"
           flexShrink={0}
         />
+      )}
+
+      {onSidebarToggle && isSidebarCollapsed && (
+        <Tooltip label="Buka sidebar" placement="bottom">
+          <IconButton
+            display={{ base: 'none', lg: 'flex' }}
+            onClick={onSidebarToggle}
+            variant="ghost"
+            aria-label="Buka sidebar"
+            icon={<FiChevronsRight />}
+            size="sm"
+            flexShrink={0}
+          />
+        </Tooltip>
       )}
 
       {/* Brand - visible on mobile when no sidebar */}

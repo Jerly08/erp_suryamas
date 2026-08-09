@@ -28,11 +28,29 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
   useAuthService(); // Setup unauthorized handler
   const { user } = useAuth();
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
+  const [hasLoadedSidebarPreference, setHasLoadedSidebarPreference] = React.useState(false);
   const normalizedAllowed = normalizeRoles(allowedRoles as string[]);
   const isMobile = useBreakpointValue({ base: true, lg: false }, { fallback: 'lg' });
   
   // Dynamic background colors based on theme
   const bgColor = useColorModeValue('var(--bg-secondary)', 'var(--bg-primary)');
+
+  React.useEffect(() => {
+    const savedPreference = window.localStorage.getItem('avery.sidebar.collapsed');
+    setIsSidebarCollapsed(savedPreference === 'true');
+    setHasLoadedSidebarPreference(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (!hasLoadedSidebarPreference) return;
+
+    window.localStorage.setItem('avery.sidebar.collapsed', String(isSidebarCollapsed));
+  }, [hasLoadedSidebarPreference, isSidebarCollapsed]);
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((collapsed) => !collapsed);
+  };
 
   // If authentication is not required, render content directly
   if (!requireAuth) {
@@ -47,14 +65,14 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
     <ProtectedRoute allowedRoles={normalizedAllowed as any}>
       <Box minH="100vh" bg={bgColor} transition="background-color 0.3s ease">
         {/* Sidebar for desktop */}
-        {showSidebar && !isMobile && user && (
+        {showSidebar && !isMobile && user && !isSidebarCollapsed && (
           <Sidebar 
             isOpen
             onClose={onClose} 
             display={{ base: 'none', lg: 'block' }}
             width={60}
-            collapsed={false}
-            onToggleCollapse={() => {}}
+            collapsed={isSidebarCollapsed}
+            onToggleCollapse={toggleSidebar}
             variant="fixed"
           />
         )}
@@ -73,12 +91,18 @@ const SimpleLayout: React.FC<SimpleLayoutProps> = ({
         )}
 
         {/* Main content */}
-        <Box ml={{ base: 0, lg: showSidebar ? 60 : 0 }} minW={0}>
+        <Box
+          ml={{ base: 0, lg: showSidebar && !isSidebarCollapsed ? 60 : 0 }}
+          minW={0}
+          transition="margin-left 0.2s ease"
+        >
           {/* Top navigation bar - always show if user is authenticated */}
           {user && (
             <SimpleNavbar 
               onMenuClick={showSidebar ? onOpen : undefined} 
               isMenuOpen={isOpen} 
+              onSidebarToggle={showSidebar ? toggleSidebar : undefined}
+              isSidebarCollapsed={isSidebarCollapsed}
             />
           )}
           

@@ -8,8 +8,10 @@ import {
   Flex,
   Image,
   Icon,
+  IconButton,
   useColorModeValue,
   Text,
+  Tooltip,
   Drawer,
   DrawerContent,
   DrawerOverlay,
@@ -31,6 +33,7 @@ import {
   FiBox,
   FiBriefcase,
   FiClipboard,
+  FiChevronsLeft,
 } from "react-icons/fi";
 import { useAuth } from "@/contexts/AuthContext";
 import { normalizeRole } from "@/utils/roles";
@@ -334,7 +337,7 @@ export default function Sidebar({
         <Flex
           h={{ base: "16", md: "20" }}
           alignItems="center"
-          mx={{ base: "4", md: "8" }}
+          mx="4"
           justifyContent="space-between"
         >
           <Image
@@ -347,13 +350,29 @@ export default function Sidebar({
             maxW="150px"
             objectFit="contain"
           />
-          <CloseButton
-            display={{ base: "flex", lg: "none" }}
-            onClick={onClose}
-            color={closeButtonColor}
-            _hover={{ bg: closeButtonHoverBg }}
-            aria-label={t("navigation.navbar.closeMenu")}
-          />
+          <Flex align="center" gap="1">
+            {typeof onToggleCollapse === "function" && (
+              <Tooltip label="Tutup sidebar" placement="right">
+                <IconButton
+                  display={{ base: "none", lg: "inline-flex" }}
+                  onClick={onToggleCollapse}
+                  variant="ghost"
+                  size="sm"
+                  icon={<FiChevronsLeft />}
+                  color={closeButtonColor}
+                  _hover={{ bg: closeButtonHoverBg }}
+                  aria-label="Tutup sidebar"
+                />
+              </Tooltip>
+            )}
+            <CloseButton
+              display={{ base: "flex", lg: "none" }}
+              onClick={onClose}
+              color={closeButtonColor}
+              _hover={{ bg: closeButtonHoverBg }}
+              aria-label={t("navigation.navbar.closeMenu")}
+            />
+          </Flex>
         </Flex>
 
         <Box flex="1">
@@ -481,6 +500,8 @@ export default function Sidebar({
       </Drawer>
     );
   }
+
+  if (collapsed) return null;
 
   return <SidebarContent onClose={() => onClose} display={display} />;
 }
