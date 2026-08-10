@@ -290,14 +290,10 @@ func TestSalesCreditClassificationCorrectionPreservesOriginalEntries(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, models.PostedTransactionCorrectionStatusPendingFinanceManager, reviewed.Status)
 
-	approved, err := fixture.service.DecideFinanceManager(correction.ID, models.PostedTransactionCorrectionFinanceManagerDecisionRequest{
+	completed, err := fixture.service.DecideFinanceManager(correction.ID, models.PostedTransactionCorrectionFinanceManagerDecisionRequest{
 		Approve: true,
 		Notes:   "Disetujui setelah bukti penerimaan dan COA ditinjau.",
 	}, fixture.financeManager.ID, models.RoleFinance)
-	require.NoError(t, err)
-	require.Equal(t, models.PostedTransactionCorrectionStatusApprovedForExecution, approved.Status)
-
-	completed, err := fixture.service.ExecuteSalesCreditCorrection(correction.ID, fixture.accounting.ID, models.RoleAccounting)
 	require.NoError(t, err)
 	require.Equal(t, models.PostedTransactionCorrectionStatusCompleted, completed.Status)
 	require.NotNil(t, completed.CompletionJournalEntryID)
@@ -390,13 +386,10 @@ func TestSalesCreditClassificationCorrectionAcceptsPaymentReceivedAuditTrail(t *
 	}, fixture.accounting.ID, models.RoleAccounting)
 	require.NoError(t, err)
 
-	_, err = fixture.service.DecideFinanceManager(correction.ID, models.PostedTransactionCorrectionFinanceManagerDecisionRequest{
+	completed, err := fixture.service.DecideFinanceManager(correction.ID, models.PostedTransactionCorrectionFinanceManagerDecisionRequest{
 		Approve: true,
 		Notes:   "Disetujui.",
 	}, fixture.financeManager.ID, models.RoleFinance)
-	require.NoError(t, err)
-
-	completed, err := fixture.service.ExecuteSalesCreditCorrection(correction.ID, fixture.accounting.ID, models.RoleAccounting)
 	require.NoError(t, err)
 	require.Equal(t, models.PostedTransactionCorrectionStatusCompleted, completed.Status)
 }

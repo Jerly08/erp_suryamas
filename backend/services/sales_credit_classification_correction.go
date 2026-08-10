@@ -165,138 +165,154 @@ func (s *PostedTransactionCorrectionService) ExecuteSalesCreditCorrection(
 		if correction.Status != models.PostedTransactionCorrectionStatusApprovedForExecution {
 			return fmt.Errorf("koreksi ini belum disetujui untuk dieksekusi")
 		}
-		if correction.TargetType != models.PostedTransactionCorrectionTargetSale ||
-			correction.CorrectionType != models.PostedTransactionCorrectionTypeSalesCreditClassification ||
-			correction.SaleID == nil || correction.LinkedPaymentID == nil || correction.ProposedAccountID == nil {
-			return fmt.Errorf("koreksi ini bukan koreksi reklasifikasi penjualan kredit yang lengkap")
-		}
-		if correction.AccountingResolution != models.PostedTransactionCorrectionResolutionJournalReclass {
-			return fmt.Errorf("rencana Accounting untuk koreksi ini tidak sesuai")
-		}
-
-		data, err := s.loadLegacySalesCreditCorrectionData(tx, *correction.SaleID, *correction.LinkedPaymentID, correction.ID, true)
-		if err != nil {
-			return err
-		}
-		if data.originalJournal.ID != correction.OriginalJournalEntryID {
-			return fmt.Errorf("jurnal asal penjualan berubah dari snapshot koreksi; buat pengajuan baru setelah Accounting meninjau ulang")
-		}
-		if err := s.validateSalesCreditClassificationAccount(tx, correction, correction.ProposedAccountID); err != nil {
-			return err
-		}
-		if !journalHasCreditLine(data.paymentJournal, uint64(*correction.ProposedAccountID), data.sale.TotalAmount) {
-			return fmt.Errorf("pembayaran pelanggan yang dipilih tidak mencatat kredit ke COA piutang yang dipilih")
-		}
-
-		entryDate := time.Now().UTC()
-		if correction.RequestedDate != nil {
-			entryDate = *correction.RequestedDate
-		}
-		amount := decimal.NewFromFloat(data.sale.TotalAmount).Round(2)
-		amountFloat := amount.InexactFloat64()
-
-		// Cash/bank history is the operational source for the Cash & Bank page.
-		// Rebuild it before calculating the audit reversal, then rebuild it again
-		// after the reversal so it matches the correcting GL journal exactly.
-		cashBankGuard := NewCashBankCurrencyGuard(s.db)
-		if err := cashBankGuard.EnforceAfterTransaction(tx, data.originalCashBank.ID, data.paymentCashBank.ID); err != nil {
-			return fmt.Errorf("gagal menyelaraskan saldo kas/bank sebelum koreksi: %w", err)
-		}
-
-		var correctionCashBank models.CashBank
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&correctionCashBank, data.originalCashBank.ID).Error; err != nil {
-			return fmt.Errorf("akun kas/bank asal tidak ditemukan saat koreksi: %w", err)
-		}
-		if correctionCashBank.AccountID != data.originalCashBank.AccountID {
-			return fmt.Errorf("COA akun kas/bank asal berubah saat koreksi; buat pengajuan baru setelah Accounting meninjau ulang")
-		}
-		newCashBankBalance := correctionCashBank.Balance - amountFloat
-		newCashBankBookBalance := correctionCashBank.EffectiveBookBalanceIDR() - amountFloat
-		if newCashBankBalance < -salesCreditCorrectionTolerance || newCashBankBookBalance < -salesCreditCorrectionTolerance {
-			return fmt.Errorf("koreksi akan membuat saldo kas/bank asal negatif; gunakan koreksi manual setelah rekonsiliasi bank")
-		}
-
-		adjustmentOf := data.originalJournal.ID
-		journal, err := NewUnifiedJournalService(tx).CreateJournalEntryWithTx(tx, &JournalEntryRequest{
-			EntryDate:              entryDate,
-			Reference:              fmt.Sprintf("KOREKSI-PIUTANG-%s", saleCorrectionTargetCode(&data.sale)),
-			Description:            fmt.Sprintf("Reklasifikasi penerimaan awal menjadi piutang usaha - %s", saleCorrectionTargetCode(&data.sale)),
-			Notes:                  fmt.Sprintf("Koreksi transaksi terposting #%d. Pembayaran %s ditautkan ke invoice; mutasi kas/bank awal yang salah dibalik sebagai catatan audit tanpa membuat penerimaan baru.", correction.ID, data.payment.Code),
-			CreatedBy:              uint64(userID),
-			SourceType:             models.SSOTSourceTypeAdjustment,
-			SourceID:               uint64(data.sale.ID),
-			AdjustmentOf:           &adjustmentOf,
-			AdjustmentCategoryCode: models.JournalAdjustmentCategorySalesRevenueRecognition,
-			AutoPost:               true,
-			SystemGenerated:        true,
-			Lines: []JournalLineRequest{
-				{
-					AccountID:    uint64(*correction.ProposedAccountID),
-					DebitAmount:  amount,
-					CreditAmount: decimal.Zero,
-					Description:  fmt.Sprintf("Piutang usaha %s", saleCorrectionTargetCode(&data.sale)),
-				},
-				{
-					AccountID:    uint64(correctionCashBank.AccountID),
-					DebitAmount:  decimal.Zero,
-					CreditAmount: amount,
-					Description:  fmt.Sprintf("Reklasifikasi saldo %s", data.originalCashBank.Name),
-				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("gagal membuat jurnal reklasifikasi piutang: %w", err)
-		}
-		if err := tx.Model(journal).Update("source_code", data.sale.Code).Error; err != nil {
-			return err
-		}
-
-		cashBankTransaction := models.CashBankTransaction{
-			CashBankID:      correctionCashBank.ID,
-			ReferenceType:   salesCreditCorrectionCashBankReferenceType,
-			ReferenceID:     correction.ID,
-			Amount:          -amountFloat,
-			Currency:        normalizeCashBankCurrency(correctionCashBank.Currency),
-			ExchangeRate:    1,
-			BookAmountIDR:   -amountFloat,
-			BalanceAfter:    newCashBankBalance,
-			TransactionDate: entryDate,
-			Notes:           fmt.Sprintf("Koreksi audit #%d untuk %s: membalik penerimaan kas/bank awal yang salah tercatat sebagai penjualan tunai. Tidak ada arus kas baru.", correction.ID, saleCorrectionTargetCode(&data.sale)),
-		}
-		if err := tx.Create(&cashBankTransaction).Error; err != nil {
-			return fmt.Errorf("gagal membuat mutasi koreksi kas/bank: %w", err)
-		}
-		if err := cashBankGuard.EnforceAfterTransaction(tx, correctionCashBank.ID, data.paymentCashBank.ID); err != nil {
-			return fmt.Errorf("gagal menyelaraskan saldo kas/bank setelah koreksi: %w", err)
-		}
-
-		allocation := models.PaymentAllocation{
-			PaymentID:       uint64(data.payment.ID),
-			InvoiceID:       &data.sale.ID,
-			AllocatedAmount: data.sale.TotalAmount,
-		}
-		if err := tx.Create(&allocation).Error; err != nil {
-			return fmt.Errorf("gagal menautkan pembayaran pelanggan ke invoice: %w", err)
-		}
-
-		now := time.Now().UTC()
-		completionNotes := fmt.Sprintf("Sistem membuat jurnal #%d: debit COA #%d dan kredit %s sebesar %.2f, serta mutasi Kas/Bank audit #%d untuk membalik penerimaan awal yang salah. Pembayaran %s ditautkan ke invoice tanpa penerimaan atau pengeluaran uang baru.", journal.ID, *correction.ProposedAccountID, correctionCashBank.Code, data.sale.TotalAmount, cashBankTransaction.ID, data.payment.Code)
-		if err := tx.Model(&correction).Updates(map[string]interface{}{
-			"status":                      models.PostedTransactionCorrectionStatusCompleted,
-			"completion_notes":            completionNotes,
-			"completion_journal_entry_id": journal.ID,
-			"completed_by":                userID,
-			"completed_at":                now,
-		}).Error; err != nil {
-			return err
-		}
-		return s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventSalesCreditExecuted, completionNotes, userID, role)
+		return s.executeSalesCreditCorrectionWithTx(tx, &correction, userID, role)
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	return s.GetByID(id, userID, role)
+}
+
+// executeSalesCreditCorrectionWithTx performs the completed accounting change in
+// the caller's transaction. Keeping it transaction-scoped lets Finance Manager
+// approval and execution succeed or fail together for new corrections, while
+// ExecuteSalesCreditCorrection remains available for legacy approved requests.
+func (s *PostedTransactionCorrectionService) executeSalesCreditCorrectionWithTx(
+	tx *gorm.DB,
+	correction *models.PostedTransactionCorrection,
+	userID uint,
+	role string,
+) error {
+	if tx == nil || correction == nil {
+		return fmt.Errorf("data koreksi tidak tersedia")
+	}
+	if correction.TargetType != models.PostedTransactionCorrectionTargetSale ||
+		correction.CorrectionType != models.PostedTransactionCorrectionTypeSalesCreditClassification ||
+		correction.SaleID == nil || correction.LinkedPaymentID == nil || correction.ProposedAccountID == nil {
+		return fmt.Errorf("koreksi ini bukan koreksi reklasifikasi penjualan kredit yang lengkap")
+	}
+	if correction.AccountingResolution != models.PostedTransactionCorrectionResolutionJournalReclass {
+		return fmt.Errorf("rencana Accounting untuk koreksi ini tidak sesuai")
+	}
+
+	data, err := s.loadLegacySalesCreditCorrectionData(tx, *correction.SaleID, *correction.LinkedPaymentID, correction.ID, true)
+	if err != nil {
+		return err
+	}
+	if data.originalJournal.ID != correction.OriginalJournalEntryID {
+		return fmt.Errorf("jurnal asal penjualan berubah dari snapshot koreksi; buat pengajuan baru setelah Accounting meninjau ulang")
+	}
+	if err := s.validateSalesCreditClassificationAccount(tx, *correction, correction.ProposedAccountID); err != nil {
+		return err
+	}
+	if !journalHasCreditLine(data.paymentJournal, uint64(*correction.ProposedAccountID), data.sale.TotalAmount) {
+		return fmt.Errorf("pembayaran pelanggan yang dipilih tidak mencatat kredit ke COA piutang yang dipilih")
+	}
+
+	entryDate := time.Now().UTC()
+	if correction.RequestedDate != nil {
+		entryDate = *correction.RequestedDate
+	}
+	amount := decimal.NewFromFloat(data.sale.TotalAmount).Round(2)
+	amountFloat := amount.InexactFloat64()
+
+	// Cash/bank history is the operational source for the Cash & Bank page.
+	// Rebuild it before calculating the audit reversal, then rebuild it again
+	// after the reversal so it matches the correcting GL journal exactly.
+	cashBankGuard := NewCashBankCurrencyGuard(s.db)
+	if err := cashBankGuard.EnforceAfterTransaction(tx, data.originalCashBank.ID, data.paymentCashBank.ID); err != nil {
+		return fmt.Errorf("gagal menyelaraskan saldo kas/bank sebelum koreksi: %w", err)
+	}
+
+	var correctionCashBank models.CashBank
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&correctionCashBank, data.originalCashBank.ID).Error; err != nil {
+		return fmt.Errorf("akun kas/bank asal tidak ditemukan saat koreksi: %w", err)
+	}
+	if correctionCashBank.AccountID != data.originalCashBank.AccountID {
+		return fmt.Errorf("COA akun kas/bank asal berubah saat koreksi; buat pengajuan baru setelah Accounting meninjau ulang")
+	}
+	newCashBankBalance := correctionCashBank.Balance - amountFloat
+	newCashBankBookBalance := correctionCashBank.EffectiveBookBalanceIDR() - amountFloat
+	if newCashBankBalance < -salesCreditCorrectionTolerance || newCashBankBookBalance < -salesCreditCorrectionTolerance {
+		return fmt.Errorf("koreksi akan membuat saldo kas/bank asal negatif; gunakan koreksi manual setelah rekonsiliasi bank")
+	}
+
+	adjustmentOf := data.originalJournal.ID
+	journal, err := NewUnifiedJournalService(tx).CreateJournalEntryWithTx(tx, &JournalEntryRequest{
+		EntryDate:              entryDate,
+		Reference:              fmt.Sprintf("KOREKSI-PIUTANG-%s", saleCorrectionTargetCode(&data.sale)),
+		Description:            fmt.Sprintf("Reklasifikasi penerimaan awal menjadi piutang usaha - %s", saleCorrectionTargetCode(&data.sale)),
+		Notes:                  fmt.Sprintf("Koreksi transaksi terposting #%d. Pembayaran %s ditautkan ke invoice; mutasi kas/bank awal yang salah dibalik sebagai catatan audit tanpa membuat penerimaan baru.", correction.ID, data.payment.Code),
+		CreatedBy:              uint64(userID),
+		SourceType:             models.SSOTSourceTypeAdjustment,
+		SourceID:               uint64(data.sale.ID),
+		AdjustmentOf:           &adjustmentOf,
+		AdjustmentCategoryCode: models.JournalAdjustmentCategorySalesRevenueRecognition,
+		AutoPost:               true,
+		SystemGenerated:        true,
+		Lines: []JournalLineRequest{
+			{
+				AccountID:    uint64(*correction.ProposedAccountID),
+				DebitAmount:  amount,
+				CreditAmount: decimal.Zero,
+				Description:  fmt.Sprintf("Piutang usaha %s", saleCorrectionTargetCode(&data.sale)),
+			},
+			{
+				AccountID:    uint64(correctionCashBank.AccountID),
+				DebitAmount:  decimal.Zero,
+				CreditAmount: amount,
+				Description:  fmt.Sprintf("Reklasifikasi saldo %s", data.originalCashBank.Name),
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("gagal membuat jurnal reklasifikasi piutang: %w", err)
+	}
+	if err := tx.Model(journal).Update("source_code", data.sale.Code).Error; err != nil {
+		return err
+	}
+
+	cashBankTransaction := models.CashBankTransaction{
+		CashBankID:      correctionCashBank.ID,
+		ReferenceType:   salesCreditCorrectionCashBankReferenceType,
+		ReferenceID:     correction.ID,
+		Amount:          -amountFloat,
+		Currency:        normalizeCashBankCurrency(correctionCashBank.Currency),
+		ExchangeRate:    1,
+		BookAmountIDR:   -amountFloat,
+		BalanceAfter:    newCashBankBalance,
+		TransactionDate: entryDate,
+		Notes:           fmt.Sprintf("Koreksi audit #%d untuk %s: membalik penerimaan kas/bank awal yang salah tercatat sebagai penjualan tunai. Tidak ada arus kas baru.", correction.ID, saleCorrectionTargetCode(&data.sale)),
+	}
+	if err := tx.Create(&cashBankTransaction).Error; err != nil {
+		return fmt.Errorf("gagal membuat mutasi koreksi kas/bank: %w", err)
+	}
+	if err := cashBankGuard.EnforceAfterTransaction(tx, correctionCashBank.ID, data.paymentCashBank.ID); err != nil {
+		return fmt.Errorf("gagal menyelaraskan saldo kas/bank setelah koreksi: %w", err)
+	}
+
+	allocation := models.PaymentAllocation{
+		PaymentID:       uint64(data.payment.ID),
+		InvoiceID:       &data.sale.ID,
+		AllocatedAmount: data.sale.TotalAmount,
+	}
+	if err := tx.Create(&allocation).Error; err != nil {
+		return fmt.Errorf("gagal menautkan pembayaran pelanggan ke invoice: %w", err)
+	}
+
+	now := time.Now().UTC()
+	completionNotes := fmt.Sprintf("Sistem membuat jurnal #%d: debit COA #%d dan kredit %s sebesar %.2f, serta mutasi Kas/Bank audit #%d untuk membalik penerimaan awal yang salah. Pembayaran %s ditautkan ke invoice tanpa penerimaan atau pengeluaran uang baru.", journal.ID, *correction.ProposedAccountID, correctionCashBank.Code, data.sale.TotalAmount, cashBankTransaction.ID, data.payment.Code)
+	if err := tx.Model(correction).Updates(map[string]interface{}{
+		"status":                      models.PostedTransactionCorrectionStatusCompleted,
+		"completion_notes":            completionNotes,
+		"completion_journal_entry_id": journal.ID,
+		"completed_by":                userID,
+		"completed_at":                now,
+	}).Error; err != nil {
+		return err
+	}
+	return s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventSalesCreditExecuted, completionNotes, userID, role)
 }
 
 func (s *PostedTransactionCorrectionService) validateSalesCreditClassificationAccount(

@@ -400,6 +400,14 @@ func (s *PostedTransactionCorrectionService) DecideFinanceManager(
 		if err := s.createEvent(tx, correction.ID, eventType, notes, userID, role); err != nil {
 			return err
 		}
+		if request.Approve && correction.CorrectionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
+			// A sales-credit correction has a fully-determined accounting treatment
+			// once Accounting chose the receivable and Finance Manager approved it.
+			// Execute in this same transaction so approval never leaves a request
+			// stranded without its adjustment journal, allocation, and bank audit row.
+			correction.Status = models.PostedTransactionCorrectionStatusApprovedForExecution
+			return s.executeSalesCreditCorrectionWithTx(tx, &correction, userID, role)
+		}
 		if request.Approve && correction.CorrectionType == models.PostedTransactionCorrectionTypeCOAReclassification {
 			return s.createEvent(tx, correction.ID, models.PostedTransactionCorrectionEventCOAReclassified, completionNotes, userID, role)
 		}
