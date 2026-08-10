@@ -90,9 +90,10 @@ func main() {
 		log.Println("✅ Unified Journals migration check completed!")
 	}
 
-	// 🔄 Auto-migrate purchase payment journals to SSOT (idempotent - safe to run every startup)
-	log.Println("⚡ Checking purchase payment SSOT journal migration...")
-	{
+	// Backfilling historical payment journals is a maintenance operation, not a
+	// startup task. It can only run during an explicitly approved maintenance window.
+	if os.Getenv("RUN_PAYMENT_SSOT_BACKFILL") == "true" {
+		log.Println("⚡ Running approved purchase payment SSOT journal backfill...")
 		accountRepo := repositories.NewAccountRepository(db)
 		unifiedJournalService := services.NewUnifiedJournalService(db)
 		paymentJournalSvc := services.NewPurchasePaymentJournalService(db, accountRepo, unifiedJournalService, nil)
@@ -104,14 +105,19 @@ func main() {
 		} else {
 			log.Printf("✅ Payment journal SSOT migration: all up-to-date (%d already migrated)", skipped)
 		}
+	} else {
+		log.Println("⏭️ Skipping payment journal SSOT backfill; set RUN_PAYMENT_SSOT_BACKFILL=true only for approved maintenance.")
 	}
 
-	// 🔄 Sync accounts.balance from SSOT journals (fixes stale balances after cleanup/migration)
-	{
+	// Balance rebuilding also writes financial data, so it must not be triggered
+	// implicitly whenever the backend restarts.
+	if os.Getenv("RUN_SSOT_BALANCE_SYNC") == "true" {
 		balanceSyncSvc := services.NewBalanceSyncService(db)
 		if err := balanceSyncSvc.SyncAccountBalancesFromSSOT(); err != nil {
 			log.Printf("❌ Balance sync failed: %v", err)
 		}
+	} else {
+		log.Println("⏭️ Skipping SSOT balance sync; set RUN_SSOT_BALANCE_SYNC=true only for approved maintenance.")
 	}
 
 	// Migrate permissions table
