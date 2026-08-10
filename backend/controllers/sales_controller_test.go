@@ -1,9 +1,13 @@
 package controllers
 
 import (
+	"app-sistem-akuntansi/models"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestMapSaleWriteErrorClassifiesRevenueCOAErrors(t *testing.T) {
@@ -43,5 +47,20 @@ func TestMapSaleWriteErrorClassifiesMissingFulfillmentSchema(t *testing.T) {
 	}
 	if context != nil {
 		t.Fatalf("expected no business context, got %#v", context)
+	}
+}
+
+func TestConvertConfirmedSaleToCreditRejectsNonFinanceManager(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/sales/1/convert-to-credit", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+	ctx.Set("role", models.RoleFinanceStaff)
+
+	(&SalesController{}).ConvertConfirmedSaleToCredit(ctx)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, recorder.Code, recorder.Body.String())
 	}
 }

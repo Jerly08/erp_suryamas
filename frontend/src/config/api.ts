@@ -106,6 +106,8 @@ export const API_ENDPOINTS = {
   // Sales (with /api/v1 prefix)
   SALES: "/api/v1/sales",
   SALES_BY_ID: (id: number) => `/api/v1/sales/${id}`,
+  SALES_CONVERT_CONFIRMED_TO_CREDIT: (id: number) =>
+    `/api/v1/sales/${id}/convert-to-credit`,
   SALES_CONFIRM: (id: number) => `/api/v1/sales/${id}/confirm`,
   SALES_INVOICE: (id: number) => `/api/v1/sales/${id}/invoice`,
   SALES_CANCEL: (id: number) => `/api/v1/sales/${id}/cancel`,

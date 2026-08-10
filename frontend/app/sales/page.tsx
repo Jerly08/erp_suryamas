@@ -156,6 +156,8 @@ const SalesPageContent: React.FC = () => {
     isFinanceStaffRole(role) ||
     isAccountingRole(role) ||
     isFinanceManagerRole(role);
+  const canConvertConfirmedSaleToCredit =
+    isAdmin || isFinanceManagerRole(role);
 
   const {
     isOpen: isFormOpen,
@@ -698,6 +700,10 @@ const SalesPageContent: React.FC = () => {
     window.open(`/sales/${sale.id}?focus=credit-correction`, "_blank");
   };
 
+  const handleConvertConfirmedSaleToCredit = (sale: Sale) => {
+    window.open(`/sales/${sale.id}?focus=convert-credit`, "_blank");
+  };
+
   // Handle download invoice
   const handleDownloadInvoice = (sale: Sale) => {
     salesService.downloadInvoicePDF(sale.id, sale.invoice_number || sale.code);
@@ -1065,6 +1071,11 @@ const SalesPageContent: React.FC = () => {
           onCreateReceipt={handleCreateReceipt}
           onCreditCorrection={
             canUseCreditCorrection ? handleCreditCorrection : undefined
+          }
+          onConvertConfirmedToCredit={
+            canConvertConfirmedSaleToCredit
+              ? handleConvertConfirmedSaleToCredit
+              : undefined
           }
           formatCurrency={salesService.formatCurrency}
           formatDate={salesService.formatDate}

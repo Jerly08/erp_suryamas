@@ -12,6 +12,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -1029,6 +1030,128 @@ func (s *SalesServiceV2) UpdateSale(saleID uint, request models.SaleUpdateReques
 	}
 
 	return &sale, nil
+}
+
+// ConvertConfirmedSaleToCredit corrects a confirmed, non-financial sale before
+// it creates any invoice, journal, payment, allocation, or cash-bank movement.
+// Once a financial trail exists, the audited correction workflow must be used.
+func (s *SalesServiceV2) ConvertConfirmedSaleToCredit(
+	saleID uint,
+	request models.ConfirmedSaleCreditConversionRequest,
+	userID uint,
+) (*models.Sale, error) {
+	if saleID == 0 {
+		return nil, fmt.Errorf("konversi penjualan kredit memerlukan transaksi yang valid")
+	}
+
+	if request.ReceivableAccountID == 0 {
+		return nil, fmt.Errorf("akun piutang wajib dipilih untuk konversi penjualan kredit")
+	}
+
+	paymentTerms := strings.ToUpper(strings.TrimSpace(request.PaymentTerms))
+	if paymentTerms != "NET_15" && paymentTerms != "NET_30" && paymentTerms != "NET_60" && paymentTerms != "NET_90" {
+		return nil, fmt.Errorf("konversi penjualan kredit hanya mendukung termin NET_15, NET_30, NET_60, atau NET_90")
+	}
+	if request.DueDate.IsZero() {
+		return nil, fmt.Errorf("jatuh tempo penjualan kredit wajib diisi")
+	}
+
+	var converted models.Sale
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var sale models.Sale
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sale, saleID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("sale not found")
+			}
+			return fmt.Errorf("failed to load sale: %w", err)
+		}
+
+		if err := CheckClosedPeriod(tx, sale.Date); err != nil {
+			return err
+		}
+		if sale.Status != models.SaleStatusConfirmed {
+			return fmt.Errorf("konversi penjualan kredit hanya tersedia untuk penjualan berstatus DIKONFIRMASI")
+		}
+		if strings.TrimSpace(sale.InvoiceNumber) != "" {
+			return fmt.Errorf("penjualan ini sudah memiliki invoice; gunakan koreksi transaksi terposting agar riwayat audit tetap aman")
+		}
+		if err := s.ensureConfirmedSaleHasNoFinancialTrail(tx, &sale); err != nil {
+			return err
+		}
+		if request.DueDate.Before(sale.Date) {
+			return fmt.Errorf("jatuh tempo penjualan kredit tidak boleh sebelum tanggal penjualan")
+		}
+
+		sale.PaymentTerms = paymentTerms
+		sale.PaymentMethod = "CREDIT"
+		sale.PaymentMethodType = "CREDIT"
+		sale.CashBankID = nil
+		sale.ReceivableAccountID = &request.ReceivableAccountID
+		sale.DueDate = request.DueDate
+
+		if err := validateSalePaymentScheduleMode(sale.PaymentTerms, sale.PaymentMethodType); err != nil {
+			return err
+		}
+		if err := assignAndValidateSaleReceivableAccount(tx, &sale, true); err != nil {
+			return err
+		}
+		if err := tx.Save(&sale).Error; err != nil {
+			return fmt.Errorf("failed to convert confirmed sale to credit: %w", err)
+		}
+		if err := s.syncSalePaymentSchedules(tx, &sale, nil); err != nil {
+			return err
+		}
+
+		log.Printf("Converted confirmed sale %s (ID %d) to credit by user %d", sale.Code, sale.ID, userID)
+		converted = sale
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetSaleByID(converted.ID)
+}
+
+func (s *SalesServiceV2) ensureConfirmedSaleHasNoFinancialTrail(tx *gorm.DB, sale *models.Sale) error {
+	if sale == nil {
+		return fmt.Errorf("konversi penjualan kredit memerlukan transaksi yang valid")
+	}
+
+	var count int64
+	if err := tx.Model(&models.SSOTJournalEntry{}).
+		Where("(source_type IN ? AND source_id = ?) OR source_code = ?", []string{models.SSOTSourceTypeSale, "SALES"}, uint64(sale.ID), sale.Code).
+		Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check sale journal trail: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("penjualan ini sudah memiliki jurnal; gunakan koreksi transaksi terposting agar riwayat audit tetap aman")
+	}
+
+	if err := tx.Model(&models.SalePayment{}).Where("sale_id = ?", sale.ID).Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check sale payment trail: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("penjualan ini sudah memiliki penerimaan pelanggan; gunakan koreksi transaksi terposting agar riwayat audit tetap aman")
+	}
+
+	if err := tx.Model(&models.PaymentAllocation{}).Where("invoice_id = ?", sale.ID).Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check sale allocation trail: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("penjualan ini sudah memiliki alokasi pembayaran; gunakan koreksi transaksi terposting agar riwayat audit tetap aman")
+	}
+
+	if err := tx.Model(&models.CashBankTransaction{}).
+		Where("reference_id = ? AND reference_type IN ?", sale.ID, []string{"SALE", "SALES", "INVOICE"}).
+		Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check cash-bank trail: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf("penjualan ini sudah memiliki mutasi kas/bank; gunakan koreksi transaksi terposting agar riwayat audit tetap aman")
+	}
+
+	return nil
 }
 
 // ConfirmSale changes sale status from DRAFT to CONFIRMED

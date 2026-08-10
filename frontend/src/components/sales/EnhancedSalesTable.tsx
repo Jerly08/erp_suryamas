@@ -55,6 +55,7 @@ interface SalesTableProps {
   onCreateReceipt?: (sale: Sale) => void;
   onDuplicate?: (sale: Sale) => void;
   onCreditCorrection?: (sale: Sale) => void;
+  onConvertConfirmedToCredit?: (sale: Sale) => void;
   title?: string;
   formatCurrency: (amount: number) => string;
   formatDate: (date: string) => string;
@@ -77,6 +78,7 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
   onCreateReceipt,
   onDuplicate,
   onCreditCorrection,
+  onConvertConfirmedToCredit,
   title,
   formatCurrency,
   formatDate,
@@ -503,6 +505,17 @@ const EnhancedSalesTable: React.FC<SalesTableProps> = ({
                                 Koreksi Piutang Kredit Lama
                               </MenuItem>
                             )}
+
+                            {onConvertConfirmedToCredit &&
+                              sale.status === "CONFIRMED" &&
+                              !sale.invoice_number && (
+                                <MenuItem
+                                  icon={<FiEdit />}
+                                  onClick={() => onConvertConfirmedToCredit(sale)}
+                                >
+                                  Ubah Menjadi Penjualan Kredit
+                                </MenuItem>
+                              )}
 
                             {/* Duplicate Action */}
                             {onDuplicate && (

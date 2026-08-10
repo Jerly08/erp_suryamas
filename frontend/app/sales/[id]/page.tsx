@@ -9,6 +9,7 @@ import UnifiedLayout from "@/components/layout/UnifiedLayout";
 import salesService, { Sale } from "@/services/salesService";
 import PaymentForm from "@/components/sales/PaymentForm";
 import PPh23SettlementForm from "@/components/sales/PPh23SettlementForm";
+import ConvertConfirmedSaleToCreditModal from "@/components/sales/ConvertConfirmedSaleToCreditModal";
 import { PostedTransactionCorrectionsPanel } from "@/components/corrections/PostedTransactionCorrections";
 import { getSalePPhStatus } from "@/utils/taxPaymentStatus";
 import {
@@ -79,12 +80,18 @@ const SaleDetailPage: React.FC = () => {
     onOpen: onPPh23Open,
     onClose: onPPh23Close,
   } = useDisclosure();
+  const {
+    isOpen: isConvertCreditOpen,
+    onOpen: onConvertCreditOpen,
+    onClose: onConvertCreditClose,
+  } = useDisclosure();
 
   const [sale, setSale] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const correctionSectionRef = useRef<HTMLDivElement>(null);
+  const hasAutoOpenedCreditConversionRef = useRef(false);
 
   const saleId = params?.id as string;
   const correctionFocus = searchParams?.get("focus");
@@ -94,6 +101,12 @@ const SaleDetailPage: React.FC = () => {
     isFinanceStaffRole(correctionRole) ||
     isAccountingRole(correctionRole) ||
     isFinanceManagerRole(correctionRole);
+  const canConvertConfirmedSaleToCredit =
+    correctionRole === "admin" || isFinanceManagerRole(correctionRole);
+  const canConvertThisSaleToCredit =
+    canConvertConfirmedSaleToCredit &&
+    sale?.status === "CONFIRMED" &&
+    !sale?.invoice_number;
 
   // Handle back navigation - simplified and more reliable
   const handleGoBack = () => {
@@ -136,6 +149,24 @@ const SaleDetailPage: React.FC = () => {
     });
     correctionSectionRef.current?.focus({ preventScroll: true });
   }, []);
+
+  useEffect(() => {
+    if (
+      correctionFocus !== "convert-credit" ||
+      hasAutoOpenedCreditConversionRef.current ||
+      !canConvertThisSaleToCredit
+    ) {
+      return;
+    }
+
+    hasAutoOpenedCreditConversionRef.current = true;
+    const timeoutId = window.setTimeout(onConvertCreditOpen, 100);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    canConvertThisSaleToCredit,
+    correctionFocus,
+    onConvertCreditOpen,
+  ]);
 
   useEffect(() => {
     if (
@@ -446,6 +477,11 @@ const SaleDetailPage: React.FC = () => {
                 {sale.invoice_number && canUseCreditCorrection && (
                   <MenuItem icon={<FiEdit />} onClick={focusCreditCorrection}>
                     Koreksi Piutang Kredit Lama
+                  </MenuItem>
+                )}
+                {canConvertThisSaleToCredit && (
+                  <MenuItem icon={<FiEdit />} onClick={onConvertCreditOpen}>
+                    Ubah Menjadi Penjualan Kredit
                   </MenuItem>
                 )}
                 <MenuItem
@@ -859,6 +895,15 @@ const SaleDetailPage: React.FC = () => {
             </CardBody>
           </Card>
         )}
+
+        <ConvertConfirmedSaleToCreditModal
+          isOpen={isConvertCreditOpen}
+          onClose={onConvertCreditClose}
+          sale={sale}
+          onSuccess={() => {
+            void loadSale();
+          }}
+        />
 
         {/* Notes */}
         {(sale.notes || sale.internal_notes) && (

@@ -309,6 +309,12 @@ export interface SaleUpdateRequest {
   items?: SaleItemUpdateRequest[];
 }
 
+export interface ConfirmedSaleCreditConversionRequest {
+  payment_terms: "NET_15" | "NET_30" | "NET_60" | "NET_90";
+  due_date: string;
+  receivable_account_id: number;
+}
+
 export interface SaleItemUpdateRequest {
   id?: number;
   product_id: number;
@@ -598,6 +604,17 @@ class SalesService {
   async updateSale(id: number, data: SaleUpdateRequest): Promise<Sale> {
     const response = await api.put(API_ENDPOINTS.SALES_BY_ID(id), data);
     return response.data;
+  }
+
+  async convertConfirmedSaleToCredit(
+    id: number,
+    data: ConfirmedSaleCreditConversionRequest,
+  ): Promise<Sale> {
+    const response = await api.post(
+      API_ENDPOINTS.SALES_CONVERT_CONFIRMED_TO_CREDIT(id),
+      data,
+    );
+    return response.data?.data || response.data;
   }
 
   async deleteSale(id: number): Promise<void> {

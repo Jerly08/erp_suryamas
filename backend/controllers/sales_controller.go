@@ -74,6 +74,14 @@ func mapSaleWriteError(err error) (int, string, map[string]string, map[string]in
 		}, nil, true
 	case strings.Contains(lowerErrorMsg, "inventory"),
 		strings.Contains(lowerErrorMsg, "tidak bisa mengubah"),
+		strings.Contains(lowerErrorMsg, "konversi penjualan kredit"),
+		strings.Contains(lowerErrorMsg, "jatuh tempo penjualan kredit"),
+		strings.Contains(lowerErrorMsg, "akun piutang wajib dipilih"),
+		strings.Contains(lowerErrorMsg, "sudah memiliki invoice"),
+		strings.Contains(lowerErrorMsg, "sudah memiliki jurnal"),
+		strings.Contains(lowerErrorMsg, "sudah memiliki penerimaan"),
+		strings.Contains(lowerErrorMsg, "sudah memiliki alokasi"),
+		strings.Contains(lowerErrorMsg, "sudah memiliki mutasi kas/bank"),
 		strings.Contains(lowerErrorMsg, "closed period"),
 		strings.Contains(errorMsg, "CLOSED_PERIOD:"):
 		return http.StatusBadRequest, "Sale update is not allowed", nil, map[string]interface{}{
@@ -372,6 +380,41 @@ func (sc *SalesController) UpdateSale(c *gin.Context) {
 	}
 
 	utils.SendSuccess(c, "Sale updated successfully", sale)
+}
+
+// ConvertConfirmedSaleToCredit converts a confirmed sale to credit only when
+// no financial records have been generated for it yet.
+func (sc *SalesController) ConvertConfirmedSaleToCredit(c *gin.Context) {
+	role := models.NormalizeRole(c.GetString("role"))
+	if role != models.RoleAdmin && !models.IsFinanceManagerRole(role) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Hanya Finance Manager atau Admin yang dapat mengubah penjualan dikonfirmasi menjadi kredit",
+		})
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		utils.SendValidationError(c, "Invalid sale ID", map[string]string{
+			"id": "Sale ID must be a valid positive number",
+		})
+		return
+	}
+
+	var request models.ConfirmedSaleCreditConversionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		utils.SendValidationError(c, "Data konversi penjualan kredit tidak valid", utils.FormatValidationError(err))
+		return
+	}
+
+	sale, err := sc.salesServiceV2.ConvertConfirmedSaleToCredit(uint(id), request, c.GetUint("user_id"))
+	if err != nil {
+		log.Printf("Failed to convert confirmed sale %d to credit: %v", id, err)
+		sendSaleWriteError(c, err)
+		return
+	}
+
+	utils.SendSuccess(c, "Penjualan berhasil diubah menjadi kredit", sale)
 }
 
 // DeleteSale godoc

@@ -762,6 +762,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				sales.POST("/validate-stock", permMiddleware.CanCreate("sales"), salesController.ValidateSaleStock)
 				sales.POST("", permMiddleware.CanCreate("sales"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.CreateSale)
 				sales.PUT("/:id", permMiddleware.CanEdit("sales"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.UpdateSale)
+				sales.POST("/:id/convert-to-credit", rbacMgr.RequireAnyPermission("sales:approve", "sales:edit"), periodValidationMiddleware.ValidateTransactionPeriod(), salesController.ConvertConfirmedSaleToCredit)
 				sales.DELETE("/:id", permMiddleware.CanDelete("sales"), salesController.DeleteSale)
 
 				// Status management

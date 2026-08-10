@@ -276,6 +276,15 @@ type SaleUpdateRequest struct {
 	PaymentSchedules    []SalePaymentScheduleRequest `json:"payment_schedules"`
 }
 
+// ConfirmedSaleCreditConversionRequest is deliberately narrower than a full
+// sale update. It is only used to correct a confirmed sale that has not yet
+// produced any financial record, so the sale can be invoiced as credit later.
+type ConfirmedSaleCreditConversionRequest struct {
+	PaymentTerms        string    `json:"payment_terms" binding:"required"`
+	DueDate             time.Time `json:"due_date" binding:"required"`
+	ReceivableAccountID uint      `json:"receivable_account_id" binding:"required"`
+}
+
 type SaleItemRequest struct {
 	ProductID         uint     `json:"product_id"`
 	ProductName       string   `json:"product_name"`
