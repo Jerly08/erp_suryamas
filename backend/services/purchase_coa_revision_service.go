@@ -71,6 +71,9 @@ func (s *PurchaseService) RequestPurchaseCOARevision(
 		if err := s.validatePurchaseEligibleForCOARevision(tx, purchase); err != nil {
 			return err
 		}
+		if err := ensureNoActivePurchasePrePostingRevision(tx, purchaseID); err != nil {
+			return err
+		}
 
 		var activeCount int64
 		if err := tx.Model(&models.PurchaseCOARevision{}).

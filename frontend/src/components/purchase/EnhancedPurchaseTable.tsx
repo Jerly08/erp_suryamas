@@ -104,6 +104,8 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
         return 'yellow';
       case 'pending':
         return 'blue';
+      case 'pending_finance_revision':
+        return 'blue';
       case 'pending_accounting':
         return 'orange';
       case 'pending_final_approval':
@@ -141,6 +143,9 @@ const EnhancedPurchaseTable: React.FC<PurchaseTableProps> = ({
   const getStatusLabel = (status: string) => {
     const statusKey = status.toLowerCase();
     const translationKey = `purchases.statuses.${statusKey}`;
+    if (statusKey === 'pending_finance_revision') {
+      return 'MENUNGGU REVISI FINANCE STAFF';
+    }
     const fallback = status.replace(/_/g, ' ').toUpperCase();
     return translateOrFallback(translationKey, fallback);
   };

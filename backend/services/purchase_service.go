@@ -641,7 +641,9 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 
 	// Check if purchase can be updated
 	fmt.Printf("? Checking if purchase %d can be updated (current status: %s)\n", id, purchase.Status)
-	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending {
+	if purchase.Status != models.PurchaseStatusDraft &&
+		purchase.Status != models.PurchaseStatusPending &&
+		purchase.Status != models.PurchaseStatusPendingFinanceRevision {
 		fmt.Printf("? Purchase %d cannot be updated in current status: %s\n", id, purchase.Status)
 		return nil, fmt.Errorf("purchase cannot be updated in current status: %s", purchase.Status)
 	}
@@ -823,6 +825,9 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 		fmt.Printf("? Purchase %d is already CANCELLED, nothing to do\n", id)
 		return nil
 	}
+	if purchase.Status == models.PurchaseStatusPendingFinanceRevision {
+		return errors.New("purchase sedang dalam revisi Finance Staff; selesaikan atau batalkan pengajuan revisi terlebih dahulu")
+	}
 
 	// Guard: check if purchase date is in a closed accounting period
 	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
@@ -831,7 +836,9 @@ func (s *PurchaseService) DeletePurchase(id uint) error {
 
 	// For non-DRAFT purchases that have been approved/completed/paid,
 	// perform full accounting reversal (stock, cash/bank, journal, project cost)
-	if purchase.Status != models.PurchaseStatusDraft && purchase.Status != models.PurchaseStatusPending {
+	if purchase.Status != models.PurchaseStatusDraft &&
+		purchase.Status != models.PurchaseStatusPending &&
+		purchase.Status != models.PurchaseStatusPendingFinanceRevision {
 		fmt.Printf("?? Purchase %d has status %s, performing full accounting reversal via OnPurchaseRejected\n", id, purchase.Status)
 		if err := s.OnPurchaseRejected(id); err != nil {
 			fmt.Printf("? Post-rejection cleanup failed for purchase %d: %v\n", id, err)
@@ -895,9 +902,19 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 	}
 
 	fmt.Printf("? Checking if purchase %d can be submitted for approval (current status: %s)\n", id, purchase.Status)
-	if purchase.Status != models.PurchaseStatusDraft {
+	isPrePostingRevision := purchase.Status == models.PurchaseStatusPendingFinanceRevision
+	if purchase.Status != models.PurchaseStatusDraft && !isPrePostingRevision {
 		fmt.Printf("? Purchase %d cannot be submitted for approval in current status: %s\n", id, purchase.Status)
-		return fmt.Errorf("only draft purchases can be submitted for approval, current status: %s", purchase.Status)
+		return fmt.Errorf("hanya purchase draft atau yang sedang direvisi Finance Staff yang dapat disubmit, status saat ini: %s", purchase.Status)
+	}
+	if isPrePostingRevision {
+		hasActiveRevision, err := s.HasActivePurchasePrePostingRevision(id)
+		if err != nil {
+			return fmt.Errorf("gagal memeriksa revisi Finance Staff: %w", err)
+		}
+		if !hasActiveRevision {
+			return errors.New("purchase tidak memiliki revisi Finance Staff aktif")
+		}
 	}
 
 	// Ensure approval base up-to-date
@@ -990,7 +1007,15 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 	purchase.UpdatedAt = now
 
 	_, err = s.purchaseRepo.Update(purchase)
-	return err
+	if err != nil {
+		return err
+	}
+	if isPrePostingRevision {
+		if err := s.markPurchasePrePostingRevisionResubmitted(id, userID, purchase.ApprovalRequestID); err != nil {
+			return fmt.Errorf("gagal menyelesaikan revisi Finance Staff: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *PurchaseService) advanceRequesterSubmissionStep(purchase *models.Purchase, actorID uint, comments string) error {
@@ -1137,6 +1162,9 @@ func (s *PurchaseService) ProcessPurchaseApprovalWithEscalation(purchaseID uint,
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
 		return nil, err
+	}
+	if err := ensureNoActivePurchasePrePostingRevision(s.db, purchaseID); err != nil {
+		return nil, fmt.Errorf("purchase tidak dapat diproses selama revisi Finance Staff aktif: %w", err)
 	}
 
 	// Allow approval/rejection of DRAFT purchases (Finance approving new purchases)
@@ -1947,6 +1975,9 @@ func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, reque
 	if err != nil {
 		return nil, fmt.Errorf("purchase not found: %v", err)
 	}
+	if err := ensureNoActivePurchasePrePostingRevision(s.db, purchaseID); err != nil {
+		return nil, fmt.Errorf("gagal memeriksa revisi data purchase: %w", err)
+	}
 	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
 		return nil, errors.New("purchase belum melewati approval Finance Manager awal")
 	}
@@ -2037,6 +2068,9 @@ func (s *PurchaseService) UpdatePurchaseFinalReviewConfig(purchaseID uint, reque
 	now := time.Now()
 	purchase.UpdatedAt = now
 	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureNoActivePurchasePrePostingRevision(tx, purchaseID); err != nil {
+			return err
+		}
 		selectFields := []string{
 			"PaymentMethod",
 			"BankAccountID",
@@ -2108,6 +2142,9 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 	if err != nil {
 		return nil, fmt.Errorf("purchase not found: %v", err)
 	}
+	if err := ensureNoActivePurchasePrePostingRevision(s.db, purchaseID); err != nil {
+		return nil, fmt.Errorf("gagal memeriksa revisi data purchase: %w", err)
+	}
 
 	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
 		return nil, errors.New("COA accounting hanya bisa dilengkapi setelah purchase disetujui Finance Manager")
@@ -2157,6 +2194,9 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 	}
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureNoActivePurchasePrePostingRevision(tx, purchaseID); err != nil {
+			return err
+		}
 		purchaseUpdates := map[string]interface{}{
 			"updated_at": time.Now(),
 		}
@@ -2214,6 +2254,9 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 	if err != nil {
 		return nil, fmt.Errorf("purchase not found: %v", err)
 	}
+	if err := ensureNoActivePurchasePrePostingRevision(s.db, purchaseID); err != nil {
+		return nil, fmt.Errorf("gagal memeriksa revisi data purchase: %w", err)
+	}
 	if purchase.ApprovalStatus != models.PurchaseApprovalApproved {
 		return nil, errors.New("purchase belum melewati approval Finance Manager awal")
 	}
@@ -2263,6 +2306,9 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 		}
 		if pendingCount > 0 {
 			return errors.New("masih ada pengajuan revisi COA yang menunggu keputusan Finance Manager")
+		}
+		if err := ensureNoActivePurchasePrePostingRevision(tx, purchaseID); err != nil {
+			return err
 		}
 
 		updates := map[string]interface{}{
@@ -2318,6 +2364,9 @@ func (s *PurchaseService) OnPurchaseApproved(purchaseID uint) error {
 	if err != nil {
 		return fmt.Errorf("failed to get purchase for post-approval routing: %v", err)
 	}
+	if err := ensureNoActivePurchasePrePostingRevision(s.db, purchaseID); err != nil {
+		return fmt.Errorf("purchase tidak dapat diteruskan ke Accounting selama revisi Finance Staff aktif: %w", err)
+	}
 	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
 		return err
 	}
@@ -2335,6 +2384,9 @@ func (s *PurchaseService) postFinalApprovedPurchase(purchaseID uint) error {
 	purchase, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
 		return fmt.Errorf("failed to get purchase for post-approval processing: %v", err)
+	}
+	if err := ensureNoActivePurchasePrePostingRevision(s.db, purchaseID); err != nil {
+		return fmt.Errorf("purchase tidak dapat diposting selama revisi Finance Staff aktif: %w", err)
 	}
 
 	fmt.Printf("?? Processing approved purchase %s (method: %s, amount: %.2f)\n", purchase.Code, purchase.PaymentMethod, purchase.TotalAmount)

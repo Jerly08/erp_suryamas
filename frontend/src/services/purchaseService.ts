@@ -90,6 +90,45 @@ export interface PurchaseCOARevision {
   finance_manager?: PurchaseCOARevisionActor;
 }
 
+export type PurchasePrePostingRevisionStatus =
+  | "PENDING_FINANCE_MANAGER"
+  | "OPEN_FOR_FINANCE"
+  | "REJECTED"
+  | "RESUBMITTED";
+
+export type PurchasePrePostingRevisionType =
+  | "TRANSACTION_DATE"
+  | "VENDOR_OR_PROJECT"
+  | "ITEMS_AND_AMOUNT"
+  | "TAX_AND_COST"
+  | "PAYMENT_CONFIGURATION"
+  | "OTHER";
+
+export interface PurchasePrePostingRevision {
+  id: number;
+  purchase_id: number;
+  status: PurchasePrePostingRevisionStatus;
+  revision_types: string;
+  reason: string;
+  original_approval_request_id?: number | null;
+  resubmitted_approval_request_id?: number | null;
+  requested_by: number;
+  requested_at: string;
+  finance_manager_decision_notes?: string;
+  finance_manager_decision_by?: number | null;
+  finance_manager_decision_at?: string | null;
+  opened_for_revision_by?: number | null;
+  opened_for_revision_at?: string | null;
+  resubmitted_by?: number | null;
+  resubmitted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  requester?: PurchaseCOARevisionActor;
+  finance_manager?: PurchaseCOARevisionActor;
+  opened_by?: PurchaseCOARevisionActor;
+  resubmitted_by_user?: PurchaseCOARevisionActor;
+}
+
 export interface PurchaseFilterParams {
   status?: string;
   vendor_id?: string;
@@ -471,6 +510,41 @@ class PurchaseService {
   ): Promise<PurchaseCOARevision> {
     const response = await api.post(
       API_ENDPOINTS.PURCHASES_COA_REVISION_DECISION(id, revisionId),
+      payload,
+    );
+    return response.data?.revision ?? response.data;
+  }
+
+  async listPrePostingRevisions(
+    id: number,
+  ): Promise<PurchasePrePostingRevision[]> {
+    const response = await api.get(
+      API_ENDPOINTS.PURCHASES_PRE_POSTING_REVISIONS(id),
+    );
+    return response.data?.data ?? [];
+  }
+
+  async requestPrePostingRevision(
+    id: number,
+    payload: {
+      revision_types: PurchasePrePostingRevisionType[];
+      reason: string;
+    },
+  ): Promise<PurchasePrePostingRevision> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_PRE_POSTING_REVISIONS(id),
+      payload,
+    );
+    return response.data?.revision ?? response.data;
+  }
+
+  async decidePrePostingRevision(
+    id: number,
+    revisionId: number,
+    payload: { approve: boolean; notes?: string },
+  ): Promise<PurchasePrePostingRevision> {
+    const response = await api.post(
+      API_ENDPOINTS.PURCHASES_PRE_POSTING_REVISION_DECISION(id, revisionId),
       payload,
     );
     return response.data?.revision ?? response.data;

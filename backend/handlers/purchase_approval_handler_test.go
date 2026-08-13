@@ -160,6 +160,7 @@ func newPurchaseApprovalHandlerTestDB(t *testing.T) *gorm.DB {
 		&models.PurchaseRequestItem{},
 		&models.Purchase{},
 		&models.PurchaseItem{},
+		&models.PurchasePrePostingRevision{},
 		&models.ApprovalWorkflow{},
 		&models.ApprovalRequest{},
 		&models.ApprovalStep{},

@@ -169,7 +169,7 @@ func (pm *PermissionMiddleware) CanEditPurchaseOrFinanceStaffDraft() gin.Handler
 				Where("id = ?", uint(purchaseID)).
 				First(&purchase).
 				Error
-			if err == nil && purchase.Status == models.PurchaseStatusDraft {
+			if err == nil && (purchase.Status == models.PurchaseStatusDraft || purchase.Status == models.PurchaseStatusPendingFinanceRevision) {
 				c.Next()
 				return
 			}

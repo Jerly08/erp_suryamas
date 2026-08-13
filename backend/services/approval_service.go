@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -22,6 +23,8 @@ type ApprovalService struct {
 	db                   *gorm.DB
 	postApprovalCallback PostApprovalCallback
 }
+
+var approvalRequestCodeSequence uint64
 
 func NewApprovalService(db *gorm.DB) *ApprovalService {
 	return &ApprovalService{db: db}
@@ -594,7 +597,8 @@ func (s *ApprovalService) GetApprovalHistory(requestID uint) ([]models.ApprovalH
 
 // Helper Functions
 
-// generateRequestCode generates a unique request code
+// generateRequestCode generates a unique request code. A timestamp alone at
+// second precision can collide when a request is resubmitted immediately.
 func (s *ApprovalService) generateRequestCode(entityType string) string {
 	var prefix string
 	switch entityType {
@@ -606,8 +610,9 @@ func (s *ApprovalService) generateRequestCode(entityType string) string {
 		prefix = "APP-REQ"
 	}
 
-	timestamp := time.Now().Format("20060102150405")
-	return fmt.Sprintf("%s-%s", prefix, timestamp)
+	timestamp := time.Now().Format("20060102150405.000000")
+	sequence := atomic.AddUint64(&approvalRequestCodeSequence, 1)
+	return fmt.Sprintf("%s-%s-%06d", prefix, timestamp, sequence%1000000)
 }
 
 // canUserApprove checks if user can approve based on role (case-insensitive)

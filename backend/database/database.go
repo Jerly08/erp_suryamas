@@ -683,6 +683,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.PurchaseItem{},
 		&models.PurchasePaymentTerm{},
 		&models.PurchaseCOARevision{},
+		&models.PurchasePrePostingRevision{},
 		&models.PrepaidExpense{},
 		&models.PrepaidSchedule{},
 		&models.PurchaseDocument{},

@@ -117,6 +117,7 @@ import SubmitApprovalButton from "@/components/purchase/SubmitApprovalButton";
 import { ApprovalPanel } from "@/components/approval/ApprovalPanel";
 import PurchasePaymentForm from "@/components/purchase/PurchasePaymentForm";
 import PurchaseCOARevisionPanel from "@/components/purchase/PurchaseCOARevisionPanel";
+import PurchasePrePostingRevisionPanel from "@/components/purchase/PurchasePrePostingRevisionPanel";
 import { PostedTransactionCorrectionsPanel } from "@/components/corrections/PostedTransactionCorrections";
 import contactService from "@/services/contactService";
 import productService, { Product } from "@/services/productService";
@@ -5247,7 +5248,9 @@ const PurchasesPage: React.FC = () => {
 
     const isEditingDraftPurchase =
       !!selectedPurchase &&
-      (selectedPurchase.status || "").toUpperCase() === "DRAFT";
+      ["DRAFT", "PENDING_FINANCE_REVISION"].includes(
+        (selectedPurchase.status || "").toUpperCase(),
+      );
     const shouldRequireItemAccount =
       canSelectAccountFromCOA &&
       canListExpenseAccounts &&
@@ -5668,6 +5671,10 @@ const PurchasesPage: React.FC = () => {
       return isFinanceManagerRole(roleNorm);
     }
 
+    if (purchaseStatus === "PENDING_FINANCE_REVISION") {
+      return isFinanceStaffRole(roleNorm) || roleNorm === "admin";
+    }
+
     if (
       approvalStatus === "APPROVED" ||
       approvalStatus === "REJECTED" ||
@@ -5694,10 +5701,13 @@ const PurchasesPage: React.FC = () => {
     const status = (purchase.approval_status || "").toUpperCase();
     const purchaseStatus = (purchase.status || "").toUpperCase();
     const activeStep = getCurrentApprovalStepInfo(purchase);
+    const isFinanceStaffRevision =
+      purchaseStatus === "PENDING_FINANCE_REVISION";
     const canActOnDraftApproval =
-      purchaseStatus === "DRAFT" && canCurrentUserActOnPurchase(purchase);
+      (purchaseStatus === "DRAFT" || isFinanceStaffRevision) &&
+      canCurrentUserActOnPurchase(purchase);
     const isUserTurn =
-      purchaseStatus === "DRAFT"
+      purchaseStatus === "DRAFT" || isFinanceStaffRevision
         ? canActOnDraftApproval
         : purchaseStatus === "PENDING_FINAL_APPROVAL"
           ? isFinanceManagerRole(roleNorm)
@@ -5731,6 +5741,22 @@ const PurchasesPage: React.FC = () => {
         colorScheme: "gray",
         variant: "outline",
       };
+    }
+
+    if (isFinanceStaffRevision) {
+      return canActOnDraftApproval
+        ? {
+            text: "Submit Ulang",
+            icon: <FiAlertCircle />,
+            colorScheme: "blue",
+            variant: "solid",
+          }
+        : {
+            text: "Menunggu Revisi Finance",
+            icon: <FiClock />,
+            colorScheme: "blue",
+            variant: "outline",
+          };
     }
 
     if (purchaseStatus === "DRAFT" && !canActOnDraftApproval) {
@@ -5818,7 +5844,7 @@ const PurchasesPage: React.FC = () => {
       purchaseStatus === "PENDING_FINAL_APPROVAL" &&
       isFinanceManagerRole(roleNorm);
     const canEditDraftPurchase =
-      purchaseStatus === "DRAFT" &&
+      ["DRAFT", "PENDING_FINANCE_REVISION"].includes(purchaseStatus) &&
       (roleNorm === "admin" || roleNorm === "finance_staff");
 
     return (
@@ -5858,10 +5884,14 @@ const PurchasesPage: React.FC = () => {
           whiteSpace="normal"
           lineHeight="1.15"
           onClick={() => {
-            // Draft purchases should be submitted first by non-approver roles.
+            // A returned pre-posting revision follows the same normal approval flow.
             if (
-              purchaseStatus === "DRAFT" &&
-              actionProps.text === "Submit for Approval"
+              ["DRAFT", "PENDING_FINANCE_REVISION"].includes(
+                purchaseStatus,
+              ) &&
+              ["Submit for Approval", "Submit Ulang"].includes(
+                actionProps.text,
+              )
             ) {
               handleSubmitForApproval(purchase.id);
             } else if (financeManagerCanFinalApprove) {
@@ -8035,6 +8065,18 @@ const PurchasesPage: React.FC = () => {
                             </Text>
                           </FormControl>
                         )}
+
+                        <PurchasePrePostingRevisionPanel
+                          purchase={selectedPurchase}
+                          onChanged={async () => {
+                            const detailResponse =
+                              await purchaseService.getById(
+                                selectedPurchase.id,
+                              );
+                            setSelectedPurchase(detailResponse);
+                            await fetchPurchases();
+                          }}
+                        />
 
                         <PurchaseCOARevisionPanel
                           purchase={selectedPurchase}

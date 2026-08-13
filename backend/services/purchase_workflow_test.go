@@ -32,6 +32,7 @@ func TestPurchaseApprovalRoutesToAccountingThenFinalApprovalPosts(t *testing.T) 
 		&models.Purchase{},
 		&models.PurchaseItem{},
 		&models.PurchaseCOARevision{},
+		&models.PurchasePrePostingRevision{},
 		&models.ApprovalWorkflow{},
 		&models.ApprovalRequest{},
 		&models.ApprovalStep{},
@@ -304,6 +305,89 @@ func TestPurchaseCOARevisionReturnsPurchaseToAccountingBeforePosting(t *testing.
 		Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, uint64(purchase.ID)).
 		Count(&journalCount).Error)
 	require.Equal(t, int64(0), journalCount)
+}
+
+func TestPurchasePrePostingRevisionReturnsPurchaseToFinanceBeforePosting(t *testing.T) {
+	fixture := newPurchaseWorkflowFixture(t)
+	purchase, item := fixture.createDraftPurchase(t, "PO-WF-PRE-POSTING-REVISION", 125000)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
+	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.manager.ID,
+		fixture.manager.Role,
+		"Finance Manager approved initial purchase workflow",
+		false,
+	)
+	require.NoError(t, err)
+
+	pendingAccounting, err := fixture.service.GetPurchaseByID(purchase.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingAccounting, pendingAccounting.Status)
+	require.NotNil(t, pendingAccounting.ApprovalRequestID)
+
+	revision, err := fixture.service.RequestPurchasePrePostingRevision(
+		purchase.ID,
+		models.PurchasePrePostingRevisionCreateRequest{
+			RevisionTypes: []string{"TRANSACTION_DATE", "PAYMENT_CONFIGURATION"},
+			Reason:        "Tanggal dan konfigurasi pembayaran perlu diperbaiki sebelum jurnal.",
+		},
+		fixture.financeStaff.ID,
+		fixture.financeStaff.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchasePrePostingRevisionStatusPendingFinanceManager, revision.Status)
+
+	_, err = fixture.service.CompleteAccountingCOA(purchase.ID, models.PurchaseAccountingCOARequest{
+		CreditAccountID: &fixture.liabilityAccount.ID,
+		Items: []models.PurchaseAccountingCOAItemRequest{
+			{PurchaseItemID: item.ID, ExpenseAccountID: fixture.expenseAccount.ID},
+		},
+	}, fixture.accounting.ID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "revisi Finance Staff")
+
+	approvedRevision, err := fixture.service.DecidePurchasePrePostingRevision(
+		purchase.ID,
+		revision.ID,
+		models.PurchasePrePostingRevisionDecisionRequest{
+			Approve: true,
+			Notes:   "Silakan koreksi lalu submit ulang.",
+		},
+		fixture.manager.ID,
+		fixture.manager.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchasePrePostingRevisionStatusOpenForFinance, approvedRevision.Status)
+
+	returned, err := fixture.service.GetPurchaseByID(purchase.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPendingFinanceRevision, returned.Status)
+	require.Equal(t, models.PurchaseApprovalNotStarted, returned.ApprovalStatus)
+	require.Nil(t, returned.ApprovalRequestID)
+
+	var returnedItem models.PurchaseItem
+	require.NoError(t, fixture.db.First(&returnedItem, item.ID).Error)
+	require.Zero(t, returnedItem.ExpenseAccountID)
+
+	var journalCount int64
+	require.NoError(t, fixture.db.Model(&models.SSOTJournalEntry{}).
+		Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, uint64(purchase.ID)).
+		Count(&journalCount).Error)
+	require.Equal(t, int64(0), journalCount)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.financeStaff.ID))
+
+	var resubmittedRevision models.PurchasePrePostingRevision
+	require.NoError(t, fixture.db.First(&resubmittedRevision, revision.ID).Error)
+	require.Equal(t, models.PurchasePrePostingRevisionStatusResubmitted, resubmittedRevision.Status)
+	require.NotNil(t, resubmittedRevision.ResubmittedApprovalRequestID)
+
+	resubmittedPurchase, err := fixture.service.GetPurchaseByID(purchase.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchaseStatusPending, resubmittedPurchase.Status)
+	require.Equal(t, models.PurchaseApprovalPending, resubmittedPurchase.ApprovalStatus)
 }
 
 func TestPurchaseApprovalWorkflowWithExplicitDirectorStillWaitsForAccounting(t *testing.T) {
@@ -615,6 +699,7 @@ func newPurchaseWorkflowFixture(t *testing.T) *purchaseWorkflowFixture {
 		&models.Purchase{},
 		&models.PurchaseItem{},
 		&models.PurchaseCOARevision{},
+		&models.PurchasePrePostingRevision{},
 		&models.ApprovalWorkflow{},
 		&models.ApprovalRequest{},
 		&models.ApprovalStep{},

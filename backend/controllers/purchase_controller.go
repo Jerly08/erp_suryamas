@@ -703,6 +703,116 @@ func (pc *PurchaseController) DecidePurchaseCOARevision(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": message, "revision": revision})
 }
 
+// ListPurchasePrePostingRevisions returns the audit trail for Finance Staff
+// revisions that happen before a purchase can be posted to the journal.
+func (pc *PurchaseController) ListPurchasePrePostingRevisions(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	roleNorm := models.NormalizeRole(c.MustGet("user_role").(string))
+	if !models.IsFinanceTeamRole(roleNorm) && roleNorm != models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya tim Finance, Accounting, atau Admin yang dapat melihat riwayat revisi purchase"})
+		return
+	}
+
+	revisions, err := pc.purchaseService.ListPurchasePrePostingRevisions(uint(id), userID, roleNorm)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": revisions})
+}
+
+// RequestPurchasePrePostingRevision lets Finance Staff return an unposted
+// purchase to their working queue. Purchases that already passed the first
+// FM approval wait for an explicit FM decision before being reopened.
+func (pc *PurchaseController) RequestPurchasePrePostingRevision(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(id)); !ok {
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	roleNorm := models.NormalizeRole(c.MustGet("user_role").(string))
+	if !models.IsFinanceStaffRole(roleNorm) && roleNorm != models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Finance Staff yang dapat mengajukan revisi data purchase sebelum jurnal diposting"})
+		return
+	}
+
+	var request models.PurchasePrePostingRevisionCreateRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	revision, err := pc.purchaseService.RequestPurchasePrePostingRevision(uint(id), request, userID, roleNorm)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	message := "Pengajuan revisi data purchase dikirim ke Finance Manager"
+	if revision.Status == models.PurchasePrePostingRevisionStatusOpenForFinance {
+		message = "Purchase dibuka untuk revisi Finance Staff"
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": message, "revision": revision})
+}
+
+// DecidePurchasePrePostingRevision is the FM gate for reopening a purchase
+// that has already passed the initial approval and is not yet posted.
+func (pc *PurchaseController) DecidePurchasePrePostingRevision(c *gin.Context) {
+	purchaseID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase ID"})
+		return
+	}
+	revisionID, err := strconv.ParseUint(c.Param("revision_id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid revision ID"})
+		return
+	}
+	if _, ok := pc.getAccessiblePurchase(c, uint(purchaseID)); !ok {
+		return
+	}
+
+	userID := c.MustGet("user_id").(uint)
+	roleNorm := models.NormalizeRole(c.MustGet("user_role").(string))
+	if !models.IsFinanceManagerRole(roleNorm) && roleNorm != models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Hanya Finance Manager yang dapat memutuskan revisi data purchase"})
+		return
+	}
+
+	var request models.PurchasePrePostingRevisionDecisionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	revision, err := pc.purchaseService.DecidePurchasePrePostingRevision(uint(purchaseID), uint(revisionID), request, userID, roleNorm)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	message := "Revisi data purchase ditolak; purchase tetap pada tahap sebelumnya"
+	if request.Approve {
+		message = "Revisi data purchase disetujui; purchase dikembalikan ke Finance Staff"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": message, "revision": revision})
+}
+
 func (pc *PurchaseController) UpdateFinalReviewConfig(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {

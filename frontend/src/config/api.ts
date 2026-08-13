@@ -463,6 +463,10 @@ export const API_ENDPOINTS = {
     `/api/v1/purchases/${id}/coa-revisions`,
   PURCHASES_COA_REVISION_DECISION: (id: number, revisionId: number) =>
     `/api/v1/purchases/${id}/coa-revisions/${revisionId}/decision`,
+  PURCHASES_PRE_POSTING_REVISIONS: (id: number) =>
+    `/api/v1/purchases/${id}/pre-posting-revisions`,
+  PURCHASES_PRE_POSTING_REVISION_DECISION: (id: number, revisionId: number) =>
+    `/api/v1/purchases/${id}/pre-posting-revisions/${revisionId}/decision`,
   PURCHASES_FINAL_REVIEW_CONFIG: (id: number) =>
     `/api/v1/purchases/${id}/final-review-config`,
   PURCHASES_FINAL_APPROVAL: (id: number) =>

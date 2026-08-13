@@ -184,15 +184,19 @@ type PurchasePayment struct {
 
 // Purchase Status Constants
 const (
-	PurchaseStatusDraft                = "DRAFT"
-	PurchaseStatusPending              = "PENDING"
-	PurchaseStatusPendingApproval      = "PENDING_APPROVAL"
-	PurchaseStatusPendingAccounting    = "PENDING_ACCOUNTING"
-	PurchaseStatusPendingFinalApproval = "PENDING_FINAL_APPROVAL"
-	PurchaseStatusApproved             = "APPROVED"
-	PurchaseStatusCompleted            = "COMPLETED"
-	PurchaseStatusPaid                 = "PAID"
-	PurchaseStatusCancelled            = "CANCELLED"
+	PurchaseStatusDraft           = "DRAFT"
+	PurchaseStatusPending         = "PENDING"
+	PurchaseStatusPendingApproval = "PENDING_APPROVAL"
+	// PurchaseStatusPendingFinanceRevision keeps a pre-posting purchase in the
+	// Finance Staff revision stage. It has no journal, cash/bank, stock, or
+	// payment side effect yet and must be submitted through the normal FM flow.
+	PurchaseStatusPendingFinanceRevision = "PENDING_FINANCE_REVISION"
+	PurchaseStatusPendingAccounting      = "PENDING_ACCOUNTING"
+	PurchaseStatusPendingFinalApproval   = "PENDING_FINAL_APPROVAL"
+	PurchaseStatusApproved               = "APPROVED"
+	PurchaseStatusCompleted              = "COMPLETED"
+	PurchaseStatusPaid                   = "PAID"
+	PurchaseStatusCancelled              = "CANCELLED"
 )
 
 // Purchase Approval Status Constants
