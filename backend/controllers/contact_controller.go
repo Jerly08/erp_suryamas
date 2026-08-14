@@ -96,7 +96,16 @@ func (cc *ContactController) GetVendorsForPurchase(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "success", "data": contacts})
+	// Historical purchases may still refer to inactive vendors, but new purchases
+	// must only offer vendors that can still be used.
+	activeVendors := make([]models.Contact, 0, len(contacts))
+	for _, contact := range contacts {
+		if contact.IsActive {
+			activeVendors = append(activeVendors, contact)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": activeVendors})
 }
 
 // CreateVendorForPurchase handles the quick-create vendor modal embedded in

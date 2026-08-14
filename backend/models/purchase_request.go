@@ -44,6 +44,19 @@ type PurchaseRequest struct {
 	VendorInvoiceReviewedAt    *time.Time `json:"vendor_invoice_reviewed_at"`
 	VendorInvoiceReviewNotes   string     `json:"vendor_invoice_review_notes" gorm:"type:text"`
 
+	// Billing/realisasi has its own post-approval review cycle. It must not
+	// reset the original PR approval or affect the linked purchase/journal.
+	RequiresRealizationDocument bool       `json:"requires_realization_document" gorm:"default:false"`
+	RealizationStatus           string     `json:"realization_status" gorm:"size:40;default:'NOT_REQUIRED'"`
+	RealizationRequestedBy      *uint      `json:"realization_requested_by" gorm:"index"`
+	RealizationRequestedAt      *time.Time `json:"realization_requested_at"`
+	RealizationSubmittedBy      *uint      `json:"realization_submitted_by" gorm:"index"`
+	RealizationSubmittedAt      *time.Time `json:"realization_submitted_at"`
+	RealizationReviewedBy       *uint      `json:"realization_reviewed_by" gorm:"index"`
+	RealizationReviewedAt       *time.Time `json:"realization_reviewed_at"`
+	RealizationReviewNotes      string     `json:"realization_review_notes" gorm:"type:text"`
+	RealizationReviewCycle      int        `json:"realization_review_cycle" gorm:"default:0"`
+
 	// Approval Tracking
 	ApprovedBy                *uint      `json:"approved_by" gorm:"index"`
 	ApprovedAt                *time.Time `json:"approved_at"`
@@ -65,22 +78,26 @@ type PurchaseRequest struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Requester              User                              `json:"requester" gorm:"foreignKey:RequesterID"`
-	Project                *Project                          `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
-	Vendor                 *Contact                          `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
-	Items                  []PurchaseRequestItem             `json:"items" gorm:"foreignKey:PurchaseRequestID"`
-	Documents              []PurchaseRequestDocument         `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
-	RevisionSnapshots      []PurchaseRequestRevisionSnapshot `json:"revision_snapshots" gorm:"foreignKey:PurchaseRequestID"`
-	Approver               *User                             `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	FinanceStaffApprover   *User                             `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
-	FinanceManagerApprover *User                             `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
-	DirectorApprover       *User                             `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
-	Canceller              *User                             `json:"canceller,omitempty" gorm:"foreignKey:CancelledBy"`
-	RevisionOpener         *User                             `json:"revision_opener,omitempty" gorm:"foreignKey:RevisionOpenedBy"`
-	RevisionSubmitter      *User                             `json:"revision_submitter,omitempty" gorm:"foreignKey:RevisionSubmittedBy"`
-	VendorInvoiceRequester *User                             `json:"vendor_invoice_requester,omitempty" gorm:"foreignKey:VendorInvoiceRequestedBy"`
-	VendorInvoiceSubmitter *User                             `json:"vendor_invoice_submitter,omitempty" gorm:"foreignKey:VendorInvoiceSubmittedBy"`
-	VendorInvoiceReviewer  *User                             `json:"vendor_invoice_reviewer,omitempty" gorm:"foreignKey:VendorInvoiceReviewedBy"`
+	Requester              User                               `json:"requester" gorm:"foreignKey:RequesterID"`
+	Project                *Project                           `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor                 *Contact                           `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
+	Items                  []PurchaseRequestItem              `json:"items" gorm:"foreignKey:PurchaseRequestID"`
+	Documents              []PurchaseRequestDocument          `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
+	RevisionSnapshots      []PurchaseRequestRevisionSnapshot  `json:"revision_snapshots" gorm:"foreignKey:PurchaseRequestID"`
+	RealizationReviews     []PurchaseRequestRealizationReview `json:"realization_reviews" gorm:"foreignKey:PurchaseRequestID"`
+	Approver               *User                              `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	FinanceStaffApprover   *User                              `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
+	FinanceManagerApprover *User                              `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User                              `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	Canceller              *User                              `json:"canceller,omitempty" gorm:"foreignKey:CancelledBy"`
+	RevisionOpener         *User                              `json:"revision_opener,omitempty" gorm:"foreignKey:RevisionOpenedBy"`
+	RevisionSubmitter      *User                              `json:"revision_submitter,omitempty" gorm:"foreignKey:RevisionSubmittedBy"`
+	VendorInvoiceRequester *User                              `json:"vendor_invoice_requester,omitempty" gorm:"foreignKey:VendorInvoiceRequestedBy"`
+	VendorInvoiceSubmitter *User                              `json:"vendor_invoice_submitter,omitempty" gorm:"foreignKey:VendorInvoiceSubmittedBy"`
+	VendorInvoiceReviewer  *User                              `json:"vendor_invoice_reviewer,omitempty" gorm:"foreignKey:VendorInvoiceReviewedBy"`
+	RealizationRequester   *User                              `json:"realization_requester,omitempty" gorm:"foreignKey:RealizationRequestedBy"`
+	RealizationSubmitter   *User                              `json:"realization_submitter,omitempty" gorm:"foreignKey:RealizationSubmittedBy"`
+	RealizationReviewer    *User                              `json:"realization_reviewer,omitempty" gorm:"foreignKey:RealizationReviewedBy"`
 }
 
 // PurchaseRequestItem represents the details of items requested
@@ -164,6 +181,24 @@ type PurchaseRequestRevisionSnapshot struct {
 	Submitter       *User           `json:"submitter,omitempty" gorm:"foreignKey:SubmittedBy"`
 }
 
+// PurchaseRequestRealizationReview records every post-approval billing/realisasi
+// action independently from the original PR approval history.
+type PurchaseRequestRealizationReview struct {
+	ID                uint           `json:"id" gorm:"primaryKey"`
+	PurchaseRequestID uint           `json:"purchase_request_id" gorm:"not null;index"`
+	CycleNumber       int            `json:"cycle_number" gorm:"not null;default:1;index"`
+	Stage             string         `json:"stage" gorm:"size:40;not null"`
+	Decision          string         `json:"decision" gorm:"size:40;not null"`
+	Notes             string         `json:"notes" gorm:"type:text"`
+	ActorID           uint           `json:"actor_id" gorm:"not null;index"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
+
+	PurchaseRequest PurchaseRequest `json:"-" gorm:"foreignKey:PurchaseRequestID"`
+	Actor           User            `json:"actor" gorm:"foreignKey:ActorID"`
+}
+
 // PurchaseRequest Status Constants
 const (
 	PRStatusDraft            = "DRAFT"
@@ -217,6 +252,29 @@ const (
 	PRVendorInvoiceStatusNeedsClarification  = "NEEDS_CLARIFICATION"
 )
 
+// Purchase request billing/realisasi status constants. This review cycle is
+// intentionally separate from the PR's original approval workflow.
+const (
+	PRRealizationStatusNotRequired                 = "NOT_REQUIRED"
+	PRRealizationStatusPendingOriginalApproval     = "PENDING_ORIGINAL_APPROVAL"
+	PRRealizationStatusAwaitingUpload              = "AWAITING_UPLOAD"
+	PRRealizationStatusPendingFinanceStaffReview   = "PENDING_FINANCE_STAFF_REVIEW"
+	PRRealizationStatusPendingFinanceManagerReview = "PENDING_FINANCE_MANAGER_REVIEW"
+	PRRealizationStatusVerified                    = "VERIFIED"
+	PRRealizationStatusNeedsClarification          = "NEEDS_CLARIFICATION"
+)
+
+const (
+	PRRealizationReviewStageSubmission     = "SUBMISSION"
+	PRRealizationReviewStageFinanceStaff   = "FINANCE_STAFF"
+	PRRealizationReviewStageFinanceManager = "FINANCE_MANAGER"
+
+	PRRealizationReviewDecisionSubmitted          = "SUBMITTED"
+	PRRealizationReviewDecisionApproved           = "APPROVED"
+	PRRealizationReviewDecisionVerified           = "VERIFIED"
+	PRRealizationReviewDecisionNeedsClarification = "NEEDS_CLARIFICATION"
+)
+
 // Request DTOs
 type PurchaseRequestCreatePayload struct {
 	Department                string                       `json:"department"`
@@ -244,10 +302,11 @@ type PurchaseRequestReviewItemPayload struct {
 }
 
 type PurchaseRequestReviewPayload struct {
-	Items                []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
-	Reason               string                             `json:"reason"`
-	EscalateToDirector   bool                               `json:"escalate_to_director"`
-	RequireVendorInvoice bool                               `json:"require_vendor_invoice"`
+	Items                      []PurchaseRequestReviewItemPayload `json:"items" binding:"required,min=1"`
+	Reason                     string                             `json:"reason"`
+	EscalateToDirector         bool                               `json:"escalate_to_director"`
+	RequireVendorInvoice       bool                               `json:"require_vendor_invoice"`
+	RequireRealizationDocument bool                               `json:"require_realization_document"`
 }
 
 type PurchaseRequestProjectUpdatePayload struct {
@@ -273,6 +332,11 @@ type PurchaseRequestInvoiceRevisionPayload struct {
 }
 
 type PurchaseRequestVendorInvoiceVerificationPayload struct {
+	Decision string `json:"decision" binding:"required"`
+	Notes    string `json:"notes"`
+}
+
+type PurchaseRequestRealizationVerificationPayload struct {
 	Decision string `json:"decision" binding:"required"`
 	Notes    string `json:"notes"`
 }

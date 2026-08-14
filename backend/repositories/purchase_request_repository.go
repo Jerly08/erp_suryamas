@@ -51,7 +51,14 @@ func (r *purchaseRequestRepository) withDefaultPreloads(query *gorm.DB) *gorm.DB
 		Preload("Canceller").
 		Preload("VendorInvoiceRequester").
 		Preload("VendorInvoiceSubmitter").
-		Preload("VendorInvoiceReviewer")
+		Preload("VendorInvoiceReviewer").
+		Preload("RealizationReviews", func(db *gorm.DB) *gorm.DB {
+			return db.Order("cycle_number asc").Order("created_at asc")
+		}).
+		Preload("RealizationReviews.Actor").
+		Preload("RealizationRequester").
+		Preload("RealizationSubmitter").
+		Preload("RealizationReviewer")
 
 	if r.db.Migrator().HasTable(&models.PurchasePayment{}) {
 		query = query.

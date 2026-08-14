@@ -22,6 +22,8 @@ type PurchaseRequestService interface {
 	SubmitPurchaseRequestInvoiceRevision(id uint, userID uint, userRole string, payload models.PurchaseRequestInvoiceRevisionPayload, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error)
 	UploadPostPurchaseVendorInvoiceDocuments(id uint, userID uint, userRole string, documents []models.PurchaseRequestDocument) (*models.PurchaseRequest, error)
 	ReviewPostPurchaseVendorInvoice(id uint, userID uint, userRole string, payload models.PurchaseRequestVendorInvoiceVerificationPayload) (*models.PurchaseRequest, error)
+	SubmitPurchaseRequestRealizationForReview(id uint, userID uint, userRole string, documentCount int) (*models.PurchaseRequest, error)
+	ReviewPurchaseRequestRealization(id uint, userID uint, userRole string, payload models.PurchaseRequestRealizationVerificationPayload) (*models.PurchaseRequest, error)
 	ReviewPurchaseRequest(id uint, reviewerID uint, reviewerRole string, payload models.PurchaseRequestReviewPayload) (string, error)
 	ApprovePurchaseRequest(id uint, approverID uint, approverRole string) (string, error)
 	RejectPurchaseRequest(id uint, approverID uint, approverRole string, reason string) (string, error)
@@ -141,6 +143,7 @@ func (s *purchaseRequestService) CreatePurchaseRequest(payload models.PurchaseRe
 		CurrentApprovalStage:      initialStage,
 		ApprovalRevision:          1,
 		VendorInvoiceStatus:       models.PRVendorInvoiceStatusNotRequired,
+		RealizationStatus:         models.PRRealizationStatusNotRequired,
 		Notes:                     payload.Notes,
 		Items:                     items,
 	}
@@ -958,6 +961,15 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 		} else if !pr.RequiresVendorInvoice && pr.VendorInvoiceStatus == "" {
 			pr.VendorInvoiceStatus = models.PRVendorInvoiceStatusNotRequired
 		}
+		if payload.RequireRealizationDocument && !pr.RequiresRealizationDocument {
+			pr.RequiresRealizationDocument = true
+			pr.RealizationStatus = models.PRRealizationStatusPendingOriginalApproval
+			pr.RealizationRequestedBy = &reviewerID
+			pr.RealizationRequestedAt = &now
+			pr.RealizationReviewCycle = 0
+		} else if !pr.RequiresRealizationDocument && pr.RealizationStatus == "" {
+			pr.RealizationStatus = models.PRRealizationStatusNotRequired
+		}
 
 		if err := s.repo.Update(pr); err != nil {
 			return "", err
@@ -1020,6 +1032,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.ApprovedAt = &now
 			pr.RejectionReason = reviewNotes
 			applyPurchaseRequestVendorInvoiceApprovalState(pr)
+			applyPurchaseRequestRealizationApprovalState(pr)
 		} else {
 			pr.Status = models.PRStatusRejected
 			pr.ApprovedBy = nil
@@ -1083,6 +1096,7 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.ApprovedAt = &now
 			pr.RejectionReason = reviewNotes
 			applyPurchaseRequestVendorInvoiceApprovalState(pr)
+			applyPurchaseRequestRealizationApprovalState(pr)
 		} else {
 			pr.Status = models.PRStatusRejected
 			pr.ApprovedBy = nil
@@ -1298,6 +1312,13 @@ func (s *purchaseRequestService) UploadPurchaseRequestRealizationDocument(purcha
 	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusCompleted {
 		return nil, fmt.Errorf("realization documents can only be uploaded after purchase request approval")
 	}
+	if !pr.RequiresRealizationDocument {
+		return nil, fmt.Errorf("purchase request %s does not require billing/realisasi documents", pr.PRNumber)
+	}
+	if pr.RealizationStatus != models.PRRealizationStatusAwaitingUpload &&
+		pr.RealizationStatus != models.PRRealizationStatusNeedsClarification {
+		return nil, fmt.Errorf("billing/realisasi documents are not awaiting upload")
+	}
 
 	revision := pr.ApprovalRevision
 	if revision < 1 {
@@ -1320,6 +1341,162 @@ func (s *purchaseRequestService) UploadPurchaseRequestRealizationDocument(purcha
 	}
 
 	return s.repo.GetDocumentByID(document.ID)
+}
+
+// SubmitPurchaseRequestRealizationForReview sends billing/realisasi documents
+// through a dedicated post-approval review. It never resets the original PR
+// approval or changes linked purchase, journal, and cash/bank records.
+func (s *purchaseRequestService) SubmitPurchaseRequestRealizationForReview(id uint, userID uint, userRole string, documentCount int) (*models.PurchaseRequest, error) {
+	if documentCount < 1 {
+		return nil, fmt.Errorf("at least one billing/realisasi document is required")
+	}
+
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+	roleNorm := models.NormalizeRole(userRole)
+	canSubmit := roleNorm == models.RoleAdmin || models.IsFinanceTeamRole(roleNorm) || pr.RequesterID == userID
+	if !canSubmit {
+		return nil, fmt.Errorf("only the requester, finance team, or admin can submit billing/realisasi documents")
+	}
+	if !pr.RequiresRealizationDocument {
+		return nil, fmt.Errorf("purchase request %s does not require billing/realisasi documents", pr.PRNumber)
+	}
+	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusCompleted {
+		return nil, fmt.Errorf("billing/realisasi documents can only be submitted after purchase request approval")
+	}
+	if pr.RealizationStatus != models.PRRealizationStatusAwaitingUpload &&
+		pr.RealizationStatus != models.PRRealizationStatusNeedsClarification {
+		return nil, fmt.Errorf("billing/realisasi documents are not awaiting submission")
+	}
+
+	var storedDocumentCount int64
+	if err := s.db.Model(&models.PurchaseRequestDocument{}).
+		Where("purchase_request_id = ? AND document_type = ?", pr.ID, models.PurchaseRequestDocumentRealization).
+		Count(&storedDocumentCount).Error; err != nil {
+		return nil, err
+	}
+	if storedDocumentCount == 0 {
+		return nil, fmt.Errorf("billing/realisasi document is required before submission")
+	}
+
+	cycle := pr.RealizationReviewCycle
+	if cycle < 1 || pr.RealizationStatus == models.PRRealizationStatusNeedsClarification {
+		cycle++
+	}
+	now := time.Now()
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.PurchaseRequest{}).Where("id = ?", pr.ID).Updates(map[string]interface{}{
+			"realization_status":       models.PRRealizationStatusPendingFinanceStaffReview,
+			"realization_submitted_by": userID,
+			"realization_submitted_at": now,
+			"realization_reviewed_by":  nil,
+			"realization_reviewed_at":  nil,
+			"realization_review_notes": "",
+			"realization_review_cycle": cycle,
+		}).Error; err != nil {
+			return err
+		}
+
+		return tx.Create(&models.PurchaseRequestRealizationReview{
+			PurchaseRequestID: pr.ID,
+			CycleNumber:       cycle,
+			Stage:             models.PRRealizationReviewStageSubmission,
+			Decision:          models.PRRealizationReviewDecisionSubmitted,
+			ActorID:           userID,
+		}).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetByID(pr.ID)
+}
+
+// ReviewPurchaseRequestRealization records the dedicated Finance Staff/Accounting
+// and Finance Manager review of billing/realisasi documents. The original PR
+// approval history remains immutable.
+func (s *purchaseRequestService) ReviewPurchaseRequestRealization(id uint, userID uint, userRole string, payload models.PurchaseRequestRealizationVerificationPayload) (*models.PurchaseRequest, error) {
+	pr, err := s.GetPurchaseRequestByID(id, userID, userRole)
+	if err != nil {
+		return nil, err
+	}
+	if !pr.RequiresRealizationDocument {
+		return nil, fmt.Errorf("purchase request %s does not require billing/realisasi review", pr.PRNumber)
+	}
+	if pr.Status != models.PRStatusApproved && pr.Status != models.PRStatusCompleted {
+		return nil, fmt.Errorf("billing/realisasi can only be reviewed after purchase request approval")
+	}
+
+	roleNorm := models.NormalizeRole(userRole)
+	decision := strings.ToUpper(strings.TrimSpace(payload.Decision))
+	notes := strings.TrimSpace(payload.Notes)
+	stage := ""
+	nextStatus := ""
+
+	switch pr.RealizationStatus {
+	case models.PRRealizationStatusPendingFinanceStaffReview:
+		if roleNorm != models.RoleAdmin && !models.IsFinanceStaffRole(roleNorm) && !models.IsAccountingRole(roleNorm) {
+			return nil, fmt.Errorf("only finance staff or accounting can review billing/realisasi at this stage")
+		}
+		stage = models.PRRealizationReviewStageFinanceStaff
+		switch decision {
+		case models.PRRealizationReviewDecisionApproved:
+			nextStatus = models.PRRealizationStatusPendingFinanceManagerReview
+		case models.PRRealizationReviewDecisionNeedsClarification:
+			nextStatus = models.PRRealizationStatusNeedsClarification
+		default:
+			return nil, fmt.Errorf("invalid billing/realisasi decision for finance staff review")
+		}
+	case models.PRRealizationStatusPendingFinanceManagerReview:
+		if roleNorm != models.RoleAdmin && !models.IsFinanceManagerRole(roleNorm) {
+			return nil, fmt.Errorf("only finance manager can review billing/realisasi at this stage")
+		}
+		stage = models.PRRealizationReviewStageFinanceManager
+		switch decision {
+		case models.PRRealizationReviewDecisionVerified:
+			nextStatus = models.PRRealizationStatusVerified
+		case models.PRRealizationReviewDecisionNeedsClarification:
+			nextStatus = models.PRRealizationStatusNeedsClarification
+		default:
+			return nil, fmt.Errorf("invalid billing/realisasi decision for finance manager review")
+		}
+	default:
+		return nil, fmt.Errorf("billing/realisasi is not awaiting review")
+	}
+
+	if decision == models.PRRealizationReviewDecisionNeedsClarification && notes == "" {
+		return nil, fmt.Errorf("review notes are required when clarification is needed")
+	}
+
+	cycle := pr.RealizationReviewCycle
+	if cycle < 1 {
+		cycle = 1
+	}
+	now := time.Now()
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.PurchaseRequest{}).Where("id = ?", pr.ID).Updates(map[string]interface{}{
+			"realization_status":       nextStatus,
+			"realization_reviewed_by":  userID,
+			"realization_reviewed_at":  now,
+			"realization_review_notes": notes,
+		}).Error; err != nil {
+			return err
+		}
+
+		return tx.Create(&models.PurchaseRequestRealizationReview{
+			PurchaseRequestID: pr.ID,
+			CycleNumber:       cycle,
+			Stage:             stage,
+			Decision:          decision,
+			Notes:             notes,
+			ActorID:           userID,
+		}).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetByID(pr.ID)
 }
 
 // SubmitAdditionalDocumentsForApproval reopens a PR approval when documents
@@ -1853,6 +2030,23 @@ func applyPurchaseRequestVendorInvoiceApprovalState(pr *models.PurchaseRequest) 
 	}
 	if pr.VendorInvoiceStatus == "" || pr.VendorInvoiceStatus == models.PRVendorInvoiceStatusNotRequired {
 		pr.VendorInvoiceStatus = models.PRVendorInvoiceStatusAwaitingInvoice
+	}
+}
+
+func applyPurchaseRequestRealizationApprovalState(pr *models.PurchaseRequest) {
+	if pr == nil {
+		return
+	}
+	if !pr.RequiresRealizationDocument {
+		if pr.RealizationStatus == "" {
+			pr.RealizationStatus = models.PRRealizationStatusNotRequired
+		}
+		return
+	}
+
+	switch pr.RealizationStatus {
+	case "", models.PRRealizationStatusNotRequired, models.PRRealizationStatusPendingOriginalApproval:
+		pr.RealizationStatus = models.PRRealizationStatusAwaitingUpload
 	}
 }
 

@@ -122,6 +122,19 @@ export interface PurchaseRequestDocument {
   uploader?: User;
 }
 
+export interface PurchaseRequestRealizationReview {
+  id: number;
+  purchase_request_id: number;
+  cycle_number: number;
+  stage: string;
+  decision: string;
+  notes?: string;
+  actor_id: number;
+  created_at: string;
+  updated_at: string;
+  actor?: User;
+}
+
 export interface PurchaseRequestRevisionSnapshot {
   id: number;
   purchase_request_id: number;
@@ -181,6 +194,16 @@ export interface PurchaseRequest {
   vendor_invoice_reviewed_by?: number | null;
   vendor_invoice_reviewed_at?: string | null;
   vendor_invoice_review_notes?: string;
+  requires_realization_document?: boolean;
+  realization_status?: string;
+  realization_requested_by?: number | null;
+  realization_requested_at?: string | null;
+  realization_submitted_by?: number | null;
+  realization_submitted_at?: string | null;
+  realization_reviewed_by?: number | null;
+  realization_reviewed_at?: string | null;
+  realization_review_notes?: string;
+  realization_review_cycle?: number;
   revision_opened_by?: number | null;
   revision_opened_at?: string | null;
   revision_reason?: string;
@@ -234,6 +257,10 @@ export interface PurchaseRequest {
   vendor_invoice_requester?: User;
   vendor_invoice_submitter?: User;
   vendor_invoice_reviewer?: User;
+  realization_reviews?: PurchaseRequestRealizationReview[];
+  realization_requester?: User;
+  realization_submitter?: User;
+  realization_reviewer?: User;
   project?: {
     id: number;
     code: string;
@@ -279,6 +306,7 @@ export interface PurchaseRequestReviewPayload {
   reason?: string;
   escalate_to_director?: boolean;
   require_vendor_invoice?: boolean;
+  require_realization_document?: boolean;
 }
 
 export interface PurchaseRequestProjectUpdatePayload {
@@ -305,6 +333,11 @@ export interface PurchaseRequestInvoiceRevisionPayload {
 
 export interface PurchaseRequestVendorInvoiceVerificationPayload {
   decision: "VERIFIED" | "NEEDS_CLARIFICATION";
+  notes?: string;
+}
+
+export interface PurchaseRequestRealizationVerificationPayload {
+  decision: "APPROVED" | "VERIFIED" | "NEEDS_CLARIFICATION";
   notes?: string;
 }
 
@@ -544,6 +577,14 @@ export const purchaseRequestService = {
       `${BASE_URL}/${id}/post-purchase-vendor-invoice-verification`,
       payload,
     );
+    return response.data.data;
+  },
+
+  reviewRealization: async (
+    id: number,
+    payload: PurchaseRequestRealizationVerificationPayload,
+  ): Promise<PurchaseRequest> => {
+    const response = await api.put(`${BASE_URL}/${id}/realization-review`, payload);
     return response.data.data;
   },
 

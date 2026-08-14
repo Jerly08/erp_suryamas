@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,4 +58,34 @@ func TestCreateVendorForPurchaseForcesVendorTypeAndAllowsOptionalFields(t *testi
 	require.Empty(t, stub.created.ExternalID)
 	require.Empty(t, stub.created.Address)
 	require.Empty(t, stub.created.Notes)
+}
+
+type purchaseVendorListContactServiceStub struct {
+	services.ContactService
+	contacts []models.Contact
+}
+
+func (stub *purchaseVendorListContactServiceStub) GetContactsByType(string) ([]models.Contact, error) {
+	return stub.contacts, nil
+}
+
+func TestGetVendorsForPurchaseReturnsOnlyActiveVendors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stub := &purchaseVendorListContactServiceStub{contacts: []models.Contact{
+		{ID: 14, Code: "VAND322797674", Name: "Andhika Prasetyo", Type: models.ContactTypeVendor, IsActive: true},
+		{ID: 16, Code: "VAND310274807", Name: "Andhika Prasetyo", Type: models.ContactTypeVendor, IsActive: false},
+	}}
+	controller := NewContactController(stub)
+	router := gin.New()
+	router.GET("/purchases/vendors", controller.GetVendorsForPurchase)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/purchases/vendors", nil))
+
+	require.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		Data []models.Contact `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, []models.Contact{stub.contacts[0]}, body.Data)
 }

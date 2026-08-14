@@ -37,6 +37,7 @@ func newPurchaseRequestTestDB(t *testing.T) *gorm.DB {
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
 		&models.PurchaseRequestRevisionSnapshot{},
+		&models.PurchaseRequestRealizationReview{},
 		&models.Notification{},
 		&models.NotificationPreference{},
 	))
@@ -133,6 +134,54 @@ func seedApprovedPurchaseRequestForCancelTest(t *testing.T, db *gorm.DB, service
 	require.Equal(t, models.PRStatusApproved, approved.Status)
 
 	return approved, requester, financeStaff, financeManager, vendor
+}
+
+func TestPurchaseRequestRealizationWorkflowKeepsOriginalApproval(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	approved, requester, financeStaff, financeManager, _ := seedApprovedPurchaseRequestForCancelTest(t, db, service, "REALIZATION")
+	now := time.Now()
+	require.NoError(t, db.Model(&models.PurchaseRequest{}).Where("id = ?", approved.ID).Updates(map[string]interface{}{
+		"requires_realization_document": true,
+		"realization_status":            models.PRRealizationStatusAwaitingUpload,
+		"realization_requested_by":      financeStaff.ID,
+		"realization_requested_at":      now,
+	}).Error)
+	require.NoError(t, db.Create(&models.PurchaseRequestDocument{
+		PurchaseRequestID: approved.ID,
+		DocumentType:      models.PurchaseRequestDocumentRealization,
+		FileName:          "billing.pdf",
+		FilePath:          "/uploads/billing.pdf",
+		FileSize:          1024,
+		MimeType:          "application/pdf",
+		UploadedBy:        requester.ID,
+		ApprovalRevision:  approved.ApprovalRevision,
+	}).Error)
+
+	submitted, err := service.SubmitPurchaseRequestRealizationForReview(approved.ID, requester.ID, requester.Role, 1)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusApproved, submitted.Status)
+	require.Equal(t, models.PRRealizationStatusPendingFinanceStaffReview, submitted.RealizationStatus)
+
+	forwarded, err := service.ReviewPurchaseRequestRealization(approved.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestRealizationVerificationPayload{
+		Decision: models.PRRealizationReviewDecisionApproved,
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusApproved, forwarded.Status)
+	require.Equal(t, models.PRRealizationStatusPendingFinanceManagerReview, forwarded.RealizationStatus)
+
+	verified, err := service.ReviewPurchaseRequestRealization(approved.ID, financeManager.ID, financeManager.Role, models.PurchaseRequestRealizationVerificationPayload{
+		Decision: models.PRRealizationReviewDecisionVerified,
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusApproved, verified.Status)
+	require.Equal(t, models.PRRealizationStatusVerified, verified.RealizationStatus)
+	require.Len(t, verified.RealizationReviews, 3)
+	require.Equal(t, models.PRRealizationReviewDecisionSubmitted, verified.RealizationReviews[0].Decision)
+	require.Equal(t, models.PRRealizationReviewDecisionApproved, verified.RealizationReviews[1].Decision)
+	require.Equal(t, models.PRRealizationReviewDecisionVerified, verified.RealizationReviews[2].Decision)
 }
 
 func TestCreatePurchaseRequestCalculatesDueDateFromVendorInvoiceDate(t *testing.T) {

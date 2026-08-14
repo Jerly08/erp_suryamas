@@ -695,6 +695,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
 		&models.PurchaseRequestRevisionSnapshot{},
+		&models.PurchaseRequestRealizationReview{},
 
 		// Expenses
 		&models.ExpenseCategory{},

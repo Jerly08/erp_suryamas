@@ -722,6 +722,7 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 				purchaseRequests.POST("/:id/realization-documents", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UploadRealizationDocuments)
 				purchaseRequests.POST("/:id/post-purchase-vendor-invoice-documents", permMiddleware.CanView("purchase_requests"), purchaseRequestController.UploadPostPurchaseVendorInvoiceDocuments)
 				purchaseRequests.PUT("/:id/post-purchase-vendor-invoice-verification", permMiddleware.CanView("purchase_requests"), purchaseRequestController.ReviewPostPurchaseVendorInvoice)
+				purchaseRequests.PUT("/:id/realization-review", permMiddleware.CanView("purchase_requests"), purchaseRequestController.ReviewRealization)
 				purchaseRequests.DELETE("/documents/:document_id", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.DeleteDocument)
 				purchaseRequests.PUT("/:id/project", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UpdateProject)
 				purchaseRequests.PUT("/:id/invoice-terms", permMiddleware.CanEdit("purchase_requests"), purchaseRequestController.UpdateInvoiceTerms)

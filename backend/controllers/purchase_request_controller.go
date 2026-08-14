@@ -458,6 +458,33 @@ func (c *PurchaseRequestController) ReviewPostPurchaseVendorInvoice(ctx *gin.Con
 	})
 }
 
+func (c *PurchaseRequestController) ReviewRealization(ctx *gin.Context) {
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID format"})
+		return
+	}
+
+	var payload models.PurchaseRequestRealizationVerificationPayload
+	if err := ctx.ShouldBindJSON(&payload); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid realization review payload", "details": err.Error()})
+		return
+	}
+
+	userID := ctx.MustGet("user_id").(uint)
+	userRole := ctx.GetString("role")
+	pr, err := c.service.ReviewPurchaseRequestRealization(uint(id), userID, userRole, payload)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Billing/realisasi review updated",
+		"data":    pr,
+	})
+}
+
 func (c *PurchaseRequestController) UploadDocuments(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -517,6 +544,20 @@ func (c *PurchaseRequestController) UploadRealizationDocuments(ctx *gin.Context)
 
 	userID := ctx.MustGet("user_id").(uint)
 	userRole := ctx.GetString("role")
+	current, err := c.service.GetPurchaseRequestByID(uint(id), userID, userRole)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "Purchase Request not found"})
+		return
+	}
+	if !current.RequiresRealizationDocument {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Purchase request ini tidak memerlukan Billing/Realisasi"})
+		return
+	}
+	if current.RealizationStatus != models.PRRealizationStatusAwaitingUpload &&
+		current.RealizationStatus != models.PRRealizationStatusNeedsClarification {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Billing/Realisasi belum dapat diunggah pada tahap ini"})
+		return
+	}
 
 	form, err := ctx.MultipartForm()
 	if err != nil {
@@ -572,9 +613,16 @@ func (c *PurchaseRequestController) UploadRealizationDocuments(ctx *gin.Context)
 		documents = append(documents, *document)
 	}
 
+	pr, err := c.service.SubmitPurchaseRequestRealizationForReview(uint(id), userID, userRole, len(documents))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ctx.JSON(http.StatusCreated, gin.H{
-		"message":   "Realization documents uploaded successfully",
+		"message":   "Billing/Realisasi submitted for finance staff review",
 		"documents": documents,
+		"data":      pr,
 	})
 }
 

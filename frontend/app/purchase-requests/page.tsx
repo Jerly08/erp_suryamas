@@ -109,6 +109,14 @@ const PURCHASE_REQUEST_PROGRESS_FILTERS = [
   },
   { value: "AWAITING_VENDOR_INVOICE", label: "Menunggu Invoice Aktual" },
   { value: "VENDOR_INVOICE_REVIEW", label: "Invoice Aktual Dalam Review" },
+  {
+    value: "AWAITING_REALIZATION_UPLOAD",
+    label: "Menunggu Billing/Realisasi PIC",
+  },
+  {
+    value: "REALIZATION_REVIEW",
+    label: "Billing/Realisasi Dalam Review",
+  },
   { value: "AWAITING_REQUESTER_REVISION", label: "Menunggu Revisi PIC" },
   { value: "REQUESTER_REVISION_REVIEW", label: "Revisi PIC Dalam Review" },
   { value: "WAITING_DIRECTOR", label: "Menunggu Director" },
@@ -221,6 +229,7 @@ export default function PurchaseRequestsPage() {
     useState(false);
   const [isReviewingPostPurchaseVendorInvoice, setIsReviewingPostPurchaseVendorInvoice] =
     useState(false);
+  const [isReviewingRealization, setIsReviewingRealization] = useState(false);
   const [pendingAdditionalDocuments, setPendingAdditionalDocuments] = useState<
     File[]
   >([]);
@@ -230,6 +239,7 @@ export default function PurchaseRequestsPage() {
     useState<File[]>([]);
   const [postPurchaseVendorInvoiceReviewNotes, setPostPurchaseVendorInvoiceReviewNotes] =
     useState("");
+  const [realizationReviewNotes, setRealizationReviewNotes] = useState("");
   const { canCreate, canEdit, canApprove } = usePermissions();
   const formatCurrency = (value: number) => {
     const numericValue = Number(value) || 0;
@@ -328,6 +338,8 @@ export default function PurchaseRequestsPage() {
   const [reviewNeedsDirectorApproval, setReviewNeedsDirectorApproval] =
     useState(false);
   const [reviewRequiresVendorInvoice, setReviewRequiresVendorInvoice] =
+    useState(false);
+  const [reviewRequiresRealizationDocument, setReviewRequiresRealizationDocument] =
     useState(false);
   const [reviewDecisions, setReviewDecisions] = useState<
     Record<number, "APPROVED" | "REJECTED" | "">
@@ -1040,6 +1052,56 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const handleReviewRealization = async (
+    decision: "APPROVED" | "VERIFIED" | "NEEDS_CLARIFICATION",
+  ) => {
+    if (!selectedRequest) return;
+
+    const notes = realizationReviewNotes.trim();
+    if (decision === "NEEDS_CLARIFICATION" && !notes) {
+      toast({
+        title: "Catatan klarifikasi wajib diisi",
+        description:
+          "Jelaskan billing atau realisasi yang masih perlu dilengkapi oleh PIC.",
+        status: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    try {
+      setIsReviewingRealization(true);
+      const updated = await purchaseRequestService.reviewRealization(
+        selectedRequest.id,
+        { decision, notes: notes || undefined },
+      );
+      setSelectedRequest(updated);
+      setProjectUpdateId(updated.project_id?.toString() || "");
+      setRealizationReviewNotes(updated.realization_review_notes || "");
+      initializeReviewForm(updated);
+      await fetchData();
+      toast({
+        title:
+          decision === "NEEDS_CLARIFICATION"
+            ? "Klarifikasi Billing/Realisasi dikirim"
+            : "Review Billing/Realisasi diperbarui",
+        description:
+          "Approval awal PR, PO, pembayaran, dan jurnal tidak diubah.",
+        status: "success",
+        duration: 5000,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Gagal memperbarui review Billing/Realisasi",
+        description: err.response?.data?.error || err.message,
+        status: "error",
+        duration: 5000,
+      });
+    } finally {
+      setIsReviewingRealization(false);
+    }
+  };
+
   const handleInvoiceRevisionItemChange = (
     itemId: number,
     field: "quantity" | "estimated_price" | "notes",
@@ -1170,6 +1232,7 @@ export default function PurchaseRequestsPage() {
       const refreshed = await purchaseRequestService.getById(selectedRequest.id);
       setSelectedRequest(refreshed);
       setProjectUpdateId(refreshed.project_id?.toString() || "");
+      setRealizationReviewNotes(refreshed.realization_review_notes || "");
       initializeReviewForm(refreshed);
       setPendingAdditionalDocuments([]);
       await fetchData();
@@ -1207,13 +1270,14 @@ export default function PurchaseRequestsPage() {
       const refreshed = await purchaseRequestService.getById(selectedRequest.id);
       setSelectedRequest(refreshed);
       setProjectUpdateId(refreshed.project_id?.toString() || "");
+      setRealizationReviewNotes(refreshed.realization_review_notes || "");
       initializeReviewForm(refreshed);
       setPendingRealizationDocuments([]);
       await fetchData();
       toast({
-        title: "Dokumen realisasi berhasil diunggah",
+        title: "Billing/Realisasi dikirim untuk review",
         description:
-          "Dokumen tersimpan sebagai bukti billing/realisasi PIC tanpa memulai approval ulang.",
+          "Dokumen masuk ke review Finance Staff tanpa mengubah approval PR awal, PO, pembayaran, atau jurnal.",
         status: "success",
         duration: 4500,
       });
@@ -2101,6 +2165,7 @@ export default function PurchaseRequestsPage() {
 
     const stage = getCurrentReviewStage(pr);
     const realization = getPurchaseRealizationSummary(pr);
+    const realizationStatus = (pr.realization_status || "").toUpperCase();
     const hasStaffReview = hasFinanceStaffReview(pr);
     const hasManagerReview = hasFinanceManagerReview(pr);
 
@@ -2131,6 +2196,22 @@ export default function PurchaseRequestsPage() {
           pr.requires_vendor_invoice &&
           pr.status === "PENDING_APPROVAL" &&
           pr.reapproval_reason === "INVOICE_REVISION"
+        );
+      case "AWAITING_REALIZATION_UPLOAD":
+        return (
+          pr.requires_realization_document &&
+          (pr.status === "APPROVED" || pr.status === "COMPLETED") &&
+          ["AWAITING_UPLOAD", "NEEDS_CLARIFICATION"].includes(
+            realizationStatus,
+          )
+        );
+      case "REALIZATION_REVIEW":
+        return (
+          pr.requires_realization_document &&
+          [
+            "PENDING_FINANCE_STAFF_REVIEW",
+            "PENDING_FINANCE_MANAGER_REVIEW",
+          ].includes(realizationStatus)
         );
       case "AWAITING_REQUESTER_REVISION":
         return (
@@ -2218,6 +2299,9 @@ export default function PurchaseRequestsPage() {
     setReviewReason(pr.rejection_reason || "");
     setReviewNeedsDirectorApproval(false);
     setReviewRequiresVendorInvoice(Boolean(pr.requires_vendor_invoice));
+    setReviewRequiresRealizationDocument(
+      Boolean(pr.requires_realization_document),
+    );
   };
 
   const setAllReviewDecisions = (decision: "APPROVED" | "REJECTED") => {
@@ -2260,6 +2344,9 @@ export default function PurchaseRequestsPage() {
         require_vendor_invoice:
           getCurrentReviewStage(selectedRequest) === "FINANCE_STAFF" &&
           reviewRequiresVendorInvoice,
+        require_realization_document:
+          getCurrentReviewStage(selectedRequest) === "FINANCE_STAFF" &&
+          reviewRequiresRealizationDocument,
       });
       toast({
         title: "Review PR berhasil dikirim",
@@ -2423,6 +2510,7 @@ export default function PurchaseRequestsPage() {
       setPendingRealizationDocuments([]);
       setPostPurchaseVendorInvoiceDocuments([]);
       setPostPurchaseVendorInvoiceReviewNotes(detail.vendor_invoice_review_notes || "");
+      setRealizationReviewNotes(detail.realization_review_notes || "");
       setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
       setInvoiceRevisionDocuments([]);
       setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
@@ -2489,6 +2577,7 @@ export default function PurchaseRequestsPage() {
         setPostPurchaseVendorInvoiceReviewNotes(
           detail.vendor_invoice_review_notes || "",
         );
+        setRealizationReviewNotes(detail.realization_review_notes || "");
         setInvoiceRevisionItems(buildInvoiceRevisionItems(detail));
         setInvoiceRevisionDocuments([]);
         setInvoiceRevisionNotes(detail.vendor_invoice_revision_notes || "");
@@ -2889,14 +2978,36 @@ export default function PurchaseRequestsPage() {
       !selectedRequestRealizationSummary.hasPurchase &&
       (roleNorm === "admin" || selectedRequest.requester_id === Number(user?.id)),
   );
+  const selectedRequestRealizationStatus = (
+    selectedRequest?.realization_status || ""
+  ).toUpperCase();
   const canUploadSelectedRequestRealizationDocuments = Boolean(
     selectedRequest &&
+      selectedRequest.requires_realization_document &&
       canEdit("purchase_requests") &&
       (selectedRequest.status === "APPROVED" ||
         selectedRequest.status === "COMPLETED") &&
+      ["AWAITING_UPLOAD", "NEEDS_CLARIFICATION"].includes(
+        selectedRequestRealizationStatus,
+      ) &&
       (roleNorm === "admin" ||
         isFinanceTeamRole(roleNorm) ||
         selectedRequest.requester_id === Number(user?.id)),
+  );
+  const canReviewSelectedRequestRealizationAsStaff = Boolean(
+    selectedRequest &&
+      selectedRequest.requires_realization_document &&
+      selectedRequestRealizationStatus === "PENDING_FINANCE_STAFF_REVIEW" &&
+      (roleNorm === "admin" ||
+        isFinanceStaffRole(roleNorm) ||
+        isAccountingRole(roleNorm)),
+  );
+  const canReviewSelectedRequestRealizationAsManager = Boolean(
+    selectedRequest &&
+      selectedRequest.requires_realization_document &&
+      selectedRequestRealizationStatus ===
+        "PENDING_FINANCE_MANAGER_REVIEW" &&
+      (roleNorm === "admin" || isFinanceManagerRole(roleNorm)),
   );
   const canUploadSelectedRequestPostPurchaseVendorInvoice = Boolean(
     selectedRequest &&
@@ -2940,6 +3051,57 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const getRealizationStatusBadge = (pr?: PurchaseRequest | null) => {
+    if (!pr?.requires_realization_document) {
+      return null;
+    }
+
+    switch ((pr.realization_status || "").toUpperCase()) {
+      case "PENDING_ORIGINAL_APPROVAL":
+        return <Badge colorScheme="gray">Menunggu Approval Awal PR</Badge>;
+      case "AWAITING_UPLOAD":
+        return <Badge colorScheme="yellow">Menunggu Billing/Realisasi PIC</Badge>;
+      case "PENDING_FINANCE_STAFF_REVIEW":
+        return <Badge colorScheme="orange">Menunggu Review Finance Staff</Badge>;
+      case "PENDING_FINANCE_MANAGER_REVIEW":
+        return <Badge colorScheme="purple">Menunggu Verifikasi Finance Manager</Badge>;
+      case "VERIFIED":
+        return <Badge colorScheme="green">Billing/Realisasi Terverifikasi</Badge>;
+      case "NEEDS_CLARIFICATION":
+        return <Badge colorScheme="red">Perlu Klarifikasi PIC</Badge>;
+      default:
+        return <Badge colorScheme="gray">Status Billing/Realisasi</Badge>;
+    }
+  };
+
+  const getRealizationReviewStageLabel = (stage?: string) => {
+    switch ((stage || "").toUpperCase()) {
+      case "SUBMISSION":
+        return "Pengiriman PIC";
+      case "FINANCE_STAFF":
+        return "Review Finance Staff/Accounting";
+      case "FINANCE_MANAGER":
+        return "Verifikasi Finance Manager";
+      default:
+        return "Billing/Realisasi";
+    }
+  };
+
+  const getRealizationReviewDecisionLabel = (decision?: string) => {
+    switch ((decision || "").toUpperCase()) {
+      case "SUBMITTED":
+        return "Dikirim PIC";
+      case "APPROVED":
+        return "Diteruskan ke Finance Manager";
+      case "VERIFIED":
+        return "Terverifikasi";
+      case "NEEDS_CLARIFICATION":
+        return "Perlu Klarifikasi";
+      default:
+        return decision || "-";
+    }
+  };
+
   const getDocumentTypeBadge = (documentType?: string) => {
     if ((documentType || "").toUpperCase() === "VENDOR_INVOICE") {
       return (
@@ -2968,7 +3130,7 @@ export default function PurchaseRequestsPage() {
     if ((documentType || "").toUpperCase() === "REALIZATION_DOCUMENT") {
       return (
         <Badge mt={1} colorScheme="green">
-          Realisasi PIC
+          Billing/Realisasi PIC
         </Badge>
       );
     }
@@ -3226,6 +3388,11 @@ export default function PurchaseRequestsPage() {
                             {pr.requires_vendor_invoice && (
                               <Box mt={1}>
                                 {getVendorInvoiceStatusBadge(pr)}
+                              </Box>
+                            )}
+                            {pr.requires_realization_document && (
+                              <Box mt={1}>
+                                {getRealizationStatusBadge(pr)}
                               </Box>
                             )}
 	                        </Td>
@@ -3983,6 +4150,55 @@ export default function PurchaseRequestsPage() {
                             )}
                           </Flex>
                         </Box>
+                        {selectedRequest.requires_realization_document && (
+                          <Box>
+                            <Text fontSize="sm" color={mutedTextColor}>
+                              Billing/Realisasi PIC
+                            </Text>
+                            <Flex
+                              mt={1}
+                              direction="column"
+                              gap={1}
+                              align="flex-start"
+                            >
+                              {getRealizationStatusBadge(selectedRequest)}
+                              {selectedRequest.realization_requested_at && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Ditandai Finance Staff pada{" "}
+                                  {new Date(
+                                    selectedRequest.realization_requested_at,
+                                  ).toLocaleString()}
+                                </Text>
+                              )}
+                              {selectedRequest.realization_submitted_at && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Billing/Realisasi dikirim pada{" "}
+                                  {new Date(
+                                    selectedRequest.realization_submitted_at,
+                                  ).toLocaleString()}
+                                </Text>
+                              )}
+                              {selectedRequest.realization_reviewed_at && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Direview oleh{" "}
+                                  {getUserDisplayName(
+                                    selectedRequest.realization_reviewer,
+                                  ) || "Finance/Accounting"}
+                                  {" pada "}
+                                  {new Date(
+                                    selectedRequest.realization_reviewed_at,
+                                  ).toLocaleString()}
+                                </Text>
+                              )}
+                              {selectedRequest.realization_review_notes && (
+                                <Text fontSize="xs" color={mutedTextColor}>
+                                  Catatan terakhir:{" "}
+                                  {selectedRequest.realization_review_notes}
+                                </Text>
+                              )}
+                            </Flex>
+                          </Box>
+                        )}
                         {(selectedRequest.revision_opened_at ||
                           selectedRequest.reapproval_reason ===
                             "REQUESTER_REVISION") && (
@@ -5419,8 +5635,8 @@ export default function PurchaseRequestsPage() {
                 </Box>
               )}
 
-              {(selectedRequestRealizationDocuments.length > 0 ||
-                canUploadSelectedRequestRealizationDocuments) && (
+              {(selectedRequest?.requires_realization_document ||
+                selectedRequestRealizationDocuments.length > 0) && (
                 <Box
                   mt={4}
                   borderWidth="1px"
@@ -5438,10 +5654,11 @@ export default function PurchaseRequestsPage() {
                   >
                     <Flex align="center" gap={2}>
                       <Icon as={FiFileText} color="green.500" />
-                      <Text fontWeight="bold">Dokumen Realisasi PIC</Text>
+                      <Text fontWeight="bold">Dokumen Billing/Realisasi PIC</Text>
                       <Badge colorScheme="green">
                         {selectedRequestRealizationDocuments.length} file
                       </Badge>
+                      {getRealizationStatusBadge(selectedRequest)}
                     </Flex>
                     {canUploadSelectedRequestRealizationDocuments && (
                       <Button
@@ -5520,11 +5737,11 @@ export default function PurchaseRequestsPage() {
                       <Flex justify="space-between" align="center" gap={3} mb={2}>
                         <Box minW={0}>
                           <Text fontSize="sm" fontWeight="bold">
-                            Draft Dokumen Realisasi
+                            Draft Billing/Realisasi
                           </Text>
                           <Text fontSize="xs" color={mutedTextColor}>
-                            File akan disimpan sebagai bukti realisasi tanpa
-                            approval ulang.
+                            File akan dikirim untuk review Finance Staff tanpa
+                            mengubah approval awal PR.
                           </Text>
                         </Box>
                         <Badge colorScheme="green">
@@ -5575,8 +5792,146 @@ export default function PurchaseRequestsPage() {
                           isLoading={isUploadingRealizationDocuments}
                           loadingText="Mengunggah..."
                         >
-                          Upload Dokumen Realisasi
+                          Kirim untuk Review Finance Staff
                         </Button>
+                      </Flex>
+                    </Box>
+                  )}
+
+                  {(canReviewSelectedRequestRealizationAsStaff ||
+                    canReviewSelectedRequestRealizationAsManager) && (
+                    <Box
+                      mt={4}
+                      pt={4}
+                      borderTopWidth="1px"
+                      borderColor={borderColor}
+                    >
+                      <Text fontSize="sm" fontWeight="bold">
+                        Review Billing/Realisasi
+                      </Text>
+                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                        {canReviewSelectedRequestRealizationAsStaff
+                          ? "Periksa dokumen lalu teruskan ke Finance Manager. Approval awal PR tetap tercatat."
+                          : "Lakukan verifikasi akhir Billing/Realisasi. Approval awal PR tetap tercatat."}
+                      </Text>
+                      <FormControl mt={3}>
+                        <FormLabel fontSize="sm" color={textColor}>
+                          Catatan Review
+                        </FormLabel>
+                        <Textarea
+                          value={realizationReviewNotes}
+                          onChange={(event) =>
+                            setRealizationReviewNotes(event.target.value)
+                          }
+                          placeholder="Wajib diisi bila meminta klarifikasi PIC."
+                          rows={3}
+                          bg={inputBg}
+                          borderColor={inputBorderColor}
+                          color={textColor}
+                          _hover={{ borderColor: inputBorderColor }}
+                          _focusVisible={fieldFocusStyles}
+                          _placeholder={{ color: mutedTextColor }}
+                        />
+                      </FormControl>
+                      <Flex justify="flex-end" gap={2} mt={3} wrap="wrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          colorScheme="orange"
+                          onClick={() =>
+                            handleReviewRealization("NEEDS_CLARIFICATION")
+                          }
+                          isLoading={isReviewingRealization}
+                        >
+                          Minta Klarifikasi PIC
+                        </Button>
+                        <Button
+                          leftIcon={<FiCheck />}
+                          size="sm"
+                          colorScheme="green"
+                          onClick={() =>
+                            handleReviewRealization(
+                              canReviewSelectedRequestRealizationAsStaff
+                                ? "APPROVED"
+                                : "VERIFIED",
+                            )
+                          }
+                          isLoading={isReviewingRealization}
+                          loadingText="Menyimpan..."
+                        >
+                          {canReviewSelectedRequestRealizationAsStaff
+                            ? "Kirim ke Finance Manager"
+                            : "Verifikasi Billing/Realisasi"}
+                        </Button>
+                      </Flex>
+                    </Box>
+                  )}
+
+                  {(selectedRequest?.realization_reviews || []).length > 0 && (
+                    <Box
+                      mt={4}
+                      pt={4}
+                      borderTopWidth="1px"
+                      borderColor={borderColor}
+                    >
+                      <Flex align="center" gap={2} mb={3}>
+                        <Icon as={FiFileText} color="green.500" />
+                        <Text fontSize="sm" fontWeight="bold">
+                          Riwayat Review Billing/Realisasi
+                        </Text>
+                        <Badge colorScheme="green">
+                          {selectedRequest?.realization_reviews?.length ?? 0} aktivitas
+                        </Badge>
+                      </Flex>
+                      <Flex direction="column" gap={2}>
+                        {selectedRequest?.realization_reviews?.map((review) => (
+                          <Box
+                            key={review.id}
+                            p={3}
+                            rounded="md"
+                            bg={notePanelBg}
+                            borderWidth="1px"
+                            borderColor={borderColor}
+                          >
+                            <Flex
+                              justify="space-between"
+                              gap={3}
+                              align={{ base: "flex-start", md: "center" }}
+                              direction={{ base: "column", md: "row" }}
+                            >
+                              <Box>
+                                <Text fontSize="sm" fontWeight="semibold">
+                                  {getRealizationReviewStageLabel(review.stage)}
+                                </Text>
+                                <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                                  {getUserDisplayName(review.actor) || "Sistem"} pada{" "}
+                                  {new Date(review.created_at).toLocaleString()}
+                                </Text>
+                              </Box>
+                              <Badge
+                                colorScheme={
+                                  review.decision === "NEEDS_CLARIFICATION"
+                                    ? "red"
+                                    : review.decision === "SUBMITTED"
+                                      ? "orange"
+                                      : "green"
+                                }
+                              >
+                                {getRealizationReviewDecisionLabel(review.decision)}
+                              </Badge>
+                            </Flex>
+                            {review.notes && (
+                              <Text
+                                fontSize="sm"
+                                color={mutedTextColor}
+                                mt={2}
+                                whiteSpace="pre-wrap"
+                              >
+                                {review.notes}
+                              </Text>
+                            )}
+                          </Box>
+                        ))}
                       </Flex>
                     </Box>
                   )}
@@ -5876,6 +6231,26 @@ export default function PurchaseRequestsPage() {
                         approval ulang. Jika tidak dicentang, nominal PR terkunci
                         setelah approval final.
                       </Text>
+
+                      <Box mt={3}>
+                        <Checkbox
+                          isChecked={reviewRequiresRealizationDocument}
+                          isDisabled={Boolean(
+                            selectedRequest?.requires_realization_document,
+                          )}
+                          onChange={(e) =>
+                            setReviewRequiresRealizationDocument(e.target.checked)
+                          }
+                          colorScheme="green"
+                        >
+                          Butuh Billing/Realisasi dari PIC setelah PR disetujui
+                        </Checkbox>
+                        <Text fontSize="sm" color={mutedTextColor} mt={1}>
+                          Setelah approval awal selesai, PIC mengunggah
+                          Billing/Realisasi untuk direview Finance Staff lalu
+                          Finance Manager. Riwayat approval awal tetap tercatat.
+                        </Text>
+                      </Box>
                     </Box>
                   )}
                   {canRequestDirectorApproval(selectedRequest) && (

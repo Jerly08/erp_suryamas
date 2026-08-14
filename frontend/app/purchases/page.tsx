@@ -2896,11 +2896,13 @@ const PurchasesPage: React.FC = () => {
         : vendorsData.data || [];
 
       // Transform the data to match our Vendor interface
-      const formattedVendors = vendorsArray.map((vendor: any) => ({
-        id: vendor.id,
-        name: vendor.name,
-        code: vendor.code || `V${vendor.id}`,
-      }));
+      const formattedVendors = vendorsArray
+        .filter((vendor: any) => vendor?.is_active !== false)
+        .map((vendor: any) => ({
+          id: vendor.id,
+          name: vendor.name,
+          code: vendor.code || `V${vendor.id}`,
+        }));
 
       setVendors(formattedVendors);
     } catch (error: unknown) {

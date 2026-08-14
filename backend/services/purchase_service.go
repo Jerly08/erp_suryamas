@@ -49,6 +49,26 @@ func roundPurchaseMoney(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
+// validatePurchaseRequestBudget compares the approved PR budget with the
+// purchase amount after every discount and before tax-related amounts.
+func validatePurchaseRequestBudget(purchase *models.Purchase, selectedApprovedBudget float64) error {
+	if purchase == nil {
+		return errors.New("purchase is required")
+	}
+
+	netAmountCents := int64(math.Round(roundPurchaseMoney(purchase.NetBeforeTax) * 100))
+	budgetCents := int64(math.Round(roundPurchaseMoney(selectedApprovedBudget) * 100))
+	if netAmountCents <= budgetCents {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"nilai realisasi sebelum pajak setelah diskon (%.2f) melebihi pagu PR yang disetujui (%.2f). Pajak tidak dihitung dalam batas pagu. Kurangi nilai realisasi atau ajukan revisi PR",
+		roundPurchaseMoney(purchase.NetBeforeTax),
+		roundPurchaseMoney(selectedApprovedBudget),
+	)
+}
+
 func purchasePPhTotal(purchase *models.Purchase) float64 {
 	if purchase == nil {
 		return 0
@@ -471,6 +491,12 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		fmt.Printf("? Vendor validation failed for ID %d: %v\n", request.VendorID, err)
 		return nil, fmt.Errorf("vendor not found (ID: %d): %v", request.VendorID, err)
 	}
+	if vendor.Type != models.ContactTypeVendor {
+		return nil, fmt.Errorf("selected contact is not a vendor")
+	}
+	if !vendor.IsActive {
+		return nil, fmt.Errorf("selected vendor is inactive and cannot be used for a new purchase")
+	}
 	fmt.Printf("? Vendor validation passed: %s (ID: %d)\n", vendor.Name, vendor.ID)
 
 	coaReadOnlyUser := s.isPurchaseCOAReadOnlyUser(userID)
@@ -575,14 +601,10 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 			purchase.DueDate = *pr.DueDate
 		}
 
-		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
-		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount
-
-		// Hard Block Rule: Tolerance 0%. Net Invoice must be <= selected approved PR items budget.
-		if netPurchaseAmount > selectedApprovedBudget {
-			errMsg := fmt.Sprintf("HARD BLOCK: Base Invoice Amount (%.2f) exceeds selected approved Purchase Request budget (%.2f). Note: Taxes are excluded from this limit check. Please revise invoice or request a new PR approval.", netPurchaseAmount, selectedApprovedBudget)
-			fmt.Printf("? %s\n", errMsg)
-			return nil, errors.New(errMsg)
+		// Enforce the selected PR budget using the official net amount after all
+		// item and order discounts, while excluding taxes.
+		if err := validatePurchaseRequestBudget(purchase, selectedApprovedBudget); err != nil {
+			return nil, err
 		}
 
 		// Set Matching Status since it passed
@@ -768,14 +790,8 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 			return nil, err
 		}
 
-		// Menghitung Base Net Amount (Subtotal - Diskon) tanpa PPN dan Pajak Lainnya
-		netPurchaseAmount := purchase.SubtotalBeforeDiscount - purchase.Discount
-
-		// Hard Block Rule
-		if netPurchaseAmount > selectedApprovedBudget {
-			errMsg := fmt.Sprintf("HARD BLOCK: Updated Base Invoice Amount (%.2f) exceeds selected approved Purchase Request budget (%.2f). Note: Taxes are excluded from this limit check. Update rejected.", netPurchaseAmount, selectedApprovedBudget)
-			fmt.Printf("? %s\n", errMsg)
-			return nil, errors.New(errMsg)
+		if err := validatePurchaseRequestBudget(purchase, selectedApprovedBudget); err != nil {
+			return nil, err
 		}
 		purchase.MatchingStatus = "MATCHED"
 	}
