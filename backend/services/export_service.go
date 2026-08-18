@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
 	"app-sistem-akuntansi/utils"
 
@@ -43,6 +46,7 @@ func (s *ExportServiceImpl) ExportAccountsPDF(ctx context.Context, userID uint) 
 		return nil, utils.NewInternalError("Failed to fetch accounts", err)
 	}
 	utils.SanitizeExportData(accounts)
+	sortAccountsForExport(accounts)
 
 	// Create new PDF document
 	pdf := gofpdf.New("P", "mm", "A4", "")
@@ -128,6 +132,7 @@ func (s *ExportServiceImpl) ExportAccountsExcel(ctx context.Context, userID uint
 		return nil, utils.NewInternalError("Failed to fetch accounts", err)
 	}
 	utils.SanitizeExportData(accounts)
+	sortAccountsForExport(accounts)
 
 	// Create new Excel file
 	f := excelize.NewFile()
@@ -241,4 +246,68 @@ func (s *ExportServiceImpl) ExportAccountsExcel(ctx context.Context, userID uint
 	}
 
 	return buf.Bytes(), nil
+}
+
+func sortAccountsForExport(accounts []models.Account) {
+	sort.SliceStable(accounts, func(i, j int) bool {
+		comparison := compareAccountCodes(accounts[i].Code, accounts[j].Code)
+		if comparison != 0 {
+			return comparison < 0
+		}
+
+		if accounts[i].Name != accounts[j].Name {
+			return accounts[i].Name < accounts[j].Name
+		}
+
+		return accounts[i].ID < accounts[j].ID
+	})
+}
+
+func compareAccountCodes(left, right string) int {
+	leftParts := strings.Split(strings.TrimSpace(left), "-")
+	rightParts := strings.Split(strings.TrimSpace(right), "-")
+	partCount := len(leftParts)
+	if len(rightParts) < partCount {
+		partCount = len(rightParts)
+	}
+
+	for index := 0; index < partCount; index++ {
+		leftPart := leftParts[index]
+		rightPart := rightParts[index]
+		leftNumber, leftNumberErr := strconv.Atoi(leftPart)
+		rightNumber, rightNumberErr := strconv.Atoi(rightPart)
+
+		if leftNumberErr == nil && rightNumberErr == nil {
+			if leftNumber < rightNumber {
+				return -1
+			}
+			if leftNumber > rightNumber {
+				return 1
+			}
+			continue
+		}
+
+		if leftPart < rightPart {
+			return -1
+		}
+		if leftPart > rightPart {
+			return 1
+		}
+	}
+
+	if len(leftParts) < len(rightParts) {
+		return -1
+	}
+	if len(leftParts) > len(rightParts) {
+		return 1
+	}
+
+	if left < right {
+		return -1
+	}
+	if left > right {
+		return 1
+	}
+
+	return 0
 }
