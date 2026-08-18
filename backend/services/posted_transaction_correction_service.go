@@ -38,7 +38,7 @@ func (s *PostedTransactionCorrectionService) Create(
 		return nil, err
 	}
 	if !isSupportedPostedTransactionCorrectionWorkflow(request.CorrectionType) {
-		return nil, fmt.Errorf("jenis koreksi ini belum didukung oleh workflow otomatis")
+		return nil, fmt.Errorf("jenis koreksi ini belum didukung oleh workflow audit")
 	}
 	reason := strings.TrimSpace(request.Reason)
 	if reason == "" {
@@ -66,6 +66,15 @@ func (s *PostedTransactionCorrectionService) Create(
 		return nil, fmt.Errorf("nominal koreksi tidak boleh negatif")
 	}
 	correctionType := strings.ToUpper(strings.TrimSpace(request.CorrectionType))
+	if err := validatePostedTransactionCorrectionRequestDetails(
+		correctionType,
+		requestedDate,
+		request.RequestedAmount,
+		request.RequestedCashBankReference,
+		request.RequestedDestinationReference,
+	); err != nil {
+		return nil, err
+	}
 	var coaOriginalJournalLineIDs []uint64
 	if correctionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
 		if request.SaleID == nil || request.LinkedPaymentID == nil {
@@ -312,10 +321,10 @@ func (s *PostedTransactionCorrectionService) ReviewAccounting(
 		if correction.Status != models.PostedTransactionCorrectionStatusPendingAccounting {
 			return fmt.Errorf("koreksi ini tidak sedang menunggu review Accounting")
 		}
+		if err := validatePostedTransactionCorrectionResolutionForType(correction.CorrectionType, resolution); err != nil {
+			return err
+		}
 		if correction.CorrectionType == models.PostedTransactionCorrectionTypeSalesCreditClassification {
-			if resolution != models.PostedTransactionCorrectionResolutionJournalReclass {
-				return fmt.Errorf("koreksi penjualan kredit hanya dapat memakai rencana jurnal reklasifikasi")
-			}
 			if err := s.validateSalesCreditClassificationAccount(tx, correction, request.ProposedAccountID); err != nil {
 				return err
 			}
@@ -790,17 +799,56 @@ func validatePostedTransactionCorrectionType(value string) error {
 	}
 }
 
-// Existing correction records may still use legacy categories, but new requests
-// are limited to workflows with an explicit, auditable system implementation.
+// Every current correction type is submitted to an auditable workflow. Only the
+// sales-credit and COA paths have automated execution; all other types remain
+// subject to Accounting's selected resolution and Finance Manager approval.
 func isSupportedPostedTransactionCorrectionWorkflow(value string) bool {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case models.PostedTransactionCorrectionTypeMissingPaymentProof,
+		models.PostedTransactionCorrectionTypePaymentDate,
+		models.PostedTransactionCorrectionTypePaymentAmount,
+		models.PostedTransactionCorrectionTypeSourceBank,
+		models.PostedTransactionCorrectionTypeDestinationAccount,
+		models.PostedTransactionCorrectionTypePurchaseDate,
 		models.PostedTransactionCorrectionTypeSalesCreditClassification,
-		models.PostedTransactionCorrectionTypeCOAReclassification:
+		models.PostedTransactionCorrectionTypeCOAReclassification,
+		models.PostedTransactionCorrectionTypeOther:
 		return true
 	default:
 		return false
 	}
+}
+
+func validatePostedTransactionCorrectionRequestDetails(
+	correctionType string,
+	requestedDate *time.Time,
+	requestedAmount *float64,
+	requestedCashBankReference string,
+	requestedDestinationReference string,
+) error {
+	switch correctionType {
+	case models.PostedTransactionCorrectionTypePaymentDate:
+		if requestedDate == nil {
+			return fmt.Errorf("tanggal pembayaran aktual wajib diisi")
+		}
+	case models.PostedTransactionCorrectionTypePurchaseDate:
+		if requestedDate == nil {
+			return fmt.Errorf("tanggal pembelian aktual wajib diisi")
+		}
+	case models.PostedTransactionCorrectionTypePaymentAmount:
+		if requestedAmount == nil || *requestedAmount <= 0 {
+			return fmt.Errorf("nominal pembayaran aktual wajib diisi dan harus lebih dari nol")
+		}
+	case models.PostedTransactionCorrectionTypeSourceBank:
+		if strings.TrimSpace(requestedCashBankReference) == "" {
+			return fmt.Errorf("rekening sumber aktual wajib diisi")
+		}
+	case models.PostedTransactionCorrectionTypeDestinationAccount:
+		if strings.TrimSpace(requestedDestinationReference) == "" {
+			return fmt.Errorf("rekening tujuan atau penerima aktual wajib diisi")
+		}
+	}
+	return nil
 }
 
 func validatePostedTransactionCorrectionResolution(value string) error {
@@ -814,6 +862,36 @@ func validatePostedTransactionCorrectionResolution(value string) error {
 	default:
 		return fmt.Errorf("rencana penyelesaian Accounting tidak dikenali")
 	}
+}
+
+// Post-posting corrections never edit the original PO, journal, or cash/bank
+// movement. A missing proof can be completed with a document only; every
+// correction that can affect accounting needs a controlled financial treatment.
+func validatePostedTransactionCorrectionResolutionForType(correctionType string, resolution string) error {
+	correctionType = strings.ToUpper(strings.TrimSpace(correctionType))
+	resolution = strings.ToUpper(strings.TrimSpace(resolution))
+
+	switch correctionType {
+	case models.PostedTransactionCorrectionTypeMissingPaymentProof:
+		if resolution != models.PostedTransactionCorrectionResolutionSupplementalProof {
+			return fmt.Errorf("koreksi bukti pembayaran hanya dapat memakai rencana lengkapi bukti")
+		}
+	case models.PostedTransactionCorrectionTypeSalesCreditClassification:
+		if resolution != models.PostedTransactionCorrectionResolutionJournalReclass {
+			return fmt.Errorf("koreksi penjualan kredit hanya dapat memakai rencana jurnal reklasifikasi")
+		}
+	case models.PostedTransactionCorrectionTypePaymentDate,
+		models.PostedTransactionCorrectionTypePaymentAmount,
+		models.PostedTransactionCorrectionTypeSourceBank,
+		models.PostedTransactionCorrectionTypeDestinationAccount,
+		models.PostedTransactionCorrectionTypePurchaseDate,
+		models.PostedTransactionCorrectionTypeOther:
+		if resolution == models.PostedTransactionCorrectionResolutionSupplementalProof {
+			return fmt.Errorf("jenis koreksi ini memerlukan rencana penyelesaian finansial atau rekonsiliasi, bukan hanya pelengkapan bukti")
+		}
+	}
+
+	return nil
 }
 
 func normalizePostedTransactionCorrectionNotFound(err error) error {

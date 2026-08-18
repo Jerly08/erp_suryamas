@@ -390,6 +390,107 @@ func TestPurchasePrePostingRevisionReturnsPurchaseToFinanceBeforePosting(t *test
 	require.Equal(t, models.PurchaseApprovalPending, resubmittedPurchase.ApprovalStatus)
 }
 
+func TestPurchasePrePostingRevisionAllowsProvisionalPaymentProof(t *testing.T) {
+	fixture := newPurchaseWorkflowFixture(t)
+	purchase, _ := fixture.createDraftPurchase(t, "PO-WF-PRE-POSTING-PROOF", 125000)
+
+	require.NoError(t, fixture.service.SubmitForApproval(purchase.ID, fixture.staff.ID))
+	_, err := fixture.service.ProcessPurchaseApprovalWithEscalation(
+		purchase.ID,
+		true,
+		fixture.manager.ID,
+		fixture.manager.Role,
+		"Finance Manager approved initial purchase workflow",
+		false,
+	)
+	require.NoError(t, err)
+
+	proof := models.PurchasePayment{
+		PurchaseID:               purchase.ID,
+		UserID:                   fixture.financeStaff.ID,
+		Date:                     fixture.purchaseDate,
+		Amount:                   purchase.TotalAmount,
+		Method:                   "BANK_TRANSFER",
+		PaymentProofFileName:     "bukti-transfer.pdf",
+		PaymentProofFilePath:     "uploads/purchase-proofs/bukti-transfer.pdf",
+		PaymentProofReviewStatus: "PENDING",
+	}
+	require.NoError(t, fixture.db.Create(&proof).Error)
+
+	revision, err := fixture.service.RequestPurchasePrePostingRevision(
+		purchase.ID,
+		models.PurchasePrePostingRevisionCreateRequest{
+			RevisionTypes: []string{"PAYMENT_CONFIGURATION"},
+			Reason:        "Rekening sumber perlu diperbaiki sebelum jurnal dibuat.",
+		},
+		fixture.financeStaff.ID,
+		fixture.financeStaff.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, models.PurchasePrePostingRevisionStatusPendingFinanceManager, revision.Status)
+}
+
+func TestPurchasePrePostingRevisionRejectsFinancialSideEffects(t *testing.T) {
+	t.Run("linked payment", func(t *testing.T) {
+		fixture := newPurchaseWorkflowFixture(t)
+		purchase, _ := fixture.createDraftPurchase(t, "PO-WF-PRE-POSTING-LINKED-PAYMENT", 125000)
+		purchase.Status = models.PurchaseStatusPendingAccounting
+		require.NoError(t, fixture.db.Save(purchase).Error)
+
+		payment := models.Payment{
+			Code:      "PAY-WF-PRE-POSTING-LINKED",
+			ContactID: fixture.vendor.ID,
+			UserID:    fixture.financeStaff.ID,
+			Date:      fixture.purchaseDate,
+			Amount:    purchase.TotalAmount,
+			Method:    "BANK_TRANSFER",
+			Status:    "COMPLETED",
+		}
+		require.NoError(t, fixture.db.Create(&payment).Error)
+
+		linkedPayment := models.PurchasePayment{
+			PurchaseID: purchase.ID,
+			UserID:     fixture.financeStaff.ID,
+			Date:       fixture.purchaseDate,
+			Amount:     purchase.TotalAmount,
+			PaymentID:  &payment.ID,
+		}
+		require.NoError(t, fixture.db.Create(&linkedPayment).Error)
+
+		err := fixture.service.validatePurchaseEligibleForPrePostingRevision(fixture.db, purchase)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "sudah memiliki pembayaran")
+	})
+
+	t.Run("cash bank movement", func(t *testing.T) {
+		fixture := newPurchaseWorkflowFixture(t)
+		purchase, _ := fixture.createDraftPurchase(t, "PO-WF-PRE-POSTING-CASH-BANK", 125000)
+		purchase.Status = models.PurchaseStatusPendingAccounting
+		require.NoError(t, fixture.db.Save(purchase).Error)
+
+		cashBank := models.CashBank{
+			Code:      "BNK-WF-PRE-POSTING",
+			Name:      "Workflow Test Bank",
+			Type:      models.CashBankTypeBank,
+			AccountID: fixture.expenseAccount.ID,
+			UserID:    fixture.financeStaff.ID,
+			IsActive:  true,
+		}
+		require.NoError(t, fixture.db.Create(&cashBank).Error)
+		require.NoError(t, fixture.db.Create(&models.CashBankTransaction{
+			CashBankID:      cashBank.ID,
+			ReferenceType:   "PURCHASE",
+			ReferenceID:     purchase.ID,
+			Amount:          -purchase.TotalAmount,
+			TransactionDate: fixture.purchaseDate,
+		}).Error)
+
+		err := fixture.service.validatePurchaseEligibleForPrePostingRevision(fixture.db, purchase)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "mutasi kas/bank")
+	})
+}
+
 func TestPurchaseApprovalWorkflowWithExplicitDirectorStillWaitsForAccounting(t *testing.T) {
 	fixture := newPurchaseWorkflowFixture(t)
 	purchase, item := fixture.createDraftPurchase(t, "PO-WF-DIRECTOR", 250000)
@@ -689,6 +790,9 @@ func newPurchaseWorkflowFixture(t *testing.T) *purchaseWorkflowFixture {
 		&models.Contact{},
 		&models.Project{},
 		&models.Account{},
+		&models.CashBank{},
+		&models.CashBankTransaction{},
+		&models.Payment{},
 		&models.AccountingPeriod{},
 		&models.Settings{},
 		&models.SSOTJournalEntry{},
@@ -698,6 +802,7 @@ func newPurchaseWorkflowFixture(t *testing.T) *purchaseWorkflowFixture {
 		&models.PurchaseRequestItem{},
 		&models.Purchase{},
 		&models.PurchaseItem{},
+		&models.PurchasePayment{},
 		&models.PurchaseCOARevision{},
 		&models.PurchasePrePostingRevision{},
 		&models.ApprovalWorkflow{},

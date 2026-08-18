@@ -4464,6 +4464,26 @@ const PurchasesPage: React.FC = () => {
     );
   };
 
+  const getAccountingCOAJournalCreditLabel = () => {
+    if (getAccountingCOAPaymentMethod() === "CREDIT") {
+      const creditAccount = creditAccounts.find(
+        (account) =>
+          account.id.toString() === accountingCOAForm.credit_account_id,
+      );
+      return creditAccount
+        ? `${creditAccount.code} - ${creditAccount.name}`
+        : "Pilih akun Utang Usaha";
+    }
+
+    const bankAccount = bankAccounts.find(
+      (account) =>
+        account.id.toString() === accountingCOAForm.bank_account_id,
+    );
+    return bankAccount
+      ? `${bankAccount.code} - ${bankAccount.name}`
+      : "Pilih akun Kas/Bank";
+  };
+
   const isAccountingFinalReviewBalanceInsufficient = (): boolean => {
     const paymentMethod = accountingCOAForm.payment_method;
     if (paymentMethod === "CREDIT") return false;
@@ -12695,11 +12715,11 @@ const PurchasesPage: React.FC = () => {
                       {getAccountingCOAPaymentMethod() === "CREDIT" && (
                         <FormControl isRequired>
                           <FormLabel fontSize="sm">
-                            Akun Hutang / Liability
+                            Akun Utang Usaha (Kredit)
                           </FormLabel>
                           <SearchableSelect
                             options={toSearchableCOAOptions(creditAccounts)}
-                            placeholder="Pilih akun hutang"
+                            placeholder="Pilih akun utang usaha"
                             value={accountingCOAForm.credit_account_id}
                             onChange={(value) =>
                               setAccountingCOAForm((prev) => ({
@@ -12713,10 +12733,46 @@ const PurchasesPage: React.FC = () => {
                             }
                           />
                           <FormHelperText>
-                            Akun ini menjadi sisi kredit untuk purchase kredit.
+                            Digunakan sebagai sisi kredit untuk pembelian
+                            kredit. Pelunasan dicatat kemudian melalui menu
+                            Pembayaran.
                           </FormHelperText>
                         </FormControl>
                       )}
+
+                      <Alert
+                        status="info"
+                        variant="left-accent"
+                        borderRadius="lg"
+                      >
+                        <AlertIcon />
+                        <Box>
+                          <AlertTitle fontSize="sm">
+                            Pratinjau jurnal utama
+                          </AlertTitle>
+                          <VStack align="start" spacing={1} mt={1}>
+                            <HStack align="start" spacing={2}>
+                              <Badge colorScheme="green">DEBIT</Badge>
+                              <Text fontSize="sm">
+                                Akun Beban/Aset sesuai setiap item pembelian
+                              </Text>
+                            </HStack>
+                            <HStack align="start" spacing={2}>
+                              <Badge colorScheme="red">KREDIT</Badge>
+                              <Text fontSize="sm">
+                                {getAccountingCOAJournalCreditLabel()}
+                              </Text>
+                            </HStack>
+                            <Text fontSize="xs" color={textSecondary}>
+                              {getAccountingCOAPaymentMethod() === "CREDIT"
+                                ? "Pembelian kredit mencatat utang terlebih dahulu. Saat dibayar, jurnalnya Debit Utang Usaha dan Kredit Kas/Bank."
+                                : "Pembayaran langsung mencatat Kredit Kas/Bank pada saat purchase difinalisasi."}{" "}
+                              Pajak dan potongan mengikuti konfigurasi
+                              pembayaran.
+                            </Text>
+                          </VStack>
+                        </Box>
+                      </Alert>
 
                       <Box
                         borderWidth="1px"
@@ -12731,7 +12787,7 @@ const PurchasesPage: React.FC = () => {
                                 <Th>Item</Th>
                                 <Th isNumeric>Qty</Th>
                                 <Th isNumeric>Total</Th>
-                                <Th minW="320px">GL/COA Debit</Th>
+                                <Th minW="320px">Akun Beban/Aset (Debit)</Th>
                               </Tr>
                             </Thead>
                             <Tbody>
@@ -12747,7 +12803,7 @@ const PurchasesPage: React.FC = () => {
                                       options={toSearchableCOAOptions(
                                         expenseAccounts,
                                       )}
-                                      placeholder="Pilih GL/COA"
+                                      placeholder="Pilih akun beban/aset"
                                       value={item.expense_account_id}
                                       onChange={(value) =>
                                         setAccountingCOAForm((prev) => ({

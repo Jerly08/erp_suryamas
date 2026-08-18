@@ -94,7 +94,13 @@ const correctionTypeLabels: Record<PostedTransactionCorrectionType, string> = {
 
 const correctionTypeOptions: Array<{ value: PostedTransactionCorrectionType; label: string }> = [
   { value: 'MISSING_PAYMENT_PROOF', label: correctionTypeLabels.MISSING_PAYMENT_PROOF },
+  { value: 'PAYMENT_DATE', label: correctionTypeLabels.PAYMENT_DATE },
+  { value: 'PAYMENT_AMOUNT', label: correctionTypeLabels.PAYMENT_AMOUNT },
+  { value: 'SOURCE_BANK', label: correctionTypeLabels.SOURCE_BANK },
+  { value: 'DESTINATION_ACCOUNT', label: correctionTypeLabels.DESTINATION_ACCOUNT },
+  { value: 'PURCHASE_DATE', label: correctionTypeLabels.PURCHASE_DATE },
   { value: 'COA_RECLASSIFICATION', label: correctionTypeLabels.COA_RECLASSIFICATION },
+  { value: 'OTHER', label: correctionTypeLabels.OTHER },
 ];
 
 const resolutionOptions: Array<{ value: PostedTransactionCorrectionResolution; label: string }> = [
@@ -104,6 +110,18 @@ const resolutionOptions: Array<{ value: PostedTransactionCorrectionResolution; l
   { value: 'BANK_RECONCILIATION', label: 'Rekonsiliasi bank' },
   { value: 'MANUAL_ADJUSTMENT', label: 'Jurnal penyesuaian terkontrol' },
 ];
+
+const getResolutionOptionsForCorrectionType = (correctionType: PostedTransactionCorrectionType) => {
+  if (correctionType === 'MISSING_PAYMENT_PROOF') {
+    return resolutionOptions.filter((option) => option.value === 'SUPPLEMENTAL_PROOF');
+  }
+
+  if (correctionType === 'SALES_CREDIT_CLASSIFICATION') {
+    return resolutionOptions.filter((option) => option.value === 'JOURNAL_RECLASSIFICATION');
+  }
+
+  return resolutionOptions.filter((option) => option.value !== 'SUPPLEMENTAL_PROOF');
+};
 
 const statusPresentation: Record<PostedTransactionCorrectionStatus, { label: string; colorScheme: string }> = {
   PENDING_ACCOUNTING: { label: 'Menunggu Accounting', colorScheme: 'blue' },
@@ -270,10 +288,12 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
   };
 
   const openAccountingReview = (correction: PostedTransactionCorrection) => {
+    const availableResolutions = getResolutionOptionsForCorrectionType(correction.correction_type);
+    const currentResolution = correction.accounting_resolution;
     setReviewResolution(
-      correction.correction_type === 'SALES_CREDIT_CLASSIFICATION'
-        ? 'JOURNAL_RECLASSIFICATION'
-        : correction.accounting_resolution || 'JOURNAL_RECLASSIFICATION',
+      availableResolutions.some((option) => option.value === currentResolution)
+        ? currentResolution!
+        : availableResolutions[0].value,
     );
     setReviewNotes(correction.accounting_notes || '');
     setProposedAccountId(correction.proposed_account_id || undefined);
@@ -633,7 +653,7 @@ const WorkflowContent: React.FC<WorkflowContentProps> = ({
                   <FormControl isRequired>
                     <FormLabel>Rencana penyelesaian</FormLabel>
                     <Select value={reviewResolution} onChange={(event) => setReviewResolution(event.target.value as PostedTransactionCorrectionResolution)}>
-                      {resolutionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      {getResolutionOptionsForCorrectionType(actionModal.correction.correction_type).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </Select>
                   </FormControl>
                 )}
@@ -733,6 +753,9 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
   const [correctionType, setCorrectionType] = useState<PostedTransactionCorrectionType>('MISSING_PAYMENT_PROOF');
   const [reason, setReason] = useState('');
   const [requestedDate, setRequestedDate] = useState('');
+  const [requestedAmount, setRequestedAmount] = useState('');
+  const [requestedCashBankReference, setRequestedCashBankReference] = useState('');
+  const [requestedDestinationReference, setRequestedDestinationReference] = useState('');
   const [reference, setReference] = useState('');
   const [document, setDocument] = useState<File | null>(null);
   const [paymentCandidates, setPaymentCandidates] = useState<LegacySalesCreditPaymentCandidate[]>([]);
@@ -746,7 +769,8 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
   const isSalesCreditCorrection = Boolean(target?.saleId);
   const isPurchaseCOAReclassification = correctionType === 'COA_RECLASSIFICATION';
   const availableCorrectionTypeOptions = correctionTypeOptions.filter(
-    (option) => option.value !== 'COA_RECLASSIFICATION' || canRequestCOAReclassification,
+    (option) => option.value !== 'COA_RECLASSIFICATION'
+      || (Boolean(target?.purchaseId) && canRequestCOAReclassification),
   );
 
   useEffect(() => {
@@ -754,6 +778,9 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
     setCorrectionType(isSalesCreditCorrection ? 'SALES_CREDIT_CLASSIFICATION' : 'MISSING_PAYMENT_PROOF');
     setReason('');
     setRequestedDate('');
+    setRequestedAmount('');
+    setRequestedCashBankReference('');
+    setRequestedDestinationReference('');
     setReference('');
     setDocument(null);
     setLinkedPaymentId(undefined);
@@ -822,7 +849,11 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
     };
   }, [isOpen, isPurchaseCOAReclassification, target?.purchaseId, toast, token]);
 
-  const wantsDate = isSalesCreditCorrection;
+  const needsActualDate = correctionType === 'PAYMENT_DATE' || correctionType === 'PURCHASE_DATE';
+  const needsActualAmount = correctionType === 'PAYMENT_AMOUNT';
+  const needsActualSourceBank = correctionType === 'SOURCE_BANK';
+  const needsActualDestination = correctionType === 'DESTINATION_ACCOUNT';
+  const wantsDate = isSalesCreditCorrection || needsActualDate;
   const sourceJournal = coaJournalLineCandidates[0];
   const selectedOriginalAccountIds = new Set(
     coaJournalLineCandidates
@@ -856,6 +887,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
 
   const handleSubmit = async () => {
     if (!target || !token) return;
+    const parsedRequestedAmount = Number(requestedAmount);
     if (!reason.trim()) {
       toast({ title: 'Alasan koreksi wajib diisi', status: 'warning', duration: 3500 });
       return;
@@ -866,6 +898,22 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
     }
     if (isPurchaseCOAReclassification && (selectedOriginalJournalLineIds.length === 0 || !proposedAccountId)) {
       toast({ title: 'Minimal satu baris jurnal asal dan COA pengganti wajib dipilih', status: 'warning', duration: 3500 });
+      return;
+    }
+    if (needsActualDate && !requestedDate) {
+      toast({ title: 'Tanggal aktual wajib diisi', status: 'warning', duration: 3500 });
+      return;
+    }
+    if (needsActualAmount && (!Number.isFinite(parsedRequestedAmount) || parsedRequestedAmount <= 0)) {
+      toast({ title: 'Nominal aktual harus lebih dari nol', status: 'warning', duration: 3500 });
+      return;
+    }
+    if (needsActualSourceBank && !requestedCashBankReference.trim()) {
+      toast({ title: 'Rekening sumber aktual wajib diisi', status: 'warning', duration: 3500 });
+      return;
+    }
+    if (needsActualDestination && !requestedDestinationReference.trim()) {
+      toast({ title: 'Tujuan atau penerima aktual wajib diisi', status: 'warning', duration: 3500 });
       return;
     }
     setSaving(true);
@@ -880,6 +928,9 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
         correction_type: correctionType,
         reason: reason.trim(),
         requested_date: requestedDate || undefined,
+        requested_amount: needsActualAmount ? parsedRequestedAmount : undefined,
+        requested_cash_bank_reference: needsActualSourceBank ? requestedCashBankReference.trim() : undefined,
+        requested_destination_reference: needsActualDestination ? requestedDestinationReference.trim() : undefined,
         requested_reference: reference.trim() || undefined,
       };
       const correction = await postedTransactionCorrectionService.create(token, payload);
@@ -910,7 +961,7 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
         <ModalCloseButton isDisabled={saving} />
         <ModalBody flex="1" minH="0" overflowY="auto">
           <VStack align="stretch" spacing={4}>
-            <Alert status="warning" variant="left-accent"><AlertIcon /><AlertDescription>{isSalesCreditCorrection ? 'Pengajuan ini hanya untuk sale kredit lama yang salah tercatat sebagai kas/bank. Sistem akan menolak jika penerimaan pelanggan belum memenuhi syarat audit.' : isPurchaseCOAReclassification ? 'Accounting memilih satu atau beberapa baris jurnal pembelian dan satu COA pengganti. Pengajuan langsung menunggu Finance Manager. Jika disetujui, sistem membuat jurnal reklasifikasi baru tanpa mengubah jurnal asal atau mutasi kas/bank.' : 'Pengajuan ini hanya untuk melengkapi bukti pembayaran dan tidak mengubah transaksi atau jurnal asal.'}</AlertDescription></Alert>
+            <Alert status="warning" variant="left-accent"><AlertIcon /><AlertDescription>{isSalesCreditCorrection ? 'Pengajuan ini hanya untuk sale kredit lama yang salah tercatat sebagai kas/bank. Sistem akan menolak jika penerimaan pelanggan belum memenuhi syarat audit.' : isPurchaseCOAReclassification ? 'Accounting memilih satu atau beberapa baris jurnal pembelian dan satu COA pengganti. Pengajuan langsung menunggu Finance Manager. Jika disetujui, sistem membuat jurnal reklasifikasi baru tanpa mengubah jurnal asal atau mutasi kas/bank.' : 'Pengajuan ini tidak mengubah PO, jurnal asal, atau saldo kas/bank. Accounting menentukan perlakuan koreksi, Finance Manager menyetujui, lalu Accounting menyelesaikan dengan jurnal koreksi, pembalikan dan pembuatan ulang, atau rekonsiliasi yang tertaut.'}</AlertDescription></Alert>
             <Box borderWidth="1px" borderRadius="md" p={3}>
               <Text fontWeight="semibold">Transaksi asal</Text>
               <Text fontSize="sm" color="gray.500">{target?.code || '-'}</Text>
@@ -928,7 +979,10 @@ const CreateCorrectionModal: React.FC<CreateCorrectionModalProps> = ({
                 </Select>
               </FormControl>
             )}
-            {wantsDate && <FormControl isRequired><FormLabel>{isSalesCreditCorrection ? 'Tanggal jurnal koreksi' : 'Tanggal aktual'}</FormLabel><Input type="date" value={requestedDate} onChange={(event) => setRequestedDate(event.target.value)} /></FormControl>}
+            {wantsDate && <FormControl isRequired><FormLabel>{isSalesCreditCorrection ? 'Tanggal jurnal koreksi' : correctionType === 'PAYMENT_DATE' ? 'Tanggal pembayaran aktual' : 'Tanggal pembelian aktual'}</FormLabel><Input type="date" value={requestedDate} onChange={(event) => setRequestedDate(event.target.value)} /></FormControl>}
+            {needsActualAmount && <FormControl isRequired><FormLabel>Nominal pembayaran aktual</FormLabel><Input type="number" min="0" step="0.01" value={requestedAmount} onChange={(event) => setRequestedAmount(event.target.value)} placeholder="Masukkan nominal menurut bukti pembayaran" /><FormHelperText>Nominal ini menjadi dasar review Accounting; transaksi dan jurnal asal tetap tidak berubah langsung.</FormHelperText></FormControl>}
+            {needsActualSourceBank && <FormControl isRequired><FormLabel>Rekening sumber aktual</FormLabel><Input value={requestedCashBankReference} onChange={(event) => setRequestedCashBankReference(event.target.value)} placeholder="Kode atau nama rekening sumber menurut bukti bank" /><FormHelperText>Masukkan rekening yang sebenarnya digunakan agar Accounting dapat menyiapkan koreksi atau rekonsiliasi yang tepat.</FormHelperText></FormControl>}
+            {needsActualDestination && <FormControl isRequired><FormLabel>Rekening tujuan atau penerima aktual</FormLabel><Input value={requestedDestinationReference} onChange={(event) => setRequestedDestinationReference(event.target.value)} placeholder="Kode rekening atau nama penerima yang sebenarnya" /><FormHelperText>Masukkan tujuan sebenarnya menurut bukti transaksi untuk direview Accounting.</FormHelperText></FormControl>}
             {isSalesCreditCorrection && (
               <FormControl isRequired>
                 <FormLabel>Penerimaan pelanggan yang sudah ada</FormLabel>

@@ -24,6 +24,10 @@ type postedTransactionCorrectionFixture struct {
 	proposedCOA    models.Account
 }
 
+func float64Pointer(value float64) *float64 {
+	return &value
+}
+
 func newPostedTransactionCorrectionFixture(t *testing.T) postedTransactionCorrectionFixture {
 	t.Helper()
 
@@ -138,9 +142,10 @@ func TestPostedTransactionCorrectionLifecyclePreservesOriginalTransaction(t *tes
 
 	correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
 		PurchaseID:         &fixture.purchase.ID,
-		CorrectionType:     models.PostedTransactionCorrectionTypeMissingPaymentProof,
-		Reason:             "Bukti pembayaran bank perlu dilengkapi.",
+		CorrectionType:     models.PostedTransactionCorrectionTypePaymentAmount,
+		Reason:             "Nominal pembayaran perlu dikoreksi sesuai bukti bank.",
 		RequestedReference: "KOPRA-20260727-001",
+		RequestedAmount:    float64Pointer(17_650_000),
 	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
 	require.NoError(t, err)
 	require.Equal(t, models.PostedTransactionCorrectionStatusPendingAccounting, correction.Status)
@@ -162,7 +167,7 @@ func TestPostedTransactionCorrectionLifecyclePreservesOriginalTransaction(t *tes
 
 	reviewed, err := fixture.service.ReviewAccounting(correction.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
 		Resolution:        models.PostedTransactionCorrectionResolutionJournalReclass,
-		Notes:             "Accounting akan membuat jurnal koreksi setelah bukti bank diverifikasi.",
+		Notes:             "Accounting akan membuat jurnal koreksi setelah nominal diverifikasi.",
 		ProposedAccountID: &fixture.proposedCOA.ID,
 	}, fixture.accounting.ID, models.RoleAccounting)
 	require.NoError(t, err)
@@ -219,6 +224,46 @@ func TestPostedTransactionCorrectionLifecyclePreservesOriginalTransaction(t *tes
 	require.Equal(t, models.SSOTStatusPosted, journalAfterCompletion.Status)
 	require.Equal(t, fixture.journal.TotalDebit, journalAfterCompletion.TotalDebit)
 	require.Equal(t, fixture.journal.TotalCredit, journalAfterCompletion.TotalCredit)
+}
+
+func TestPostedTransactionCorrectionRestrictsResolutionByType(t *testing.T) {
+	fixture := newPostedTransactionCorrectionFixture(t)
+
+	paymentAmountCorrection, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+		PurchaseID:      &fixture.purchase.ID,
+		CorrectionType:  models.PostedTransactionCorrectionTypePaymentAmount,
+		Reason:          "Nominal pembayaran aktual berbeda dari transaksi awal.",
+		RequestedAmount: float64Pointer(17_650_000),
+	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
+	require.NoError(t, err)
+
+	_, err = fixture.service.ReviewAccounting(paymentAmountCorrection.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
+		Resolution: models.PostedTransactionCorrectionResolutionSupplementalProof,
+		Notes:      "Tidak cukup hanya melengkapi bukti.",
+	}, fixture.accounting.ID, models.RoleAccounting)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "rencana penyelesaian finansial")
+
+	proofCorrection, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+		PurchaseID:     &fixture.purchase.ID,
+		CorrectionType: models.PostedTransactionCorrectionTypeMissingPaymentProof,
+		Reason:         "Bukti pembayaran perlu dilengkapi.",
+	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
+	require.NoError(t, err)
+
+	_, err = fixture.service.ReviewAccounting(proofCorrection.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
+		Resolution: models.PostedTransactionCorrectionResolutionJournalReclass,
+		Notes:      "Tidak tepat untuk bukti pembayaran.",
+	}, fixture.accounting.ID, models.RoleAccounting)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hanya dapat memakai rencana lengkapi bukti")
+
+	reviewed, err := fixture.service.ReviewAccounting(proofCorrection.ID, models.PostedTransactionCorrectionAccountingReviewRequest{
+		Resolution: models.PostedTransactionCorrectionResolutionSupplementalProof,
+		Notes:      "Bukti pembayaran akan dilengkapi tanpa perubahan jurnal.",
+	}, fixture.accounting.ID, models.RoleAccounting)
+	require.NoError(t, err)
+	require.Equal(t, models.PostedTransactionCorrectionStatusPendingFinanceManager, reviewed.Status)
 }
 
 func TestPostedTransactionCorrectionRequiresPostedJournalAndAccountingRole(t *testing.T) {
@@ -310,16 +355,118 @@ func TestAccountingCanSubmitPostedTransactionCorrection(t *testing.T) {
 	require.Equal(t, models.PostedTransactionCorrectionStatusPendingFinanceManager, reviewed.Status)
 }
 
-func TestPostedTransactionCorrectionRejectsUnsupportedWorkflow(t *testing.T) {
-	fixture := newPostedTransactionCorrectionFixture(t)
+func TestPostedTransactionCorrectionSupportsAuditedPostPostingTypes(t *testing.T) {
 	requestedAmount := 17_600_000.0
 
-	_, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
-		PurchaseID:      &fixture.purchase.ID,
-		CorrectionType:  models.PostedTransactionCorrectionTypePaymentAmount,
-		Reason:          "Nominal pembayaran pada bukti bank berbeda dengan transaksi asal.",
-		RequestedAmount: &requestedAmount,
-	}, fixture.financeStaff.ID, models.RoleFinanceStaff)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "belum didukung")
+	tests := []struct {
+		name              string
+		correctionType    string
+		requestedDate     string
+		requestedAmount   *float64
+		cashBankReference string
+		destination       string
+	}{
+		{
+			name:           "payment date",
+			correctionType: models.PostedTransactionCorrectionTypePaymentDate,
+			requestedDate:  "2026-07-28",
+		},
+		{
+			name:            "payment amount",
+			correctionType:  models.PostedTransactionCorrectionTypePaymentAmount,
+			requestedAmount: &requestedAmount,
+		},
+		{
+			name:              "source bank",
+			correctionType:    models.PostedTransactionCorrectionTypeSourceBank,
+			cashBankReference: "1101-003-200 - Bank Mandiri aktual",
+		},
+		{
+			name:           "destination account",
+			correctionType: models.PostedTransactionCorrectionTypeDestinationAccount,
+			destination:    "PT Vendor Koreksi",
+		},
+		{
+			name:           "purchase date",
+			correctionType: models.PostedTransactionCorrectionTypePurchaseDate,
+			requestedDate:  "2026-07-26",
+		},
+		{
+			name:           "other",
+			correctionType: models.PostedTransactionCorrectionTypeOther,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPostedTransactionCorrectionFixture(t)
+			correction, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+				PurchaseID:                    &fixture.purchase.ID,
+				CorrectionType:                test.correctionType,
+				Reason:                        "Data transaksi terposting perlu direview melalui workflow audit.",
+				RequestedDate:                 test.requestedDate,
+				RequestedAmount:               test.requestedAmount,
+				RequestedCashBankReference:    test.cashBankReference,
+				RequestedDestinationReference: test.destination,
+			}, fixture.financeStaff.ID, models.RoleFinanceStaff)
+			require.NoError(t, err)
+			require.Equal(t, models.PostedTransactionCorrectionStatusPendingAccounting, correction.Status)
+			require.Equal(t, test.correctionType, correction.CorrectionType)
+		})
+	}
+}
+
+func TestPostedTransactionCorrectionRequiresActualDetails(t *testing.T) {
+	tests := []struct {
+		name            string
+		correctionType  string
+		requestedDate   string
+		requestedAmount *float64
+		cashBank        string
+		destination     string
+		expectedError   string
+	}{
+		{
+			name:           "payment date",
+			correctionType: models.PostedTransactionCorrectionTypePaymentDate,
+			expectedError:  "tanggal pembayaran aktual wajib diisi",
+		},
+		{
+			name:           "purchase date",
+			correctionType: models.PostedTransactionCorrectionTypePurchaseDate,
+			expectedError:  "tanggal pembelian aktual wajib diisi",
+		},
+		{
+			name:           "payment amount",
+			correctionType: models.PostedTransactionCorrectionTypePaymentAmount,
+			expectedError:  "nominal pembayaran aktual wajib diisi",
+		},
+		{
+			name:           "source bank",
+			correctionType: models.PostedTransactionCorrectionTypeSourceBank,
+			expectedError:  "rekening sumber aktual wajib diisi",
+		},
+		{
+			name:           "destination account",
+			correctionType: models.PostedTransactionCorrectionTypeDestinationAccount,
+			expectedError:  "rekening tujuan atau penerima aktual wajib diisi",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPostedTransactionCorrectionFixture(t)
+			_, err := fixture.service.Create(models.PostedTransactionCorrectionCreateRequest{
+				PurchaseID:                    &fixture.purchase.ID,
+				CorrectionType:                test.correctionType,
+				Reason:                        "Data transaksi perlu diperiksa sebelum koreksi dijalankan.",
+				RequestedDate:                 test.requestedDate,
+				RequestedAmount:               test.requestedAmount,
+				RequestedCashBankReference:    test.cashBank,
+				RequestedDestinationReference: test.destination,
+			}, fixture.financeStaff.ID, models.RoleFinanceStaff)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), test.expectedError)
+		})
+	}
 }

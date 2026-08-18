@@ -354,14 +354,30 @@ func (s *PurchaseService) validatePurchaseEligibleForPrePostingRevision(
 	}
 
 	if tx.Migrator().HasTable(&models.PurchasePayment{}) {
-		var purchasePaymentCount int64
+		var linkedPurchasePaymentCount int64
 		if err := tx.Model(&models.PurchasePayment{}).
-			Where("purchase_id = ?", purchase.ID).
-			Count(&purchasePaymentCount).Error; err != nil {
+			Where("purchase_id = ? AND payment_id IS NOT NULL AND deleted_at IS NULL", purchase.ID).
+			Count(&linkedPurchasePaymentCount).Error; err != nil {
 			return err
 		}
-		if purchasePaymentCount > 0 {
+		if linkedPurchasePaymentCount > 0 {
 			return fmt.Errorf("purchase sudah memiliki pembayaran; gunakan Ajukan Koreksi Transaksi Terposting")
+		}
+	}
+
+	// A preliminary PurchasePayment can exist only to retain an uploaded proof
+	// while Finance/Accounting have not posted anything. It must not block a
+	// pre-posting revision. A cash/bank transaction, on the other hand, is a
+	// financial side effect and must go through the auditable correction flow.
+	if tx.Migrator().HasTable(&models.CashBankTransaction{}) {
+		var cashBankTransactionCount int64
+		if err := tx.Model(&models.CashBankTransaction{}).
+			Where("reference_type = ? AND reference_id = ? AND deleted_at IS NULL", "PURCHASE", purchase.ID).
+			Count(&cashBankTransactionCount).Error; err != nil {
+			return err
+		}
+		if cashBankTransactionCount > 0 {
+			return fmt.Errorf("purchase sudah memiliki mutasi kas/bank; gunakan Ajukan Koreksi Transaksi Terposting")
 		}
 	}
 
