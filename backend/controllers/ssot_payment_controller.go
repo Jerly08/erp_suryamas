@@ -27,6 +27,36 @@ func NewSSOTPaymentController(enhancedPaymentService *services.EnhancedPaymentSe
 	}
 }
 
+// isReceivablePaymentInputError keeps ordinary settlement validation failures
+// in the 4xx family.  The service intentionally owns the business rules; this
+// controller helper only prevents a user choosing an invalid rounding option
+// from seeing a misleading server-error response.
+func isReceivablePaymentInputError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"payment validation failed",
+		"invalid customer settlement treatment",
+		"rounding settlement",
+		"rounding difference",
+		"rounding is not needed",
+		"reason is required",
+		"invoice allocation",
+		"does not belong to customer",
+		"no longer has an outstanding balance",
+		"exchange rate is required",
+		"cash/bank account not found",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (ctrl *SSOTPaymentController) getAccessiblePaymentResponse(c *gin.Context, paymentID uint) (*services.PaymentWithJournalResponse, bool) {
 	response, err := ctrl.enhancedPaymentService.GetPaymentWithJournal(paymentID)
 	if err != nil {
@@ -82,7 +112,11 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 	// Process payment using SSOT enhanced service
 	response, err := ctrl.enhancedPaymentService.CreatePaymentWithJournal(&req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		statusCode := http.StatusInternalServerError
+		if isReceivablePaymentInputError(err) {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, gin.H{
 			"error":   "Failed to create receivable payment",
 			"details": err.Error(),
 		})
@@ -95,6 +129,8 @@ func (ctrl *SSOTPaymentController) CreateReceivablePayment(c *gin.Context) {
 			message = "Receivable payment submitted for finance manager approval"
 		} else if response.Payment.Status == models.PaymentStatusPending {
 			message = "Receivable payment submitted for director approval"
+		} else if response.Payment.Status == models.PaymentStatusPendingAccounting && response.Payment.SettlementTreatment == models.PaymentSettlementRounding {
+			message = "Rounding request submitted for Accounting review and final Finance Manager approval"
 		}
 	}
 
@@ -424,24 +460,26 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 	}
 
 	var reqData struct {
-		ContactID          uint                      `json:"contact_id"`
-		ExpenseAccountID   *uint                     `json:"expense_account_id"`
-		CashBankID         uint                      `json:"cash_bank_id"`
-		Date               string                    `json:"date"`
-		Amount             float64                   `json:"amount"`
-		ExchangeRate       float64                   `json:"exchange_rate"`
-		Method             string                    `json:"method"`
-		Reference          string                    `json:"reference"`
-		Notes              string                    `json:"notes"`
-		Description        string                    `json:"description"`
-		PPHType            string                    `json:"pph_type"`
-		PPHRate            float64                   `json:"pph_rate"`
-		PPHAmount          float64                   `json:"pph_amount"`
-		AllowOverpayment   bool                      `json:"allow_liability_overpayment"`
-		TargetBillID       *uint                     `json:"target_bill_id"`
-		TargetInvoiceID    *uint                     `json:"target_invoice_id"`
-		InvoiceAllocations []services.AllocationItem `json:"invoice_allocations"`
-		BillAllocations    []services.AllocationItem `json:"bill_allocations"`
+		ContactID           uint                      `json:"contact_id"`
+		ExpenseAccountID    *uint                     `json:"expense_account_id"`
+		CashBankID          uint                      `json:"cash_bank_id"`
+		Date                string                    `json:"date"`
+		Amount              float64                   `json:"amount"`
+		ExchangeRate        float64                   `json:"exchange_rate"`
+		Method              string                    `json:"method"`
+		Reference           string                    `json:"reference"`
+		Notes               string                    `json:"notes"`
+		Description         string                    `json:"description"`
+		PPHType             string                    `json:"pph_type"`
+		PPHRate             float64                   `json:"pph_rate"`
+		PPHAmount           float64                   `json:"pph_amount"`
+		AllowOverpayment    bool                      `json:"allow_liability_overpayment"`
+		SettlementTreatment string                    `json:"settlement_treatment"`
+		SettlementReason    string                    `json:"settlement_reason"`
+		TargetBillID        *uint                     `json:"target_bill_id"`
+		TargetInvoiceID     *uint                     `json:"target_invoice_id"`
+		InvoiceAllocations  []services.AllocationItem `json:"invoice_allocations"`
+		BillAllocations     []services.AllocationItem `json:"bill_allocations"`
 	}
 
 	if err := c.ShouldBindJSON(&reqData); err != nil {
@@ -468,17 +506,26 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
 		return
 	}
-	if currentPayment.Status == models.PaymentStatusPendingAccounting &&
-		roleNorm != models.RoleAdmin &&
-		!models.IsAccountingRole(roleNorm) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only Accounting can set COA for this payment stage"})
-		return
+	isRoundingSettlement := strings.EqualFold(strings.TrimSpace(currentPayment.SettlementTreatment), models.PaymentSettlementRounding)
+	if currentPayment.Status == models.PaymentStatusPendingAccounting {
+		if isRoundingSettlement && !models.IsAccountingRole(roleNorm) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Rounding settlement must be reviewed by Accounting"})
+			return
+		}
+		if !isRoundingSettlement && roleNorm != models.RoleAdmin && !models.IsAccountingRole(roleNorm) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only Accounting can set COA for this payment stage"})
+			return
+		}
 	}
-	if currentPayment.Status == models.PaymentStatusPendingFinalReview &&
-		roleNorm != models.RoleAdmin &&
-		!models.IsFinanceManagerRole(roleNorm) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can revise COA before journal posting"})
-		return
+	if currentPayment.Status == models.PaymentStatusPendingFinalReview {
+		if isRoundingSettlement && !models.IsFinanceManagerRole(roleNorm) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Rounding settlement must be finally approved by Finance Manager"})
+			return
+		}
+		if !isRoundingSettlement && roleNorm != models.RoleAdmin && !models.IsFinanceManagerRole(roleNorm) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only Finance Manager can revise COA before journal posting"})
+			return
+		}
 	}
 	isNativeNonInvoiceReview := currentPayment.PaymentType == models.PaymentTypeExpense
 	isLegacyNonInvoiceReview := currentPayment.LegacyNonInvoiceEligible
@@ -593,6 +640,12 @@ func (ctrl *SSOTPaymentController) UpdateDraftPayment(c *gin.Context) {
 			p.Reference = reqData.Reference
 		} else {
 			p.Reference = models.StripInternalPaymentReference(p.Reference)
+		}
+		if reqData.SettlementTreatment != "" {
+			p.SettlementTreatment = reqData.SettlementTreatment
+		}
+		if reqData.SettlementReason != "" {
+			p.SettlementReason = reqData.SettlementReason
 		}
 		if p.PaymentType == models.PaymentTypeExpense {
 			if reqData.AllowOverpayment {

@@ -185,6 +185,11 @@ export interface SalePayment {
   cash_bank_gl_account_name?: string;
   notes?: string;
   user_id: number;
+	status?: string;
+	settlement_treatment?: "OPEN_BALANCE" | "CUSTOMER_ADVANCE" | "ROUNDING";
+	settlement_difference?: number;
+	settlement_reason?: string;
+	rounding_threshold?: number;
 
   // Relations
   cash_bank?: any;
@@ -348,6 +353,22 @@ export interface SalePaymentRequest {
   cash_bank_id?: number;
   account_id?: number; // Make optional to match backend
   notes?: string;
+  settlement_treatment?:
+    | "OPEN_BALANCE"
+    | "CUSTOMER_ADVANCE"
+    | "ROUNDING";
+  settlement_reason?: string;
+}
+
+export interface CustomerPaymentSettlement {
+  treatment: "OPEN_BALANCE" | "CUSTOMER_ADVANCE" | "ROUNDING";
+  invoice_settlement_amount: number;
+  difference: number;
+  customer_advance_amount: number;
+  rounding_amount: number;
+  rounding_direction?: "OVERPAYMENT" | "SHORTFALL";
+  requires_approval: boolean;
+  rounding_threshold: number;
 }
 
 export interface SalePPh23SettlementRequest {
@@ -371,6 +392,7 @@ export interface IntegratedSalePaymentResponse {
   status: string;
   message: string;
   payment: SalePayment;
+	settlement?: CustomerPaymentSettlement;
   updated_sale?: {
     id: number;
     status: Sale["status"];
@@ -703,6 +725,8 @@ class SalesService {
       cash_bank_id: data.cash_bank_id, // ✅ Correct
       reference: data.reference || "", // ✅ Correct
       notes: data.notes || "", // ✅ Correct
+		settlement_treatment: data.settlement_treatment,
+		settlement_reason: data.settlement_reason || "",
     };
     const response = await api.post(
       API_ENDPOINTS.SALES_INTEGRATED_PAYMENT(saleId),

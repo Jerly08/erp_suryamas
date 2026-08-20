@@ -70,6 +70,9 @@ func GetStandardCOA(companyType string) []models.Account {
 		{Code: "2103-001", Name: "UTANG GAJI", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
 		{Code: "2103-002", Name: "UTANG BPJS & POTONGAN PAYROLL", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true},
 
+		{Code: "2190", Name: "UANG MUKA PELANGGAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 3, IsHeader: true, IsActive: true, IsSystemCritical: true},
+		{Code: "2190-001", Name: "UANG MUKA PELANGGAN", Type: models.AccountTypeLiability, Category: models.CategoryCurrentLiability, Level: 4, IsHeader: false, IsActive: true, IsSystemCritical: true},
+
 		{Code: "2200", Name: "LIABILITAS JANGKA PANJANG", Type: models.AccountTypeLiability, Category: models.CategoryLongTermLiability, Level: 2, IsHeader: true, IsActive: true},
 		{Code: "2201", Name: "PINJAMAN BANK JANGKA PANJANG", Type: models.AccountTypeLiability, Category: models.CategoryLongTermLiability, Level: 3, IsHeader: false, IsActive: true},
 
@@ -135,6 +138,7 @@ func getServiceAccounts() []models.Account {
 		{Code: "7103", Name: "LABA SELISIH KURS", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7104", Name: "PENDAPATAN DIVIDEN", Type: models.AccountTypeRevenue, Category: models.CategoryDividendIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7105", Name: "LABA PENJUALAN ASET", Type: models.AccountTypeRevenue, Category: models.CategoryGainOnSale, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "7106", Name: "PENDAPATAN PEMBULATAN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER EXPENSES (8xxx - pure EXPENSE)
 		{Code: "8000", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryNonOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -143,6 +147,7 @@ func getServiceAccounts() []models.Account {
 		{Code: "8103", Name: "RUGI SELISIH KURS", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8104", Name: "RUGI PENJUALAN ASET", Type: models.AccountTypeExpense, Category: models.CategoryLossOnSale, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8105", Name: "BEBAN FINANSIAL LAINNYA", Type: models.AccountTypeExpense, Category: models.CategoryFinancialExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "8106", Name: "BEBAN PEMBULATAN", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// TAX (9xxx - pure EXPENSE)
 		{Code: "9000", Name: "PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -187,6 +192,7 @@ func getTradingAccounts() []models.Account {
 		{Code: "7103", Name: "LABA SELISIH KURS", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7104", Name: "PENDAPATAN DIVIDEN", Type: models.AccountTypeRevenue, Category: models.CategoryDividendIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7105", Name: "LABA PENJUALAN ASET", Type: models.AccountTypeRevenue, Category: models.CategoryGainOnSale, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "7106", Name: "PENDAPATAN PEMBULATAN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER EXPENSES (8xxx - pure EXPENSE)
 		{Code: "8000", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryNonOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -195,6 +201,7 @@ func getTradingAccounts() []models.Account {
 		{Code: "8103", Name: "RUGI SELISIH KURS", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8104", Name: "RUGI PENJUALAN ASET", Type: models.AccountTypeExpense, Category: models.CategoryLossOnSale, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8105", Name: "BEBAN FINANSIAL LAINNYA", Type: models.AccountTypeExpense, Category: models.CategoryFinancialExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "8106", Name: "BEBAN PEMBULATAN", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// TAX (9xxx - pure EXPENSE)
 		{Code: "9000", Name: "PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -239,6 +246,7 @@ func getManufacturingAccounts() []models.Account {
 		{Code: "7103", Name: "LABA SELISIH KURS", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7104", Name: "PENDAPATAN DIVIDEN", Type: models.AccountTypeRevenue, Category: models.CategoryDividendIncome, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "7105", Name: "LABA PENJUALAN ASET", Type: models.AccountTypeRevenue, Category: models.CategoryGainOnSale, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "7106", Name: "PENDAPATAN PEMBULATAN", Type: models.AccountTypeRevenue, Category: models.CategoryOtherIncome, Level: 2, IsHeader: false, IsActive: true},
 
 		// OTHER EXPENSES (8xxx - pure EXPENSE)
 		{Code: "8000", Name: "BEBAN LAIN-LAIN", Type: models.AccountTypeExpense, Category: models.CategoryNonOperatingExpense, Level: 1, IsHeader: true, IsActive: true},
@@ -247,6 +255,7 @@ func getManufacturingAccounts() []models.Account {
 		{Code: "8103", Name: "RUGI SELISIH KURS", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8104", Name: "RUGI PENJUALAN ASET", Type: models.AccountTypeExpense, Category: models.CategoryLossOnSale, Level: 2, IsHeader: false, IsActive: true},
 		{Code: "8105", Name: "BEBAN FINANSIAL LAINNYA", Type: models.AccountTypeExpense, Category: models.CategoryFinancialExpense, Level: 2, IsHeader: false, IsActive: true},
+		{Code: "8106", Name: "BEBAN PEMBULATAN", Type: models.AccountTypeExpense, Category: models.CategoryOtherExpense, Level: 2, IsHeader: false, IsActive: true},
 
 		// TAX (9xxx - pure EXPENSE)
 		{Code: "9000", Name: "PAJAK PENGHASILAN", Type: models.AccountTypeExpense, Category: models.CategoryTaxExpense, Level: 1, IsHeader: true, IsActive: true},

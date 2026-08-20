@@ -440,6 +440,11 @@ type SalePaymentRequest struct {
 	Notes         string    `json:"notes"`
 	CashBankID    *uint     `json:"cash_bank_id"` // Add cashbank integration
 	AccountID     *uint     `json:"account_id"`   // Add account integration
+	// Used by the integrated receipt flow. It never changes the issued invoice;
+	// CUSTOMER_ADVANCE is the default for an excess receipt and ROUNDING is
+	// routed through Accounting then Finance Manager approval.
+	SettlementTreatment string `json:"settlement_treatment"`
+	SettlementReason    string `json:"settlement_reason"`
 }
 
 type SalePPh23SettlementRequest struct {

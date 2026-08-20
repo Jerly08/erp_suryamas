@@ -141,6 +141,11 @@ type PaymentWithJournalRequest struct {
 	Method       string    `json:"method" binding:"required"`
 	Reference    string    `json:"reference"`
 	Notes        string    `json:"notes"`
+	// Customer settlement options. CUSTOMER_ADVANCE is the default for an
+	// excess receipt. ROUNDING is only available within the configured small
+	// difference threshold and is routed to Accounting then Finance Manager.
+	SettlementTreatment string `json:"settlement_treatment,omitempty"`
+	SettlementReason    string `json:"settlement_reason,omitempty"`
 
 	// Journal integration options
 	AutoCreateJournal       bool `json:"auto_create_journal" default:"true"`
@@ -172,15 +177,16 @@ type AllocationItem struct {
 
 // PaymentWithJournalResponse extends payment response with journal information
 type PaymentWithJournalResponse struct {
-	Payment       *models.Payment            `json:"payment"`
-	JournalResult *PaymentJournalResult      `json:"journal_result,omitempty"`
-	Contact       *models.Contact            `json:"contact"`
-	CashBank      *models.CashBank           `json:"cash_bank"`
-	Allocations   []models.PaymentAllocation `json:"allocations,omitempty"`
-	Summary       *PaymentProcessingSummary  `json:"summary"`
-	Success       bool                       `json:"success"`
-	Message       string                     `json:"message"`
-	Warnings      []string                   `json:"warnings,omitempty"`
+	Payment       *models.Payment                   `json:"payment"`
+	JournalResult *PaymentJournalResult             `json:"journal_result,omitempty"`
+	Contact       *models.Contact                   `json:"contact"`
+	CashBank      *models.CashBank                  `json:"cash_bank"`
+	Allocations   []models.PaymentAllocation        `json:"allocations,omitempty"`
+	Summary       *PaymentProcessingSummary         `json:"summary"`
+	Settlement    *CustomerPaymentSettlementSummary `json:"settlement,omitempty"`
+	Success       bool                              `json:"success"`
+	Message       string                            `json:"message"`
+	Warnings      []string                          `json:"warnings,omitempty"`
 }
 
 // PaymentProcessingSummary provides comprehensive processing information
@@ -275,6 +281,85 @@ func isPaymentAwaitingPostingReview(payment *models.Payment) bool {
 	}
 
 	return payment.Status == models.PaymentStatusPendingFinalReview
+}
+
+// requireRoundingReviewerRole keeps the segregated approval path enforceable
+// even when the service is called outside the HTTP controller.  Rounding
+// changes the invoice settlement without changing the bank receipt, so it
+// must never inherit the more permissive generic draft-edit rules.
+func requireRoundingReviewerRole(tx *gorm.DB, userID uint) error {
+	if tx == nil || userID == 0 {
+		return fmt.Errorf("rounding settlement requires an authenticated Accounting reviewer")
+	}
+
+	var user models.User
+	if err := tx.First(&user, userID).Error; err != nil {
+		return fmt.Errorf("load Accounting reviewer: %w", err)
+	}
+	if !user.IsActive || !models.IsAccountingRole(user.Role) {
+		return fmt.Errorf("rounding settlement can only be reviewed by an active Accounting user")
+	}
+
+	return nil
+}
+
+// requireRoundingFinalApproverRole mirrors the Accounting gate above at the
+// final posting step.  Keep this in the service layer so an alternate route
+// cannot post a rounding request with an ordinary payment-approval permission.
+func requireRoundingFinalApproverRole(tx *gorm.DB, userID uint) error {
+	if tx == nil || userID == 0 {
+		return fmt.Errorf("rounding settlement requires an authenticated Finance Manager approver")
+	}
+
+	var user models.User
+	if err := tx.First(&user, userID).Error; err != nil {
+		return fmt.Errorf("load Finance Manager approver: %w", err)
+	}
+	if !user.IsActive || !models.IsFinanceManagerRole(user.Role) {
+		return fmt.Errorf("rounding settlement can only be finally approved by an active Finance Manager")
+	}
+
+	return nil
+}
+
+func sameOptionalUint(left, right *uint) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+// roundingRequestFactsUnchanged prevents an approval edit from changing the
+// bank receipt that Accounting and Finance Manager are approving. The caller
+// may still change the settlement treatment/reason, or reject and recreate a
+// receipt when the bank fact itself was entered incorrectly.
+func roundingRequestFactsUnchanged(original, updated *models.Payment) bool {
+	if original == nil || updated == nil {
+		return false
+	}
+	return original.ContactID == updated.ContactID &&
+		sameOptionalUint(original.CashBankID, updated.CashBankID) &&
+		paymentJournalEntryDate(original.Date).Equal(paymentJournalEntryDate(updated.Date)) &&
+		math.Abs(original.Amount-updated.Amount) <= customerSettlementTolerance &&
+		math.Abs(original.ExchangeRate-updated.ExchangeRate) <= customerSettlementTolerance &&
+		math.Abs(original.NativeAmount-updated.NativeAmount) <= customerSettlementTolerance &&
+		math.Abs(original.BookAmountIDR-updated.BookAmountIDR) <= customerSettlementTolerance &&
+		strings.EqualFold(strings.TrimSpace(original.Currency), strings.TrimSpace(updated.Currency))
+}
+
+func sameRoundingAllocations(left, right []models.PaymentAllocation) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !sameOptionalUint(left[index].InvoiceID, right[index].InvoiceID) ||
+			!sameOptionalUint(left[index].BillID, right[index].BillID) ||
+			!sameOptionalUint(left[index].PurchasePaymentTermID, right[index].PurchasePaymentTermID) ||
+			math.Abs(left[index].AllocatedAmount-right[index].AllocatedAmount) > customerSettlementTolerance {
+			return false
+		}
+	}
+	return true
 }
 
 func isEmployeeLoanReceivableAccount(account models.Account) bool {
@@ -1134,6 +1219,17 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		if !isPaymentAwaitingPostingReview(&payment) {
 			return fmt.Errorf("payment is not ready for final finance manager review (current: %s)", payment.Status)
 		}
+		if normalizeCustomerSettlementTreatment(payment.SettlementTreatment) == models.PaymentSettlementRounding {
+			if payment.AccountingReviewedBy == nil || *payment.AccountingReviewedBy == 0 {
+				return fmt.Errorf("rounding settlement must be reviewed by Accounting before final approval")
+			}
+			if payment.UserID == approverUserID || *payment.AccountingReviewedBy == approverUserID {
+				return fmt.Errorf("rounding settlement requires a Finance Manager approver different from its creator and Accounting reviewer")
+			}
+			if err := requireRoundingFinalApproverRole(tx, approverUserID); err != nil {
+				return err
+			}
+		}
 
 		cashBankID := uint(0)
 		if payment.CashBankID != nil {
@@ -1188,34 +1284,30 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		if bankBookAmount == 0 {
 			bankBookAmount = payment.Amount
 		}
+		var customerSettlement *customerSettlementPlan
 		receivableSettlementBookAmount := deriveReceivableSettlementBookAmount(&payment)
+		if payment.Contact.Type == "CUSTOMER" {
+			var customerSettlementErr error
+			customerSettlement, receivableSettlementBookAmount, customerSettlementErr = eps.buildStoredCustomerSettlementPlan(tx, &payment)
+			if customerSettlementErr != nil {
+				return customerSettlementErr
+			}
+		}
 
 		if payment.Contact.Type == "CUSTOMER" {
-			// Receivable Payment Journal: Debit Cash/Bank, Credit Piutang Usaha
-			arAccountID, arErr := eps.resolveReceivableAccountID(tx)
-			if arErr != nil {
-				return fmt.Errorf("failed to resolve accounts receivable: %w", arErr)
+			allocatedAmount := customerSettlement.InvoiceSettlementAmount
+			var customerJournalErr error
+			journalLines, journalDescription, customerJournalErr = eps.buildCustomerReceiptJournalLines(
+				tx,
+				&payment,
+				cashBank,
+				payment.Contact.Name,
+				receivableSettlementBookAmount,
+				allocatedAmount,
+			)
+			if customerJournalErr != nil {
+				return customerJournalErr
 			}
-			journalLines = []JournalLineRequest{
-				{
-					AccountID:    uint64(cashBank.AccountID),
-					DebitAmount:  decimal.NewFromFloat(bankBookAmount),
-					CreditAmount: decimal.Zero,
-					Description:  fmt.Sprintf("Payment received from %s - %s", payment.Contact.Name, payment.Code),
-				},
-				{
-					AccountID:    arAccountID,
-					DebitAmount:  decimal.Zero,
-					CreditAmount: decimal.NewFromFloat(receivableSettlementBookAmount),
-					Description:  fmt.Sprintf("AR reduction - %s", payment.Code),
-				},
-			}
-			if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-receivableSettlementBookAmount, false, payment.Code); err != nil {
-				return err
-			} else if fxLine != nil {
-				journalLines = append(journalLines, *fxLine)
-			}
-			journalDescription = fmt.Sprintf("Customer Payment approved %s - %s", payment.Code, payment.Contact.Name)
 
 		} else if payment.Contact.Type == "VENDOR" {
 			// Payable Payment Journal: Debit Utang Usaha, Credit Cash/Bank
@@ -1281,6 +1373,31 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		if err != nil {
 			return fmt.Errorf("failed to apply draft allocations: %w", err)
 		}
+		if customerSettlement != nil {
+			if customerSettlement.Treatment == models.PaymentSettlementRounding && customerSettlement.RoundingDirection == "SHORTFALL" {
+				if customerSettlement.primaryInvoiceID == nil {
+					return fmt.Errorf("rounding settlement is missing its invoice")
+				}
+				if err := eps.updateSaleOutstanding(tx, *customerSettlement.primaryInvoiceID, customerSettlement.RoundingAmount); err != nil {
+					return fmt.Errorf("failed to close approved rounding balance: %w", err)
+				}
+			}
+			if customerSettlement.CustomerAdvanceAmount > customerSettlementTolerance {
+				journalEntryID64 := journalEntry.ID
+				if _, err := eps.createCustomerAdvance(
+					tx,
+					&payment,
+					customerSettlement,
+					&journalEntryID64,
+					customerSettlement.primaryInvoiceID,
+				); err != nil {
+					return err
+				}
+			}
+			payment.SettlementTreatment = customerSettlement.Treatment
+			payment.SettlementDifference = customerSettlement.Difference
+			payment.RoundingThreshold = customerSettlement.RoundingThreshold
+		}
 		payment.Status = models.PaymentStatusCompleted
 		now := time.Now()
 		payment.ApprovalStage = ""
@@ -1314,6 +1431,9 @@ func (eps *EnhancedPaymentServiceWithJournal) ApproveStandardPayment(paymentID u
 		response.Contact = &payment.Contact
 		response.CashBank = cashBank
 		response.Allocations = allocations
+		if customerSettlement != nil {
+			response.Settlement = &customerSettlement.CustomerPaymentSettlementSummary
+		}
 		response.Success = true
 		response.Message = fmt.Sprintf("Payment %s approved successfully", payment.Code)
 
@@ -1417,9 +1537,48 @@ func (eps *EnhancedPaymentServiceWithJournal) UpdateDraftPayment(paymentID uint,
 			originalStatus != models.PaymentStatusPendingFinalReview {
 			return fmt.Errorf("only payments before journal posting can be updated (current status: %s)", payment.Status)
 		}
+		originalPayment := payment
+		var originalAllocations []models.PaymentAllocation
+		if originalStatus == models.PaymentStatusPendingAccounting || originalStatus == models.PaymentStatusPendingFinalReview {
+			if err := tx.Where("payment_id = ?", payment.ID).Order("id ASC").Find(&originalAllocations).Error; err != nil {
+				return fmt.Errorf("failed to load payment allocations before review: %w", err)
+			}
+		}
 
 		if err := req(tx, &payment); err != nil {
 			return fmt.Errorf("failed to apply updates: %w", err)
+		}
+		if originalStatus == models.PaymentStatusPendingFinalReview &&
+			normalizeCustomerSettlementTreatment(originalPayment.SettlementTreatment) != models.PaymentSettlementRounding &&
+			normalizeCustomerSettlementTreatment(payment.SettlementTreatment) == models.PaymentSettlementRounding {
+			return fmt.Errorf("rounding settlement can only be requested during Accounting review; return the payment to Accounting instead")
+		}
+		isRoundingReview := (originalStatus == models.PaymentStatusPendingAccounting || originalStatus == models.PaymentStatusPendingFinalReview) &&
+			(normalizeCustomerSettlementTreatment(originalPayment.SettlementTreatment) == models.PaymentSettlementRounding ||
+				normalizeCustomerSettlementTreatment(payment.SettlementTreatment) == models.PaymentSettlementRounding)
+		if isRoundingReview {
+			if !roundingRequestFactsUnchanged(&originalPayment, &payment) {
+				return fmt.Errorf("bank amount, customer, cash/bank account, currency, exchange rate, and date cannot be changed after a rounding request is submitted; reject and recreate it instead")
+			}
+			var updatedAllocations []models.PaymentAllocation
+			if err := tx.Where("payment_id = ?", payment.ID).Order("id ASC").Find(&updatedAllocations).Error; err != nil {
+				return fmt.Errorf("failed to reload payment allocations after review: %w", err)
+			}
+			if !sameRoundingAllocations(originalAllocations, updatedAllocations) {
+				return fmt.Errorf("invoice allocation cannot be changed after a rounding request is submitted; reject and recreate it instead")
+			}
+		}
+		if originalStatus == models.PaymentStatusPendingAccounting &&
+			normalizeCustomerSettlementTreatment(payment.SettlementTreatment) == models.PaymentSettlementRounding &&
+			payment.UserID == actorUserID {
+			return fmt.Errorf("rounding settlement must be reviewed by Accounting other than the payment creator")
+		}
+		if originalStatus == models.PaymentStatusPendingAccounting &&
+			(normalizeCustomerSettlementTreatment(originalPayment.SettlementTreatment) == models.PaymentSettlementRounding ||
+				normalizeCustomerSettlementTreatment(payment.SettlementTreatment) == models.PaymentSettlementRounding) {
+			if err := requireRoundingReviewerRole(tx, actorUserID); err != nil {
+				return err
+			}
 		}
 		if originalStatus == models.PaymentStatusPendingAccounting {
 			now := time.Now()
@@ -1512,6 +1671,18 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			return fmt.Errorf("cash/bank account not found: %w", err)
 		}
 		normalizedCurrency := normalizeCashBankCurrency(cashBank.Currency)
+		var customerSettlement *customerSettlementPlan
+		if strings.EqualFold(strings.TrimSpace(contact.Type), "CUSTOMER") {
+			customerSettlement, err = eps.planCustomerSettlement(tx, req, contact)
+			if err != nil {
+				return err
+			}
+			// The threshold is defined in IDR. Foreign-currency differences must
+			// remain open or be recorded as customer advance.
+			if customerSettlement.RequiresApproval && normalizedCurrency != "IDR" {
+				return fmt.Errorf("rounding settlement is currently only available for IDR cash/bank receipts")
+			}
+		}
 
 		// Step 3: Auto-detect payment method if needed
 		if req.Method == "" {
@@ -1540,7 +1711,15 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 				nativeAmount = req.Amount / req.ExchangeRate
 				bookAmountIDR = req.Amount
 			}
-			forexDiff := bookAmountIDR - receivableSettlementBookIDR
+			allocatedAmount := req.Amount
+			if customerSettlement != nil && customerSettlement.InvoiceSettlementAmount < allocatedAmount {
+				allocatedAmount = customerSettlement.InvoiceSettlementAmount
+			}
+			allocatedBankBookAmount := bookAmountIDR
+			if req.Amount > customerSettlementTolerance {
+				allocatedBankBookAmount = bookAmountIDR * (allocatedAmount / req.Amount)
+			}
+			forexDiff := allocatedBankBookAmount - receivableSettlementBookIDR
 			if forexDiff > 0.005 {
 				forexGainLossAmount = forexDiff
 				forexGainLossType = "GAIN"
@@ -1577,7 +1756,11 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		var approvedBy *uint
 		var approvedAt *time.Time
 		approvalPending := req.SaveAsDraft
-		if req.RequestedByFinanceManager && req.RequireDirectorApproval {
+		if customerSettlement != nil && customerSettlement.RequiresApproval {
+			status = models.PaymentStatusPendingAccounting
+			approvalStage = models.PaymentApprovalStageAccounting
+			approvalPending = true
+		} else if req.RequestedByFinanceManager && req.RequireDirectorApproval {
 			status = models.PaymentStatusPending
 			approvalStage = models.PaymentApprovalStageDirector
 			approvalPending = true
@@ -1611,6 +1794,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			CashBankID:               &cashBankID,
 			Reference:                req.Reference,
 			Notes:                    req.Notes,
+			SettlementTreatment:      models.PaymentSettlementOpenBalance,
 			Status:                   status,
 			ApprovalStage:            approvalStage,
 			RequireDirectorApproval:  req.RequireDirectorApproval,
@@ -1618,6 +1802,12 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			FinanceManagerApprovedAt: financeManagerApprovedAt,
 			ApprovedBy:               approvedBy,
 			ApprovedAt:               approvedAt,
+		}
+		if customerSettlement != nil {
+			payment.SettlementTreatment = customerSettlement.Treatment
+			payment.SettlementDifference = customerSettlement.Difference
+			payment.SettlementReason = strings.TrimSpace(req.SettlementReason)
+			payment.RoundingThreshold = customerSettlement.RoundingThreshold
 		}
 		snapshot, snapshotErr := loadCashBankSnapshot(tx, cashBankID)
 		if snapshotErr != nil {
@@ -1647,6 +1837,7 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 
 		// Step 5: Create SSOT journal entry directly (bypass disabled PaymentJournalFactory)
 		// Only create journal if AutoCreateJournal is true AND SaveAsDraft is false
+		var postedJournalEntryID *uint64
 		if req.AutoCreateJournal && !approvalPending {
 			var journalLines []JournalLineRequest
 			var journalDescription string
@@ -1664,31 +1855,22 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			}
 
 			if contact.Type == "CUSTOMER" {
-				// Receivable Payment Journal: Debit Cash/Bank, Credit Piutang Usaha
-				arAccountID, arErr := eps.resolveReceivableAccountID(tx)
-				if arErr != nil {
-					return fmt.Errorf("failed to resolve accounts receivable: %w", arErr)
+				allocatedAmount := req.Amount
+				if customerSettlement != nil && customerSettlement.InvoiceSettlementAmount < allocatedAmount {
+					allocatedAmount = customerSettlement.InvoiceSettlementAmount
 				}
-				journalLines = []JournalLineRequest{
-					{
-						AccountID:    uint64(cashBank.AccountID),
-						DebitAmount:  decimal.NewFromFloat(bankBookAmount),
-						CreditAmount: decimal.Zero,
-						Description:  fmt.Sprintf("Payment received from %s - %s", contact.Name, payment.Code),
-					},
-					{
-						AccountID:    arAccountID,
-						DebitAmount:  decimal.Zero,
-						CreditAmount: decimal.NewFromFloat(receivableSettlementBookIDR),
-						Description:  fmt.Sprintf("AR reduction - %s", payment.Code),
-					},
+				var customerJournalErr error
+				journalLines, journalDescription, customerJournalErr = eps.buildCustomerReceiptJournalLines(
+					tx,
+					payment,
+					cashBank,
+					contact.Name,
+					receivableSettlementBookIDR,
+					allocatedAmount,
+				)
+				if customerJournalErr != nil {
+					return customerJournalErr
 				}
-				if fxLine, err := eps.buildRealizedFXJournalLine(tx, bankBookAmount-receivableSettlementBookIDR, false, payment.Code); err != nil {
-					return err
-				} else if fxLine != nil {
-					journalLines = append(journalLines, *fxLine)
-				}
-				journalDescription = fmt.Sprintf("Customer Payment %s - %s", payment.Code, contact.Name)
 
 			} else if contact.Type == "VENDOR" {
 				// Payable Payment Journal: Debit Utang Usaha, Credit Cash/Bank
@@ -1752,6 +1934,8 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 			// Update payment with journal entry ID
 			journalEntryID := uint(journalEntry.ID)
 			payment.JournalEntryID = &journalEntryID
+			journalEntryID64 := journalEntry.ID
+			postedJournalEntryID = &journalEntryID64
 			if err := tx.Save(payment).Error; err != nil {
 				return fmt.Errorf("failed to update payment with journal reference: %w", err)
 			}
@@ -1769,6 +1953,17 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		allocations, err := eps.createPaymentAllocations(tx, payment, req, contact.Type, !approvalPending, true)
 		if err != nil {
 			return fmt.Errorf("failed to create allocations: %w", err)
+		}
+		if !approvalPending && customerSettlement != nil && customerSettlement.CustomerAdvanceAmount > customerSettlementTolerance {
+			if _, err := eps.createCustomerAdvance(
+				tx,
+				payment,
+				customerSettlement,
+				postedJournalEntryID,
+				customerSettlement.primaryInvoiceID,
+			); err != nil {
+				return err
+			}
 		}
 
 		// Step 7: Update payment status
@@ -1796,6 +1991,9 @@ func (eps *EnhancedPaymentServiceWithJournal) CreatePaymentWithJournal(req *Paym
 		response.Contact = contact
 		response.CashBank = cashBank
 		response.Allocations = allocations
+		if customerSettlement != nil {
+			response.Settlement = &customerSettlement.CustomerPaymentSettlementSummary
+		}
 		response.Success = true
 		response.Message = fmt.Sprintf("Payment %s created successfully", payment.Code)
 
@@ -1920,7 +2118,7 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 	err := eps.db.Transaction(func(tx *gorm.DB) error {
 		// Get payment
 		var payment models.Payment
-		if err := tx.First(&payment, paymentID).Error; err != nil {
+		if err := tx.Preload("Contact").First(&payment, paymentID).Error; err != nil {
 			return fmt.Errorf("payment not found: %w", err)
 		}
 
@@ -1943,44 +2141,44 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 			// Load original journal entry with lines
 			var originalJournal models.SSOTJournalEntry
 			if err := tx.Preload("Lines").First(&originalJournal, *payment.JournalEntryID).Error; err != nil {
-				log.Printf("⚠️ Warning: Could not load original journal entry %d for reversal: %v", *payment.JournalEntryID, err)
-			} else {
-				// Build reversed journal lines (swap debit/credit)
-				var reversalLines []JournalLineRequest
-				for _, line := range originalJournal.Lines {
-					reversalLines = append(reversalLines, JournalLineRequest{
-						AccountID:    line.AccountID,
-						DebitAmount:  line.CreditAmount, // swap
-						CreditAmount: line.DebitAmount,  // swap
-						Description:  fmt.Sprintf("Reversal - %s", line.Description),
-					})
-				}
+				return fmt.Errorf("load original journal entry %d for reversal: %w", *payment.JournalEntryID, err)
+			}
 
-				if len(reversalLines) >= 2 {
-					reversalRequest := &JournalEntryRequest{
-						SourceType:  models.SSOTSourceTypePayment,
-						SourceID:    uint64(payment.ID),
-						Reference:   fmt.Sprintf("REV-%s", payment.Code),
-						EntryDate:   reversalDate,
-						Description: fmt.Sprintf("Reversal of %s - %s", payment.Code, reason),
-						Lines:       reversalLines,
-						AutoPost:    true,
-						CreatedBy:   uint64(userID),
-					}
+			// Build reversed journal lines (swap debit/credit).
+			var reversalLines []JournalLineRequest
+			for _, line := range originalJournal.Lines {
+				reversalLines = append(reversalLines, JournalLineRequest{
+					AccountID:    line.AccountID,
+					DebitAmount:  line.CreditAmount, // swap
+					CreditAmount: line.DebitAmount,  // swap
+					Description:  fmt.Sprintf("Reversal - %s", line.Description),
+				})
+			}
+			if len(reversalLines) < 2 {
+				return fmt.Errorf("original journal entry %d has insufficient lines for reversal", *payment.JournalEntryID)
+			}
 
-					journalService := NewUnifiedJournalService(tx)
-					reversalEntry, revErr := journalService.CreateJournalEntryWithTx(tx, reversalRequest)
-					if revErr != nil {
-						log.Printf("⚠️ Warning: Failed to create reversal journal entry: %v", revErr)
-					} else {
-						log.Printf("✅ Reversal journal created: ID=%d", reversalEntry.ID)
-						journalResult = &PaymentJournalResult{
-							Success:      true,
-							JournalEntry: reversalEntry,
-							Message:      fmt.Sprintf("Reversal journal %s created", reversalEntry.EntryNumber),
-						}
-					}
-				}
+			reversalRequest := &JournalEntryRequest{
+				SourceType:  models.SSOTSourceTypePayment,
+				SourceID:    uint64(payment.ID),
+				Reference:   fmt.Sprintf("REV-%s", payment.Code),
+				EntryDate:   reversalDate,
+				Description: fmt.Sprintf("Reversal of %s - %s", payment.Code, reason),
+				Lines:       reversalLines,
+				AutoPost:    true,
+				CreatedBy:   uint64(userID),
+			}
+
+			journalService := NewUnifiedJournalService(tx)
+			reversalEntry, revErr := journalService.CreateJournalEntryWithTx(tx, reversalRequest)
+			if revErr != nil {
+				return fmt.Errorf("create reversal journal entry: %w", revErr)
+			}
+			log.Printf("✅ Reversal journal created: ID=%d", reversalEntry.ID)
+			journalResult = &PaymentJournalResult{
+				Success:      true,
+				JournalEntry: reversalEntry,
+				Message:      fmt.Sprintf("Reversal journal %s created", reversalEntry.EntryNumber),
 			}
 		}
 
@@ -1997,6 +2195,9 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 				return err
 			}
 		}
+		if err := eps.cancelCustomerSettlementForReversal(tx, &payment, reason); err != nil {
+			return err
+		}
 
 		// Reverse Cash & Bank movement to keep balances in sync.
 		// The Payment model does not store CashBankID, so we look up the
@@ -2006,82 +2207,91 @@ func (eps *EnhancedPaymentServiceWithJournal) ReversePayment(paymentID uint, rea
 			[]string{"PAYMENT", "PAYMENT_RECEIVED", "PAYMENT_MADE"}).
 			Order("id DESC").First(&originalCBTx).Error
 		if cbTxErr != nil {
-			log.Printf("⚠️ Warning: Could not find original CashBankTransaction for payment %d: %v", payment.ID, cbTxErr)
-		} else {
-			guard := NewCashBankCurrencyGuard(eps.db)
-			if err := guard.EnforceAfterTransaction(tx, originalCBTx.CashBankID); err != nil {
-				return fmt.Errorf("failed to sync cash/bank state before reversal: %w", err)
-			}
-			var cashBank models.CashBank
-			if err := tx.First(&cashBank, originalCBTx.CashBankID).Error; err != nil {
-				log.Printf("⚠️ Warning: Could not find cash/bank account %d for reversal: %v", originalCBTx.CashBankID, err)
-			} else {
-				// The original movement amount is stored on the CashBankTransaction.
-				// To reverse, we simply negate it.
-				reverseMovement := -originalCBTx.Amount
-				reverseBookAmountIDR := -originalCBTx.BookAmountIDR
-				refType := "PAYMENT_REVERSAL"
+			return fmt.Errorf("load original cash/bank movement for payment %d: %w", payment.ID, cbTxErr)
+		}
 
-				newBalance := cashBank.Balance + reverseMovement
-				newBookBalanceIDR := cashBank.BookBalanceIDR + reverseBookAmountIDR
-				if !cashBank.IsForeignCurrency() {
-					newBookBalanceIDR = newBalance
-				}
-				cashBank.Balance = newBalance
-				if cashBank.IsForeignCurrency() {
-					cashBank.BookBalanceIDR = newBookBalanceIDR
-					if originalCBTx.ExchangeRate > 0 {
-						cashBank.LastExchangeRate = originalCBTx.ExchangeRate
-					}
-				}
-				if err := tx.Save(&cashBank).Error; err != nil {
-					return fmt.Errorf("failed to reverse cash/bank balance: %w", err)
-				}
+		guard := NewCashBankCurrencyGuard(eps.db)
+		if err := guard.EnforceAfterTransaction(tx, originalCBTx.CashBankID); err != nil {
+			return fmt.Errorf("failed to sync cash/bank state before reversal: %w", err)
+		}
+		var cashBank models.CashBank
+		if err := tx.First(&cashBank, originalCBTx.CashBankID).Error; err != nil {
+			return fmt.Errorf("load cash/bank account %d for reversal: %w", originalCBTx.CashBankID, err)
+		}
 
-				// ✅ CRITICAL: Sync linked COA account balance after reversal
-				if cashBank.AccountID > 0 {
-					if err := tx.Exec("UPDATE accounts SET balance = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL",
-						cashBank.EffectiveBookBalanceIDR(), cashBank.AccountID).Error; err != nil {
-						log.Printf("⚠️ Warning: Failed to sync COA balance for GL account %d on reversal: %v", cashBank.AccountID, err)
-					} else {
-						log.Printf("🔄 Synced COA balance for GL account %d to %.2f (reversal)", cashBank.AccountID, newBalance)
-					}
-				}
+		// The original movement amount is stored on the CashBankTransaction.
+		// To reverse, we simply negate it.
+		reverseMovement := -originalCBTx.Amount
+		reverseBookAmountIDR := -originalCBTx.BookAmountIDR
+		refType := "PAYMENT_REVERSAL"
 
-				// Insert reversal transaction row for Cash & Bank UI/history
-				txRow := &models.CashBankTransaction{
-					CashBankID:      cashBank.ID,
-					ReferenceType:   refType,
-					ReferenceID:     payment.ID,
-					Amount:          reverseMovement,
-					Currency:        originalCBTx.Currency,
-					ExchangeRate:    originalCBTx.ExchangeRate,
-					BookAmountIDR:   reverseBookAmountIDR,
-					BalanceAfter:    newBalance,
-					TransactionDate: reversalDate,
-					Notes:           fmt.Sprintf("%s %s - Reversal: %s", refType, payment.Code, reason),
-				}
-				if err := tx.Create(txRow).Error; err != nil {
-					return fmt.Errorf("failed to create reversal cashbank transaction: %w", err)
-				}
-
-				if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
-					return fmt.Errorf("failed to enforce cash/bank invariant after reversal: %w", err)
-				}
-
-				var syncedCashBank models.CashBank
-				if err := tx.First(&syncedCashBank, cashBank.ID).Error; err != nil {
-					return fmt.Errorf("failed to reload cash/bank after reversal: %w", err)
-				}
-				if math.Abs(txRow.BalanceAfter-syncedCashBank.Balance) > 0.01 {
-					if err := tx.Model(txRow).Update("balance_after", syncedCashBank.Balance).Error; err != nil {
-						return fmt.Errorf("failed to align reversal transaction balance_after: %w", err)
-					}
-				}
-
-				log.Printf("✅ Cash/Bank balance reversed for account %d: movement=%.2f, newBalance=%.2f", cashBank.ID, reverseMovement, newBalance)
+		newBalance := cashBank.Balance + reverseMovement
+		newBookBalanceIDR := cashBank.BookBalanceIDR + reverseBookAmountIDR
+		if !cashBank.IsForeignCurrency() {
+			newBookBalanceIDR = newBalance
+		}
+		cashBank.Balance = newBalance
+		if cashBank.IsForeignCurrency() {
+			cashBank.BookBalanceIDR = newBookBalanceIDR
+			if originalCBTx.ExchangeRate > 0 {
+				cashBank.LastExchangeRate = originalCBTx.ExchangeRate
 			}
 		}
+		if err := tx.Save(&cashBank).Error; err != nil {
+			return fmt.Errorf("failed to reverse cash/bank balance: %w", err)
+		}
+
+		// Keep the linked COA synchronized inside the same transaction. Any
+		// failure aborts the entire reversal so status, subledger, journal, and
+		// cash/bank cannot diverge.
+		if cashBank.AccountID > 0 {
+			result := tx.Model(&models.Account{}).
+				Where("id = ? AND deleted_at IS NULL", cashBank.AccountID).
+				Updates(map[string]interface{}{
+					"balance":    cashBank.EffectiveBookBalanceIDR(),
+					"updated_at": time.Now(),
+				})
+			if result.Error != nil {
+				return fmt.Errorf("sync COA balance for GL account %d on reversal: %w", cashBank.AccountID, result.Error)
+			}
+			if result.RowsAffected != 1 {
+				return fmt.Errorf("sync COA balance for GL account %d on reversal: linked account was not found", cashBank.AccountID)
+			}
+			log.Printf("🔄 Synced COA balance for GL account %d to %.2f (reversal)", cashBank.AccountID, newBalance)
+		}
+
+		// Insert reversal transaction row for Cash & Bank UI/history
+		txRow := &models.CashBankTransaction{
+			CashBankID:      cashBank.ID,
+			ReferenceType:   refType,
+			ReferenceID:     payment.ID,
+			Amount:          reverseMovement,
+			Currency:        originalCBTx.Currency,
+			ExchangeRate:    originalCBTx.ExchangeRate,
+			BookAmountIDR:   reverseBookAmountIDR,
+			BalanceAfter:    newBalance,
+			TransactionDate: reversalDate,
+			Notes:           fmt.Sprintf("%s %s - Reversal: %s", refType, payment.Code, reason),
+		}
+		if err := tx.Create(txRow).Error; err != nil {
+			return fmt.Errorf("failed to create reversal cashbank transaction: %w", err)
+		}
+
+		if err := guard.EnforceAfterTransaction(tx, cashBank.ID); err != nil {
+			return fmt.Errorf("failed to enforce cash/bank invariant after reversal: %w", err)
+		}
+
+		var syncedCashBank models.CashBank
+		if err := tx.First(&syncedCashBank, cashBank.ID).Error; err != nil {
+			return fmt.Errorf("failed to reload cash/bank after reversal: %w", err)
+		}
+		if math.Abs(txRow.BalanceAfter-syncedCashBank.Balance) > 0.01 {
+			if err := tx.Model(txRow).Update("balance_after", syncedCashBank.Balance).Error; err != nil {
+				return fmt.Errorf("failed to align reversal transaction balance_after: %w", err)
+			}
+		}
+
+		log.Printf("✅ Cash/Bank balance reversed for account %d: movement=%.2f, newBalance=%.2f", cashBank.ID, reverseMovement, newBalance)
 
 		response = &PaymentWithJournalResponse{
 			Payment:       &payment,
@@ -2480,12 +2690,12 @@ func (eps *EnhancedPaymentServiceWithJournal) calculateReceivableSettlementBookA
 	}
 
 	if !hasAllocation {
-		return req.Amount, nil
-	}
-	if remainingAmount > 0 {
-		totalSettlementBookIDR += remainingAmount
+		return 0, nil
 	}
 
+	// Any remaining receipt is not AR settlement. The caller must classify it
+	// as customer advance (or, only after approval, rounding) so AR never
+	// receives an unsupported excess credit.
 	return totalSettlementBookIDR, nil
 }
 
@@ -2542,6 +2752,9 @@ func (eps *EnhancedPaymentServiceWithJournal) applyStoredDraftAllocations(
 			}
 			if err := eps.updateSaleOutstanding(tx, sale.ID, appliedAmount); err != nil {
 				return nil, fmt.Errorf("failed to apply invoice allocation: %w", err)
+			}
+			if err := eps.ensureSalePaymentRecord(tx, payment, sale.ID, appliedAmount); err != nil {
+				return nil, err
 			}
 
 		case "VENDOR":
@@ -2736,6 +2949,9 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				if err := tx.First(&sale, *alloc.InvoiceID).Error; err != nil {
 					return nil, fmt.Errorf("invoice %d not found: %w", *alloc.InvoiceID, err)
 				}
+				if sale.CustomerID != payment.ContactID {
+					return nil, fmt.Errorf("invoice %d does not belong to this customer", sale.ID)
+				}
 
 				// Validate status
 				if err := eps.statusValidator.ValidatePaymentAllocation(sale.Status, *alloc.InvoiceID); err != nil {
@@ -2770,7 +2986,10 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				// Update sale outstanding
 				if applyOutstanding {
 					if err := eps.updateSaleOutstanding(tx, *alloc.InvoiceID, allocatedAmount); err != nil {
-						log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
+						return nil, fmt.Errorf("failed to update sale outstanding: %w", err)
+					}
+					if err := eps.ensureSalePaymentRecord(tx, payment, sale.ID, allocatedAmount); err != nil {
+						return nil, err
 					}
 				}
 
@@ -2789,11 +3008,19 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 				log.Printf("❌ Payment allocation blocked: %v", err)
 				return nil, err
 			}
+			if sale.CustomerID != payment.ContactID {
+				return nil, fmt.Errorf("invoice %d does not belong to this customer", sale.ID)
+			}
+
+			allocatedAmount := payment.Amount
+			if allocatedAmount > sale.OutstandingAmount {
+				allocatedAmount = sale.OutstandingAmount
+			}
 
 			allocation := models.PaymentAllocation{
 				PaymentID:       uint64(payment.ID),
 				InvoiceID:       req.TargetInvoiceID,
-				AllocatedAmount: payment.Amount,
+				AllocatedAmount: allocatedAmount,
 			}
 
 			if err := tx.Create(&allocation).Error; err != nil {
@@ -2803,8 +3030,11 @@ func (eps *EnhancedPaymentServiceWithJournal) createPaymentAllocations(
 			allocations = append(allocations, allocation)
 
 			if applyOutstanding {
-				if err := eps.updateSaleOutstanding(tx, *req.TargetInvoiceID, payment.Amount); err != nil {
-					log.Printf("⚠️ Warning: Failed to update sale outstanding: %v", err)
+				if err := eps.updateSaleOutstanding(tx, *req.TargetInvoiceID, allocatedAmount); err != nil {
+					return nil, fmt.Errorf("failed to update sale outstanding: %w", err)
+				}
+				if err := eps.ensureSalePaymentRecord(tx, payment, sale.ID, allocatedAmount); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -2939,8 +3169,10 @@ func (eps *EnhancedPaymentServiceWithJournal) updateSaleOutstanding(tx *gorm.DB,
 	sale.PaidAmount += paidAmount
 	sale.OutstandingAmount -= paidAmount
 
-	// Update status if fully paid
-	if sale.OutstandingAmount <= 0.01 { // Allow small rounding differences
+	// Only normalize insignificant floating-point residue. A real small
+	// difference (for example Rp15 or Rp500) stays open until it goes through
+	// the approved rounding workflow and receives its balancing journal line.
+	if sale.OutstandingAmount <= customerSettlementTolerance {
 		sale.Status = models.SaleStatusPaid
 		sale.OutstandingAmount = 0 // Ensure exact zero
 	}

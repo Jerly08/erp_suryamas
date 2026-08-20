@@ -39,6 +39,8 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
+  Radio,
+  RadioGroup,
   Checkbox,
   Switch,
   Card,
@@ -105,6 +107,8 @@ interface OutstandingItem {
   exchange_rate?: number;
   due_date?: string;
 }
+
+type CustomerSettlementTreatment = 'OPEN_BALANCE' | 'CUSTOMER_ADVANCE' | 'ROUNDING';
 
 const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Cash', icon: FiDollarSign },
@@ -387,6 +391,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const [showAuthExpired, setShowAuthExpired] = useState(false);
   const [referenceRate, setReferenceRate] = useState<ReferenceExchangeRate | null>(null);
   const [exchangeRateEdited, setExchangeRateEdited] = useState(false);
+  const [settlementTreatment, setSettlementTreatment] = useState<CustomerSettlementTreatment>('OPEN_BALANCE');
+  const [settlementReason, setSettlementReason] = useState('');
   const { user } = useAuth();
 
   // Color mode values
@@ -459,11 +465,59 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     }
     return (allocation as BillAllocation).bill_id === item.id;
   }));
+  const receiptAmount = watchedAmount || 0;
+  const receivableAllocationTotal = type === 'receivable'
+    ? allocations.reduce((sum, allocation) => sum + allocation.amount, 0)
+    : 0;
+  const selectedInvoiceForSettlement = type === 'receivable' && allocations.length === 1
+    ? outstandingItems.find(item => item.id === (allocations[0] as PaymentAllocation).invoice_id)
+    : undefined;
+  const excessReceiptAmount = Math.max(0, receiptAmount - receivableAllocationTotal);
+  const singleInvoiceShortfallAmount = selectedInvoiceForSettlement && receiptAmount < selectedInvoiceForSettlement.outstanding_amount
+    ? selectedInvoiceForSettlement.outstanding_amount - receiptAmount
+    : 0;
+  const settlementDifference = excessReceiptAmount > 0.005
+    ? excessReceiptAmount
+    : singleInvoiceShortfallAmount > 0.005
+      ? -singleInvoiceShortfallAmount
+      : 0;
+  const hasSettlementDifference = type === 'receivable' && Math.abs(settlementDifference) > 0.005;
+  const isOverpayment = settlementDifference > 0.005;
+  const canRequestRounding = !!selectedInvoiceForSettlement &&
+    Math.abs(settlementDifference) > 0.005 &&
+    (selectedInvoiceForSettlement.currency || 'IDR').toUpperCase() === 'IDR' &&
+    selectedCashBankCurrency === 'IDR';
   const hasUsdReceivableSelection = type === 'receivable' && selectedAllocationItems.some(item => (item.currency || 'IDR').toUpperCase() === 'USD');
   const requiresFxRate = type === 'payable'
     ? selectedCashBankCurrency === 'USD'
     : selectedCashBankCurrency === 'USD' || hasUsdReceivableSelection;
   const shouldHideForm = !userRole && !!user;
+
+  useEffect(() => {
+    if (!isOpen || type !== 'receivable') {
+      return;
+    }
+    if (!hasSettlementDifference) {
+      if (!initialData?.id) {
+        setSettlementTreatment('OPEN_BALANCE');
+      }
+      return;
+    }
+
+    setSettlementTreatment((current) => {
+      if (current === 'ROUNDING' && canRequestRounding) {
+        return current;
+      }
+      return isOverpayment ? 'CUSTOMER_ADVANCE' : 'OPEN_BALANCE';
+    });
+  }, [
+    canRequestRounding,
+    hasSettlementDifference,
+    initialData?.id,
+    isOpen,
+    isOverpayment,
+    type,
+  ]);
 
   // Load initial data and force refresh on modal open
   useEffect(() => {
@@ -475,6 +529,10 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       // Clear previous data first
       setOutstandingItems([]);
       setAllocations([]);
+      setSettlementTreatment(
+        (initialData?.settlement_treatment as CustomerSettlementTreatment) || 'OPEN_BALANCE',
+      );
+      setSettlementReason(initialData?.settlement_reason || '');
 
       if (initialData) {
         // Editing an existing payment: populate form fields
@@ -508,6 +566,8 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       console.log('AdvancedPaymentForm - Modal closed, clearing state');
       setOutstandingItems([]);
       setAllocations([]);
+      setSettlementTreatment('OPEN_BALANCE');
+      setSettlementReason('');
       reset(); // Reset form values
     }
   }, [isOpen, preSelectedContact?.id, initialData?.id, setValue, reset]);
@@ -774,6 +834,27 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         return;
       }
 
+      if (type === 'receivable' && settlementTreatment === 'ROUNDING') {
+        if (!hasSettlementDifference || !canRequestRounding) {
+          toast({
+            title: 'Pembulatan tidak dapat diajukan',
+            description: 'Pembulatan hanya dapat diajukan untuk satu invoice IDR dengan selisih nominal penerimaan.',
+            status: 'warning',
+            duration: 5000,
+          });
+          return;
+        }
+        if (!settlementReason.trim()) {
+          toast({
+            title: 'Alasan pengajuan wajib diisi',
+            description: 'Accounting memerlukan alasan untuk memeriksa pengajuan pembulatan.',
+            status: 'warning',
+            duration: 5000,
+          });
+          return;
+        }
+      }
+
       const paymentData: PaymentCreateRequest = {
         contact_id: data.contact_id,
         cash_bank_id: data.cash_bank_id,
@@ -789,6 +870,12 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       // Add allocations
       if (type === 'receivable') {
         paymentData.allocations = allocations as PaymentAllocation[];
+        paymentData.settlement_treatment = hasSettlementDifference
+          ? settlementTreatment
+          : 'OPEN_BALANCE';
+        paymentData.settlement_reason = settlementTreatment === 'ROUNDING'
+          ? settlementReason.trim()
+          : '';
       } else {
         paymentData.bill_allocations = allocations as BillAllocation[];
       }
@@ -869,9 +956,17 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       }
 
       const wasSubmittedForApproval = !initialData?.id && result?.status === 'DRAFT';
+      const isPendingRounding = !initialData?.id &&
+        result?.status === 'PENDING_ACCOUNTING' &&
+        result?.settlement?.treatment === 'ROUNDING';
+      const customerAdvanceAmount = result?.settlement?.customer_advance_amount || 0;
       toast({
         title: 'Success',
-        description: wasSubmittedForApproval
+        description: isPendingRounding
+          ? 'Pengajuan pembulatan sudah dikirim ke Accounting, lalu menunggu persetujuan akhir Finance Manager.'
+          : customerAdvanceAmount > 0
+            ? `Penerimaan tersimpan. Kelebihan ${paymentService.formatCurrency(customerAdvanceAmount)} dicatat sebagai Uang Muka Pelanggan.`
+          : wasSubmittedForApproval
           ? `${type === 'receivable' ? 'Receivable' : 'Payable'} payment submitted for finance manager approval`
           : !initialData?.id && result?.status === 'PENDING'
             ? `${type === 'receivable' ? 'Receivable' : 'Payable'} payment submitted for director approval`
@@ -1281,6 +1376,68 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                             </FormControl>
                           </SimpleGrid>
 
+                          {type === 'receivable' && hasSettlementDifference && (
+                            <Box mt={4} borderWidth="1px" borderRadius="md" p={4} bg={isOverpayment ? 'blue.50' : 'orange.50'}>
+                              <Alert status={isOverpayment ? 'info' : 'warning'} borderRadius="md" alignItems="flex-start">
+                                <AlertIcon mt={1} />
+                                <AlertDescription>
+                                  <Text fontWeight="semibold">
+                                    {isOverpayment
+                                      ? `Lebih bayar ${paymentService.formatCurrency(Math.abs(settlementDifference))}`
+                                      : `Kurang bayar ${paymentService.formatCurrency(Math.abs(settlementDifference))}`}
+                                  </Text>
+                                  <Text fontSize="sm" mt={1}>
+                                    Nominal invoice tidak diubah. Penerimaan bank dicatat sesuai nominal aktual.
+                                  </Text>
+                                </AlertDescription>
+                              </Alert>
+
+                              <RadioGroup
+                                mt={3}
+                                value={settlementTreatment}
+                                onChange={(value) => setSettlementTreatment(value as CustomerSettlementTreatment)}
+                              >
+                                <VStack align="start" spacing={2}>
+                                  {isOverpayment ? (
+                                    <Radio value="CUSTOMER_ADVANCE">
+                                      Simpan sebagai Uang Muka Pelanggan (default)
+                                    </Radio>
+                                  ) : (
+                                    <Radio value="OPEN_BALANCE">
+                                      Biarkan sebagai sisa piutang (default)
+                                    </Radio>
+                                  )}
+                                  {canRequestRounding && (
+                                    <Radio value="ROUNDING">
+                                      Ajukan tutup sebagai pembulatan kecil
+                                    </Radio>
+                                  )}
+                                </VStack>
+                              </RadioGroup>
+
+                              {!canRequestRounding && (
+                                <Text fontSize="xs" color={textColor} mt={3}>
+                                  Pembulatan hanya tersedia untuk satu invoice dan rekening penerimaan IDR. Selisih lebih bayar tetap disimpan sebagai uang muka pelanggan.
+                                </Text>
+                              )}
+
+                              {settlementTreatment === 'ROUNDING' && (
+                                <FormControl isRequired mt={3}>
+                                  <FormLabel fontSize="sm">Alasan pengajuan pembulatan</FormLabel>
+                                  <Textarea
+                                    value={settlementReason}
+                                    onChange={(event) => setSettlementReason(event.target.value)}
+                                    placeholder="Contoh: transfer petani dibulatkan sesuai mutasi bank"
+                                    rows={2}
+                                  />
+                                  <Text fontSize="xs" color={textColor} mt={1}>
+                                    Pengajuan akan direview Accounting lalu diposting setelah persetujuan akhir Finance Manager.
+                                  </Text>
+                                </FormControl>
+                              )}
+                            </Box>
+                          )}
+
                           {requiresFxRate && (
                             <Box mt={4} borderWidth="1px" borderRadius="md" p={4} bg="blue.50">
                               <Input type="hidden" {...register('exchange_rate', { valueAsNumber: true })} />
@@ -1554,9 +1711,3 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
 };
 
 export default AdvancedPaymentForm;
-
-
-
-
-
-

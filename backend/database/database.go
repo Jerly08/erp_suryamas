@@ -711,6 +711,7 @@ func AutoMigrate(db *gorm.DB) {
 		&models.CashBankFrozenHistory{},
 		&models.Payment{},
 		&models.PaymentAllocation{},
+		&models.CustomerAdvance{},
 		&models.PurchasePayment{},
 		&models.PostedTransactionCorrection{},
 		&models.PostedTransactionCorrectionDocument{},
@@ -793,6 +794,10 @@ func AutoMigrate(db *gorm.DB) {
 	if err != nil {
 		log.Printf("Failed to migrate core models: %v", err)
 		log.Fatal("Stopping migration due to error")
+	}
+
+	if err := EnsureCustomerSettlementAccounts(db); err != nil {
+		log.Printf("⚠️ Customer settlement COA migration warning: %v", err)
 	}
 
 	log.Println("Core models migration completed successfully")

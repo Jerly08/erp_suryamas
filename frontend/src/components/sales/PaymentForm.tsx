@@ -13,9 +13,12 @@ import {
   FormControl,
   FormLabel,
   FormErrorMessage,
+	FormHelperText,
   Input,
   Select,
   Textarea,
+	Radio,
+	RadioGroup,
   VStack,
   HStack,
   Text,
@@ -66,6 +69,11 @@ interface PaymentFormData {
   notes: string;
 }
 
+type SettlementTreatment =
+  | "OPEN_BALANCE"
+  | "CUSTOMER_ADVANCE"
+  | "ROUNDING";
+
 const PaymentForm: React.FC<PaymentFormProps> = ({
   isOpen,
   onClose,
@@ -86,6 +94,9 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   const [manualRateOverride, setManualRateOverride] = useState(false);
   const [detailedSale, setDetailedSale] = useState<Sale | null>(null);
   const [loadingSaleDetail, setLoadingSaleDetail] = useState(false);
+	const [settlementTreatment, setSettlementTreatment] =
+		useState<SettlementTreatment>("OPEN_BALANCE");
+	const [settlementReason, setSettlementReason] = useState("");
   const toast = useToast();
   const modalBg = useColorModeValue("white", "gray.800");
   const modalHeaderBg = useColorModeValue("gray.50", "gray.700");
@@ -130,6 +141,12 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
     sale && !hasOutstandingAmount
       ? t("sales.detail.paymentNoOutstanding")
       : t("sales.detail.paymentRequiresInvoice");
+	const invoiceOutstanding = sale?.outstanding_amount || 0;
+	const settlementDifference = (watchAmount || 0) - invoiceOutstanding;
+	const hasSettlementDifference = Math.abs(settlementDifference) > 0.005;
+	const isOverpayment = settlementDifference > 0.005;
+	const isUnderpayment = settlementDifference < -0.005;
+	const invoiceSettlementAmount = Math.min(watchAmount || 0, invoiceOutstanding);
 
   const selectedAccount = accounts.find(
     (account) => account.id === watchAccountID,
@@ -139,6 +156,8 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   ).toUpperCase();
   const isUsdAccount = selectedAccountCurrency === "USD";
   const saleCurrency = (sale?.currency || "IDR").toUpperCase();
+  const canRequestRounding =
+    saleCurrency === "IDR" && selectedAccountCurrency === "IDR";
   const requiresExchangeRate = saleCurrency === "USD" || isUsdAccount;
   const currentBookBalanceIDR = selectedAccount
     ? getBookBalanceInIDR(selectedAccount)
@@ -148,17 +167,26 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
     requiresExchangeRate && appliedExchangeRate > 0
       ? (watchAmount || 0) / appliedExchangeRate
       : watchAmount || 0;
+	const allocatedNativeAmount =
+		requiresExchangeRate && appliedExchangeRate > 0
+			? invoiceSettlementAmount / appliedExchangeRate
+			: invoiceSettlementAmount;
   const bankBookAmountIDR = watchAmount || 0;
+	const allocatedBankBookAmountIDR =
+		watchAmount && watchAmount > 0
+			? bankBookAmountIDR * (invoiceSettlementAmount / watchAmount)
+			: 0;
   const endingBookBalanceIDR = currentBookBalanceIDR + bankBookAmountIDR;
   const saleHistoricalRate =
     saleCurrency === "USD" && (sale?.exchange_rate || 0) > 0
       ? sale?.exchange_rate || 1
       : 1;
   const receivableSettlementBookIDR =
-    saleCurrency === "USD" && appliedExchangeRate > 0
-      ? incomingNativeAmount * saleHistoricalRate
-      : watchAmount || 0;
-  const estimatedForexDiff = bankBookAmountIDR - receivableSettlementBookIDR;
+	 saleCurrency === "USD" && appliedExchangeRate > 0
+		? allocatedNativeAmount * saleHistoricalRate
+		: invoiceSettlementAmount;
+	const estimatedForexDiff =
+		allocatedBankBookAmountIDR - receivableSettlementBookIDR;
   const estimatedForexType =
     estimatedForexDiff > 0.005
       ? "LABA KURS"
@@ -266,8 +294,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
   };
 
   const applyQuickAmount = (rawAmount: number) => {
-    const maxOutstanding = sale?.outstanding_amount || 0;
-    const nextAmount = Math.max(0, Math.min(rawAmount || 0, maxOutstanding));
+    const nextAmount = Math.max(0, rawAmount || 0);
     setValue("amount", nextAmount, {
       shouldDirty: true,
       shouldValidate: true,
@@ -288,12 +315,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
 
     const numericValue = parseRupiah(inputValue);
 
-    // Validate max amount
-    if (sale && numericValue > sale.outstanding_amount) {
-      return; // Don't allow amount greater than outstanding
-    }
-
-    // Update form value
+	// Update form value
     setValue("amount", numericValue);
 
     // Update display value
@@ -344,13 +366,32 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
       setValue("method", "BANK_TRANSFER");
       setValue("account_id", 0);
       setValue("exchange_rate", 1);
-      setValue("reference", "");
-      setValue("notes", "");
+		setValue("reference", "");
+		setValue("notes", "");
+		setSettlementTreatment("OPEN_BALANCE");
+		setSettlementReason("");
 
       // Load accounts for payment
       loadAccounts();
     }
-  }, [sale, isOpen, setValue]);
+	}, [sale, isOpen, setValue]);
+
+	useEffect(() => {
+		if (!isOpen || !hasSettlementDifference) {
+			if (!hasSettlementDifference) {
+				setSettlementTreatment("OPEN_BALANCE");
+			}
+			return;
+		}
+
+		// Keep the safe defaults obvious: excess is a customer advance; a
+		// short receipt remains receivable. The user can explicitly request the
+		// separately approved rounding workflow.
+		setSettlementTreatment((current) => {
+			if (current === "ROUNDING" && canRequestRounding) return current;
+			return isOverpayment ? "CUSTOMER_ADVANCE" : "OPEN_BALANCE";
+		});
+	}, [canRequestRounding, hasSettlementDifference, isOpen, isOverpayment]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -579,15 +620,38 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
     try {
       setLoading(true);
 
-      if (!canReceivePayment) {
+	  if (!canReceivePayment) {
         toast({
           title: t("messages.toast.validationError"),
           description: paymentBlockedMessage,
           status: "warning",
           duration: 5000,
         });
-        return;
-      }
+		return;
+	  }
+
+	  if (settlementTreatment === "ROUNDING") {
+		if (!hasSettlementDifference || !canRequestRounding) {
+		  toast({
+			title: "Pembulatan tidak dapat diajukan",
+			description: !hasSettlementDifference
+			  ? "Nominal diterima sudah sama dengan sisa invoice."
+			  : "Pembulatan hanya tersedia untuk invoice dan rekening penerimaan IDR.",
+			status: "warning",
+			duration: 4000,
+		  });
+		  return;
+		}
+		if (!settlementReason.trim()) {
+		  toast({
+			title: t("messages.toast.validationError"),
+			description: "Alasan pengajuan pembulatan wajib diisi.",
+			status: "warning",
+			duration: 4000,
+		  });
+		  return;
+		}
+	  }
 
       // Validate required fields
       if (!data.account_id || data.account_id === 0) {
@@ -600,12 +664,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
         return;
       }
 
-      const targetAccount = accounts.find(
-        (account) => account.id === data.account_id,
-      );
-      const targetCurrency = (targetAccount?.currency || "IDR").toUpperCase();
-
-      if (
+	      if (
         requiresExchangeRate &&
         (!data.exchange_rate || data.exchange_rate <= 0)
       ) {
@@ -634,9 +693,14 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
           ? roundUsdIdrRate(Number(data.exchange_rate), 1)
           : 1,
         reference: data.reference || "", // Ensure it's not undefined
-        cash_bank_id: data.account_id, // Use the selected account ID as cash_bank_id
-        notes: data.notes || "", // Ensure it's not undefined
-      };
+		cash_bank_id: data.account_id, // Use the selected account ID as cash_bank_id
+		notes: data.notes || "", // Ensure it's not undefined
+		settlement_treatment: hasSettlementDifference
+		  ? settlementTreatment
+		  : "OPEN_BALANCE",
+		settlement_reason:
+		  settlementTreatment === "ROUNDING" ? settlementReason.trim() : "",
+	  };
 
       const response = await salesService.createIntegratedPayment(
         sale.id,
@@ -645,14 +709,31 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
       const postedAccountSummary = salesService.formatCashBankSnapshotSummary(
         response.payment,
       );
-      const latestStatus =
-        response.updated_sale?.settlement_status ||
+	  const latestStatus =
+		response.updated_sale?.settlement_status ||
         response.updated_sale?.status ||
         sale.settlement_status ||
         sale.status;
-      const successDescription = postedAccountSummary
-        ? `Pembayaran tersimpan ke ${postedAccountSummary}. Status invoice sekarang ${salesService.getStatusLabel(latestStatus)}.`
-        : `Pembayaran berhasil direkam. Status invoice sekarang ${salesService.getStatusLabel(latestStatus)}.`;
+	  const settlement = response.settlement;
+	  const isPendingRounding =
+		response.payment?.status === "PENDING_ACCOUNTING" &&
+		settlement?.treatment === "ROUNDING";
+	  const settlementDescription =
+		settlement?.treatment === "CUSTOMER_ADVANCE" &&
+		settlement.customer_advance_amount > 0
+		  ? `Kelebihan ${salesService.formatCurrency(settlement.customer_advance_amount)} dicatat sebagai Uang Muka Pelanggan.`
+		  : "";
+	  const successDescription = isPendingRounding
+		? "Pengajuan pembulatan sudah dibuat. Invoice belum ditutup dan menunggu review Accounting lalu persetujuan akhir Finance Manager."
+		: [
+			postedAccountSummary
+			  ? `Pembayaran tersimpan ke ${postedAccountSummary}.`
+			  : "Pembayaran berhasil direkam.",
+			settlementDescription,
+			`Status invoice sekarang ${salesService.getStatusLabel(latestStatus)}.`,
+		  ]
+			.filter(Boolean)
+			.join(" ");
 
       toast({
         title: t("messages.toast.saveSuccess"),
@@ -977,11 +1058,11 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                   <FormErrorMessage>{errors.date?.message}</FormErrorMessage>
                 </FormControl>
 
-                <FormControl isRequired isInvalid={!!errors.amount}>
-                  <FormLabel>
-                    {isUsdAccount
-                      ? "Nominal pelunasan (IDR) *"
-                      : `${t("purchases.payment.amount")} *`}
+				<FormControl isRequired isInvalid={!!errors.amount}>
+				  <FormLabel>
+					{isUsdAccount
+					  ? "Nominal diterima di bank (IDR) *"
+					  : "Nominal diterima di bank *"}
                   </FormLabel>
                   <Box position="relative">
                     <Input
@@ -1003,13 +1084,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                             "purchases.payment.amountMustBeGreaterThanZero",
                           ),
                         },
-                        max: {
-                          value: sale?.outstanding_amount || 0,
-                          message: t(
-                            "purchases.payment.amountExceedsOutstanding",
-                          ),
-                        },
-                        validate: {
+						validate: {
                           notZero: (value) =>
                             value > 0 ||
                             t("purchases.payment.amountMustBeGreaterThanZero"),
@@ -1020,25 +1095,99 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                   </Box>
 
                   {/* Amount Info Display */}
-                  {watchAmount > 0 && (
-                    <Text fontSize="sm" color={mutedTextColor} mt={1}>
+	                  {watchAmount > 0 && (
+	                    <Box fontSize="sm" color={mutedTextColor} mt={1}>
                       💰 {t("purchases.payment.payment")}:{" "}
                       <Text as="span" fontWeight="bold" color="green.600">
                         Rp {formatRupiah(watchAmount)}
                       </Text>
-                      {sale && watchAmount < sale.outstanding_amount && (
-                        <Text as="span" color="orange.500">
-                          {" • "} {t("purchases.payment.remaining")}: Rp{" "}
-                          {formatRupiah(sale.outstanding_amount - watchAmount)}
-                        </Text>
-                      )}
-                      {sale && watchAmount === sale.outstanding_amount && (
+					  {sale && isUnderpayment && settlementTreatment !== "ROUNDING" && (
+						<Text as="span" color="orange.500">
+						  {" • "} {t("purchases.payment.remaining")}: Rp{" "}
+						  {formatRupiah(Math.abs(settlementDifference))}
+						</Text>
+					  )}
+					  {sale && !hasSettlementDifference && (
                         <Text as="span" color="green.500">
                           {" • "} ✅ {t("purchases.payment.fullPayment")}
-                        </Text>
-                      )}
-                    </Text>
-                  )}
+					</Text>
+				  )}
+
+				  {hasSettlementDifference && sale && (
+					<Box mt={3}>
+					  <Alert
+						status={isOverpayment ? "info" : "warning"}
+						borderRadius="md"
+						alignItems="flex-start"
+					  >
+						<AlertIcon mt={1} />
+						<Box>
+						  <Text fontSize="sm" fontWeight="semibold">
+							{isOverpayment
+							  ? `Lebih bayar ${salesService.formatCurrency(Math.abs(settlementDifference))}`
+							  : `Kurang bayar ${salesService.formatCurrency(Math.abs(settlementDifference))}`}
+						  </Text>
+						  <Text fontSize="xs" mt={1}>
+							Nominal invoice tidak diubah. Pilih perlakuan untuk selisih transaksi bank ini.
+						  </Text>
+						</Box>
+					  </Alert>
+
+					  <RadioGroup
+						mt={3}
+						value={settlementTreatment}
+						onChange={(value) =>
+						  setSettlementTreatment(value as SettlementTreatment)
+						}
+					  >
+						<VStack align="start" spacing={2}>
+						  {isOverpayment ? (
+							<Radio value="CUSTOMER_ADVANCE">
+							  <Text fontSize="sm">
+								Simpan sebagai Uang Muka Pelanggan (default)
+							  </Text>
+							</Radio>
+						  ) : (
+							<Radio value="OPEN_BALANCE">
+							  <Text fontSize="sm">
+								Biarkan sebagai sisa piutang (default)
+							  </Text>
+							</Radio>
+						  )}
+						  {canRequestRounding && (
+							<Radio value="ROUNDING">
+							  <Text fontSize="sm">
+								Ajukan tutup sebagai pembulatan kecil
+							  </Text>
+							</Radio>
+						  )}
+						</VStack>
+					  </RadioGroup>
+
+					  {!canRequestRounding && (
+						<Text fontSize="xs" color={mutedTextColor} mt={3}>
+						  Pembulatan hanya tersedia untuk invoice dan rekening penerimaan IDR. Selisih lebih bayar tetap dicatat sebagai Uang Muka Pelanggan.
+						</Text>
+					  )}
+
+					  {settlementTreatment === "ROUNDING" && (
+						<FormControl isRequired mt={3}>
+						  <FormLabel fontSize="sm">Alasan pengajuan pembulatan</FormLabel>
+						  <Textarea
+							value={settlementReason}
+							onChange={(event) => setSettlementReason(event.target.value)}
+							placeholder="Contoh: transfer petani dibulatkan sesuai mutasi bank"
+							rows={2}
+						  />
+						  <FormHelperText>
+							Pengajuan akan diperiksa Accounting lalu diposting setelah persetujuan akhir Finance Manager. Batas nominal diatur pada Pengaturan Sistem.
+						  </FormHelperText>
+						</FormControl>
+					  )}
+					</Box>
+				  )}
+	                    </Box>
+	                  )}
 
                   {requiresExchangeRate && (
                     <Text fontSize="sm" color="blue.600" mt={2}>
@@ -1142,27 +1291,21 @@ const PaymentForm: React.FC<PaymentFormProps> = ({
                   )}
 
                   <FormErrorMessage>{errors.amount?.message}</FormErrorMessage>
-                  {watchAmount > (sale?.outstanding_amount || 0) && (
-                    <Text fontSize="sm" color="red.500" mt={1}>
-                      ⚠️{" "}
-                      {t("purchases.payment.amountExceedsBalance", {
-                        amount: salesService.formatCurrency(
-                          sale?.outstanding_amount || 0,
-                        ),
-                      })}
-                    </Text>
-                  )}
-                  {watchAmount > 0 &&
-                    watchAmount <= (sale?.outstanding_amount || 0) && (
+				  {isOverpayment && settlementTreatment === "CUSTOMER_ADVANCE" && (
+					<Text fontSize="sm" color="blue.600" mt={1}>
+					  ✓ Selisih lebih akan masuk ke Uang Muka Pelanggan, bukan mengurangi atau mengubah invoice.
+					</Text>
+				  )}
+				  {watchAmount > 0 &&
+					isUnderpayment && settlementTreatment !== "ROUNDING" && (
                       <Text fontSize="sm" color="green.600" mt={1}>
                         ✓ {t("purchases.payment.remainingBalance")}:{" "}
                         {salesService.formatCurrency(
-                          (sale?.outstanding_amount || 0) - watchAmount,
+						  Math.abs(settlementDifference),
                         )}
                       </Text>
                     )}
-                  {watchAmount === (sale?.outstanding_amount || 0) &&
-                    watchAmount > 0 && (
+				  {!hasSettlementDifference && watchAmount > 0 && (
                       <Text
                         fontSize="sm"
                         color="blue.600"

@@ -178,6 +178,25 @@ func (s *SettingsService) validateSettings(updates map[string]interface{}) error
 			return errors.New("tax rate must be between 0 and 100")
 		}
 	}
+	// Rounding is an exception workflow, not a general write-off mechanism.
+	// Zero disables it; otherwise keep the limit a sensible whole-IDR amount.
+	if value, exists := updates["payment_rounding_threshold"]; exists {
+		var threshold float64
+		switch number := value.(type) {
+		case float64:
+			threshold = number
+		case float32:
+			threshold = float64(number)
+		case int:
+			threshold = float64(number)
+		default:
+			return errors.New("payment rounding threshold must be a number")
+		}
+		if math.IsNaN(threshold) || math.IsInf(threshold, 0) || math.Trunc(threshold) != threshold || threshold < 0 || threshold > 1000000 {
+			return errors.New("payment rounding threshold must be a whole IDR amount between 0 and 1000000")
+		}
+		updates["payment_rounding_threshold"] = threshold
+	}
 	// Validate decimal places
 	if decimalPlaces, ok := updates["decimal_places"].(int); ok {
 		if decimalPlaces < 0 || decimalPlaces > 4 {
@@ -387,29 +406,30 @@ func (s *SettingsService) createDefaultSettings() models.Settings {
 		requireApproval = cfg.JournalSettings.RequireApproval
 	}
 	return models.Settings{
-		CompanyName:             "PT. Sistem Akuntansi Indonesia",
-		CompanyAddress:          "Jl. Sudirman Kav. 45-46, Jakarta Pusat 10210, Indonesia",
-		CompanyPhone:            "+62-21-5551234",
-		CompanyEmail:            "info@sistemakuntansi.co.id",
-		CompanyLogoScale:        100,
-		Currency:                ifThen(cfg != nil && cfg.CurrencySettings.BaseCurrency != "", cfg.CurrencySettings.BaseCurrency, "IDR"),
-		DateFormat:              "DD/MM/YYYY",
-		FiscalYearStart:         "January 1",
-		Language:                "id",
-		Timezone:                "Asia/Jakarta",
-		ThousandSeparator:       ".",
-		DecimalSeparator:        ",",
-		DecimalPlaces:           ifThenInt(cfg != nil && cfg.CurrencySettings.DecimalPlaces != 0, cfg.CurrencySettings.DecimalPlaces, 2),
-		DefaultTaxRate:          ifThenFloat(cfg != nil && cfg.TaxRates.DefaultPPN != 0, cfg.TaxRates.DefaultPPN, 11.0),
-		InvoicePrefix:           "INV",
-		SalesPrefix:             "SOA",
-		QuotePrefix:             "QT",
-		PurchasePrefix:          "PO",
-		PaymentReceivablePrefix: "RCV",
-		PaymentPayablePrefix:    "PAY",
-		JournalPrefix:           journalPrefix,
-		JournalNextNumber:       1,
-		RequireJournalApproval:  requireApproval,
+		CompanyName:              "PT. Sistem Akuntansi Indonesia",
+		CompanyAddress:           "Jl. Sudirman Kav. 45-46, Jakarta Pusat 10210, Indonesia",
+		CompanyPhone:             "+62-21-5551234",
+		CompanyEmail:             "info@sistemakuntansi.co.id",
+		CompanyLogoScale:         100,
+		Currency:                 ifThen(cfg != nil && cfg.CurrencySettings.BaseCurrency != "", cfg.CurrencySettings.BaseCurrency, "IDR"),
+		DateFormat:               "DD/MM/YYYY",
+		FiscalYearStart:          "January 1",
+		Language:                 "id",
+		Timezone:                 "Asia/Jakarta",
+		ThousandSeparator:        ".",
+		DecimalSeparator:         ",",
+		DecimalPlaces:            ifThenInt(cfg != nil && cfg.CurrencySettings.DecimalPlaces != 0, cfg.CurrencySettings.DecimalPlaces, 2),
+		DefaultTaxRate:           ifThenFloat(cfg != nil && cfg.TaxRates.DefaultPPN != 0, cfg.TaxRates.DefaultPPN, 11.0),
+		InvoicePrefix:            "INV",
+		SalesPrefix:              "SOA",
+		QuotePrefix:              "QT",
+		PurchasePrefix:           "PO",
+		PaymentReceivablePrefix:  "RCV",
+		PaymentPayablePrefix:     "PAY",
+		PaymentRoundingThreshold: 1000,
+		JournalPrefix:            journalPrefix,
+		JournalNextNumber:        1,
+		RequireJournalApproval:   requireApproval,
 	}
 }
 

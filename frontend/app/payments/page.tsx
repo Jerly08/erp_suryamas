@@ -239,8 +239,11 @@ const PaymentsPage: React.FC = () => {
       }
       return 'Menunggu approval director';
     }
-    if (payment.status === 'PENDING_ACCOUNTING') {
-      const financeManagerName = paymentService.getActorDisplayName(
+	if (payment.status === 'PENDING_ACCOUNTING') {
+	  if (payment.settlement_treatment === 'ROUNDING') {
+		return `Pengajuan pembulatan ${paymentService.formatCurrency(Math.abs(payment.settlement_difference || 0))} menunggu review Accounting dan alasan transaksi.`;
+	  }
+	  const financeManagerName = paymentService.getActorDisplayName(
         payment.finance_manager_approver || payment.approver,
       );
       if (payment.finance_manager_approved_at) {
@@ -248,8 +251,11 @@ const PaymentsPage: React.FC = () => {
       }
       return 'Menunggu Accounting pilih COA';
     }
-    if (payment.status === 'PENDING_FINAL_REVIEW') {
-      return 'COA sudah disiapkan Accounting. Menunggu FM review dan posting jurnal.';
+	if (payment.status === 'PENDING_FINAL_REVIEW') {
+	  if (payment.settlement_treatment === 'ROUNDING') {
+		return 'Pembulatan sudah direview Accounting. Menunggu persetujuan akhir FM dan posting jurnal.';
+	  }
+	  return 'COA sudah disiapkan Accounting. Menunggu FM review dan posting jurnal.';
     }
     if (payment.status === 'COMPLETED' && payment.approved_at) {
       return `Approved by ${paymentService.getActorDisplayName(payment.approver)} pada ${paymentService.formatDateTime(payment.approved_at)}`;
@@ -730,7 +736,9 @@ const PaymentsPage: React.FC = () => {
                     ? 'Set COA Kontra'
                     : row.legacy_non_invoice_eligible
                       ? 'Lengkapi COA Kontra (Legacy)'
-                    : 'Set COA / Pembayaran'
+					: row.settlement_treatment === 'ROUNDING'
+					  ? 'Review Pengajuan Pembulatan'
+					  : 'Set COA / Pembayaran'
                   : row.status === 'PENDING_FINAL_REVIEW'
                     ? 'Ubah / Review COA'
                     : t('payments.edit')}

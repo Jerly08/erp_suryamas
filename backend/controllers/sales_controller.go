@@ -18,12 +18,13 @@ import (
 )
 
 type SalesController struct {
-	salesServiceV2        *services.SalesServiceV2 // NEW: Clean sales service
-	paymentService        *services.PaymentService
-	unifiedPaymentService *services.UnifiedSalesPaymentService
-	pdfService            services.PDFServiceInterface
-	db                    *gorm.DB
-	accountRepo           repositories.AccountRepository
+	salesServiceV2         *services.SalesServiceV2 // NEW: Clean sales service
+	paymentService         *services.PaymentService
+	enhancedPaymentService *services.EnhancedPaymentServiceWithJournal
+	unifiedPaymentService  *services.UnifiedSalesPaymentService
+	pdfService             services.PDFServiceInterface
+	db                     *gorm.DB
+	accountRepo            repositories.AccountRepository
 }
 
 const salePaymentRequiresInvoiceMessage = "Penjualan harus dibuat invoice terlebih dahulu sebelum bisa menerima pembayaran."
@@ -113,14 +114,23 @@ func sendSaleWriteError(c *gin.Context, err error) {
 	}
 }
 
-func NewSalesController(salesServiceV2 *services.SalesServiceV2, paymentService *services.PaymentService, unifiedPaymentService *services.UnifiedSalesPaymentService, pdfService services.PDFServiceInterface, db *gorm.DB, accountRepo repositories.AccountRepository) *SalesController {
+func NewSalesController(
+	salesServiceV2 *services.SalesServiceV2,
+	paymentService *services.PaymentService,
+	enhancedPaymentService *services.EnhancedPaymentServiceWithJournal,
+	unifiedPaymentService *services.UnifiedSalesPaymentService,
+	pdfService services.PDFServiceInterface,
+	db *gorm.DB,
+	accountRepo repositories.AccountRepository,
+) *SalesController {
 	return &SalesController{
-		salesServiceV2:        salesServiceV2, // Use V2 service
-		paymentService:        paymentService,
-		unifiedPaymentService: unifiedPaymentService,
-		pdfService:            pdfService,
-		db:                    db,
-		accountRepo:           accountRepo,
+		salesServiceV2:         salesServiceV2, // Use V2 service
+		paymentService:         paymentService,
+		enhancedPaymentService: enhancedPaymentService,
+		unifiedPaymentService:  unifiedPaymentService,
+		pdfService:             pdfService,
+		db:                     db,
+		accountRepo:            accountRepo,
 	}
 }
 
@@ -897,13 +907,15 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 	}
 
 	var request struct {
-		Amount       float64   `json:"amount" binding:"required,min=0"`
-		Date         time.Time `json:"date" binding:"required"`
-		Method       string    `json:"method" binding:"required"`
-		CashBankID   uint      `json:"cash_bank_id" binding:"required"`
-		ExchangeRate float64   `json:"exchange_rate"`
-		Reference    string    `json:"reference"`
-		Notes        string    `json:"notes"`
+		Amount              float64   `json:"amount" binding:"required,min=0"`
+		Date                time.Time `json:"date" binding:"required"`
+		Method              string    `json:"method" binding:"required"`
+		CashBankID          uint      `json:"cash_bank_id" binding:"required"`
+		ExchangeRate        float64   `json:"exchange_rate"`
+		Reference           string    `json:"reference"`
+		Notes               string    `json:"notes"`
+		SettlementTreatment string    `json:"settlement_treatment"`
+		SettlementReason    string    `json:"settlement_reason"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -912,13 +924,15 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 			"error":   "Invalid request data",
 			"details": err.Error(),
 			"expected_fields": map[string]string{
-				"amount":        "number (required, min=0)",
-				"date":          "datetime string (required, ISO format)",
-				"method":        "string (required)",
-				"cash_bank_id":  "number (required)",
-				"exchange_rate": "number (optional, required when cash/bank currency is USD)",
-				"reference":     "string (optional)",
-				"notes":         "string (optional)",
+				"amount":               "number (required, min=0)",
+				"date":                 "datetime string (required, ISO format)",
+				"method":               "string (required)",
+				"cash_bank_id":         "number (required)",
+				"exchange_rate":        "number (optional, required when cash/bank currency is USD)",
+				"reference":            "string (optional)",
+				"notes":                "string (optional)",
+				"settlement_treatment": "CUSTOMER_ADVANCE (default for excess receipt), OPEN_BALANCE, or ROUNDING",
+				"settlement_reason":    "string (required when settlement_treatment is ROUNDING)",
 			},
 		})
 		return
@@ -950,16 +964,6 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 		return
 	}
 
-	// Validate payment amount
-	if request.Amount > sale.OutstandingAmount {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":              "Payment amount exceeds outstanding amount",
-			"outstanding_amount": sale.OutstandingAmount,
-			"requested_amount":   request.Amount,
-		})
-		return
-	}
-
 	// Get user ID with error handling
 	userIDInterface, exists := c.Get("user_id")
 	if !exists {
@@ -980,33 +984,47 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 		return
 	}
 
-	// Create payment request for Payment Management service
-	paymentRequest := services.PaymentCreateRequest{
-		ContactID:    sale.CustomerID,
-		CashBankID:   request.CashBankID,
-		Date:         request.Date,
-		Amount:       request.Amount,
-		Method:       request.Method,
-		ExchangeRate: request.ExchangeRate,
-		Reference:    request.Reference,
-		Notes:        fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
-		Allocations: []services.InvoiceAllocation{
+	if sc.enhancedPaymentService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "SSOT payment service is not configured"})
+		return
+	}
+
+	// The invoice balance is the settlement target, while Amount is the actual
+	// bank receipt. This makes an excess receipt eligible for customer advance
+	// without ever changing the issued invoice value.
+	saleID := uint(id)
+	paymentRequest := &services.PaymentWithJournalRequest{
+		ContactID:           sale.CustomerID,
+		CashBankID:          request.CashBankID,
+		Date:                request.Date,
+		Amount:              request.Amount,
+		Method:              request.Method,
+		ExchangeRate:        request.ExchangeRate,
+		Reference:           request.Reference,
+		Notes:               fmt.Sprintf("Payment for Invoice %s - %s", sale.InvoiceNumber, request.Notes),
+		SettlementTreatment: request.SettlementTreatment,
+		SettlementReason:    request.SettlementReason,
+		AutoCreateJournal:   true,
+		UserID:              userID,
+		InvoiceAllocations: []services.AllocationItem{
 			{
-				InvoiceID: uint(id),
-				Amount:    request.Amount,
+				InvoiceID: &saleID,
+				Amount:    sale.OutstandingAmount,
 			},
 		},
 	}
 
-	// Use Payment Management service (needs to be injected)
-	log.Printf("Calling PaymentService.CreateReceivablePayment for sale %d with amount %.2f", id, paymentRequest.Amount)
-	payment, err := sc.paymentService.CreateReceivablePayment(paymentRequest, userID)
+	log.Printf("Calling EnhancedPaymentServiceWithJournal for sale %d with actual receipt %.2f", id, paymentRequest.Amount)
+	paymentResponse, err := sc.enhancedPaymentService.CreatePaymentWithJournal(paymentRequest)
 	if err != nil {
-		log.Printf("Error in CreateReceivablePayment for sale %d: %v", id, err)
+		log.Printf("Error in SSOT receivable payment for sale %d: %v", id, err)
 		statusCode := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "outstanding") ||
 			strings.Contains(err.Error(), "exchange rate") ||
 			strings.Contains(err.Error(), "cash/bank") ||
+			strings.Contains(err.Error(), "rounding") ||
+			strings.Contains(err.Error(), "settlement") ||
+			strings.Contains(err.Error(), "customer advance") ||
 			strings.Contains(err.Error(), "selected cash/bank account is inconsistent") {
 			statusCode = http.StatusBadRequest
 		}
@@ -1018,13 +1036,12 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 		})
 		return
 	}
-	log.Printf("✅ Payment created successfully: ID=%d, Code=%s", payment.ID, payment.Code)
-
-	// ❌ REMOVED: Double COA sync - PaymentService.CreateReceivablePayment() already handles journal entries and COA updates
-	// The previous code here was causing DOUBLE POSTING to COA because:
-	// 1. PaymentService creates journal entry → COA updated
-	// 2. SyncCOABalanceAfterPayment() updates COA AGAIN → DOUBLE!
-	// FIX: Trust PaymentService to handle everything correctly
+	if paymentResponse == nil || paymentResponse.Payment == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Payment service returned no payment"})
+		return
+	}
+	payment := paymentResponse.Payment
+	log.Printf("✅ Payment created successfully: ID=%d, Code=%s, Status=%s", payment.ID, payment.Code, payment.Status)
 
 	// Return response with both payment info and updated sale status
 	updatedSale, err := sc.salesServiceV2.GetSaleByID(uint(id))
@@ -1032,18 +1049,21 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 		// If we can't get updated sale info, still return success but with basic info
 		log.Printf("Warning: Could not fetch updated sale info after payment creation: %v", err)
 		c.JSON(http.StatusCreated, gin.H{
-			"success": true,
-			"payment": payment,
-			"message": "Payment created successfully via Payment Management",
-			"note":    "Payment created but updated sale info unavailable",
-			"status":  "success",
+			"success":    true,
+			"payment":    payment,
+			"message":    "Payment created successfully via SSOT Payment Management",
+			"settlement": paymentResponse.Settlement,
+			"note":       "Payment created but updated sale info unavailable",
+			"status":     "success",
 		})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"success": true,
-		"payment": payment,
+		"success":        true,
+		"payment":        payment,
+		"settlement":     paymentResponse.Settlement,
+		"journal_result": paymentResponse.JournalResult,
 		"updated_sale": gin.H{
 			"id":                 updatedSale.ID,
 			"status":             updatedSale.Status,
@@ -1051,7 +1071,7 @@ func (sc *SalesController) CreateIntegratedPayment(c *gin.Context) {
 			"paid_amount":        updatedSale.PaidAmount,
 			"outstanding_amount": updatedSale.OutstandingAmount,
 		},
-		"message": "Payment created successfully via Payment Management",
+		"message": "Payment created successfully via SSOT Payment Management",
 		"status":  "success",
 	})
 }

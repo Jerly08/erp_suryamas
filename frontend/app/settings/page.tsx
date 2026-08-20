@@ -217,8 +217,9 @@ interface SystemSettings {
   purchase_prefix: string;
   purchase_next_number?: number; // removed from API - keep optional for backward compatibility
   // New: Payment prefixes
-  payment_receivable_prefix?: string;
-  payment_payable_prefix?: string;
+	  payment_receivable_prefix?: string;
+	  payment_payable_prefix?: string;
+	  payment_rounding_threshold?: number;
   email_notifications: boolean;
   smtp_host?: string;
   smtp_port?: number;
@@ -1129,10 +1130,59 @@ const SettingsPage: React.FC = () => {
                       <FormHelperText fontSize="xs">
                         {t("settings.companyLogoScaleHelp")}
                       </FormHelperText>
-                    </FormControl>
-                    <Divider borderColor={dividerColor} />
+	                    </FormControl>
+	                    <Divider borderColor={dividerColor} />
 
-                    <FormControl>
+	                    <FormControl>
+	                      <HStack mb={2} justify="space-between" width="full" align="center">
+	                        <FormLabel
+	                          fontWeight="semibold"
+	                          color={mutedTextColor}
+	                          fontSize="sm"
+	                          mb={0}
+	                        >
+	                          Batas pengajuan pembulatan penerimaan (Rp)
+	                        </FormLabel>
+	                        <Badge colorScheme="blue" borderRadius="md" px={2} py={1}>
+	                          Rp {(
+	                            formData?.payment_rounding_threshold ??
+	                            settings?.payment_rounding_threshold ??
+	                            1000
+	                          ).toLocaleString("id-ID")}
+	                        </Badge>
+	                      </HStack>
+	                      <NumberInput
+	                        value={
+	                          formData?.payment_rounding_threshold ??
+	                          settings?.payment_rounding_threshold ??
+	                          1000
+	                        }
+	                        onChange={(_, valueNumber) =>
+	                          handleFormChange(
+	                            "payment_rounding_threshold",
+	                            Number.isFinite(valueNumber)
+	                              ? Math.min(Math.max(Math.round(valueNumber), 0), 1000000)
+	                              : 0,
+	                          )
+	                        }
+	                        min={0}
+	                        max={1000000}
+	                        precision={0}
+	                        step={100}
+	                      >
+	                        <NumberInputField placeholder="1000" {...fieldStyles} />
+	                        <NumberInputStepper>
+	                          <NumberIncrementStepper />
+	                          <NumberDecrementStepper />
+	                        </NumberInputStepper>
+	                      </NumberInput>
+	                      <FormHelperText fontSize="xs" color={mutedTextColor}>
+	                        Selisih lebih bayar tetap menjadi Uang Muka Pelanggan secara default. Nilai ini hanya membatasi opsi pengajuan pembulatan yang wajib direview Accounting lalu Finance Manager. Isi 0 untuk menonaktifkan opsi pembulatan.
+	                      </FormHelperText>
+	                    </FormControl>
+	                    <Divider borderColor={dividerColor} />
+
+	                    <FormControl>
                       <FormLabel
                         fontWeight="semibold"
                         color={mutedTextColor}

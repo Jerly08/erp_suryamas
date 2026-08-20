@@ -683,12 +683,24 @@ func SetupRoutes(r *gin.Engine, db *gorm.DB, startupService *services.StartupSer
 			paymentService := services.NewPaymentService(db, paymentRepo, salesRepo, purchaseRepo, cashBankRepo, accountRepo, contactRepo, purchasePaymentJournalService)
 			paymentController := controllers.NewPaymentController(paymentService)
 			cashBankService := services.NewCashBankService(db, cashBankRepo, accountRepo)
+			// Sales' "Catat Pembayaran" form uses the same SSOT service as the
+			// dedicated payment module, so excess receipts and rounding approvals
+			// cannot bypass the customer-settlement journal rules.
+			enhancedPaymentService := services.NewEnhancedPaymentServiceWithJournal(
+				db,
+				*paymentRepo,
+				contactRepo,
+				cashBankRepo,
+				salesRepo,
+				purchaseRepo,
+				unifiedJournalService,
+			)
 
 			// Initialize additional Sales Payment services required by SalesController
 			unifiedSalesPaymentService := services.NewUnifiedSalesPaymentService(db)
 
 			// Initialize SalesController with new V2 Sales Service (inject pdfService)
-			salesController := controllers.NewSalesController(salesServiceV2, paymentService, unifiedSalesPaymentService, pdfService, db, accountRepo)
+			salesController := controllers.NewSalesController(salesServiceV2, paymentService, enhancedPaymentService, unifiedSalesPaymentService, pdfService, db, accountRepo)
 
 			// Initialize PurchaseController with PaymentService integration (moved here after paymentService is available)
 			purchaseController := controllers.NewPurchaseController(purchaseService, paymentService, db, accountRepo)

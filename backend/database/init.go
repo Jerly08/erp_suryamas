@@ -145,6 +145,7 @@ func RunMigrations(db *gorm.DB) {
 		// Payment & Cash Bank models
 		&models.Payment{},
 		&models.PaymentAllocation{},
+		&models.CustomerAdvance{},
 		&models.CashBank{},
 		&models.CashBankTransaction{},
 		&models.PurchasePayment{},
@@ -198,6 +199,10 @@ func RunMigrations(db *gorm.DB) {
 
 	if err != nil {
 		log.Fatalf("Database migration failed: %v", err)
+	}
+
+	if err := EnsureCustomerSettlementAccounts(db); err != nil {
+		log.Printf("⚠️ Customer settlement COA migration warning: %v", err)
 	}
 
 	BackfillPayrollBPJSSettlementStatus(db)

@@ -51,6 +51,14 @@ type Payment struct {
 	RejectionReason          string     `json:"rejection_reason" gorm:"type:text"`
 	Notes                    string     `json:"notes" gorm:"type:text"`
 	JournalEntryID           *uint      `json:"journal_entry_id" gorm:"index"` // Link to SSOT journal entry
+	// Settlement fields keep the commercial invoice immutable when the actual
+	// bank receipt differs from the invoice balance.  A positive difference is
+	// normally recorded as customer advance; a small approved difference may be
+	// closed as rounding through the Accounting -> Finance Manager workflow.
+	SettlementTreatment  string  `json:"settlement_treatment" gorm:"size:30;default:'OPEN_BALANCE';index"`
+	SettlementDifference float64 `json:"settlement_difference" gorm:"type:decimal(15,2);default:0"`
+	SettlementReason     string  `json:"settlement_reason" gorm:"type:text"`
+	RoundingThreshold    float64 `json:"rounding_threshold" gorm:"type:decimal(15,2);default:0"`
 	// PPh withholding tax fields (optional, only for expense payments with PPh)
 	PPHType   string         `json:"pph_type" gorm:"size:20"`                        // PPH_21, PPH_23, PPH_4_2, PPH_22
 	PPHRate   float64        `json:"pph_rate" gorm:"type:decimal(5,2);default:0"`    // e.g. 5.0 for 5%
@@ -60,15 +68,16 @@ type Payment struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Contact                Contact   `json:"contact" gorm:"foreignKey:ContactID"`
-	User                   User      `json:"user" gorm:"foreignKey:UserID"`
-	FinanceManagerApprover *User     `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
-	DirectorApprover       *User     `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
-	AccountingReviewer     *User     `json:"accounting_reviewer,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
-	Approver               *User     `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	Rejector               *User     `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
-	ExpenseAccount         *Account  `json:"expense_account,omitempty" gorm:"foreignKey:ExpenseAccountID"`
-	CashBank               *CashBank `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
+	Contact                Contact           `json:"contact" gorm:"foreignKey:ContactID"`
+	User                   User              `json:"user" gorm:"foreignKey:UserID"`
+	FinanceManagerApprover *User             `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User             `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+	AccountingReviewer     *User             `json:"accounting_reviewer,omitempty" gorm:"foreignKey:AccountingReviewedBy"`
+	Approver               *User             `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	Rejector               *User             `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
+	ExpenseAccount         *Account          `json:"expense_account,omitempty" gorm:"foreignKey:ExpenseAccountID"`
+	CashBank               *CashBank         `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
+	CustomerAdvances       []CustomerAdvance `json:"customer_advances,omitempty" gorm:"foreignKey:PaymentID"`
 }
 
 // PaymentAllocation represents payment allocation to invoices or bills
@@ -128,6 +137,16 @@ const (
 	PaymentTypeTaxPPNOutput = "TAX_PPN_OUTPUT"
 	// Custom type for direct expense payments created from COA (no specific vendor/customer)
 	PaymentTypeExpense = "EXPENSE"
+)
+
+// Customer payment settlement treatments.  OPEN_BALANCE leaves a short
+// receipt as receivable, CUSTOMER_ADVANCE is the default treatment for an
+// excess receipt, and ROUNDING requires Accounting review plus final Finance
+// Manager posting.
+const (
+	PaymentSettlementOpenBalance     = "OPEN_BALANCE"
+	PaymentSettlementCustomerAdvance = "CUSTOMER_ADVANCE"
+	PaymentSettlementRounding        = "ROUNDING"
 )
 
 // IsTaxPayment returns true if this payment is a PPN/tax payment

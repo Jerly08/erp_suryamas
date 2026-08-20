@@ -24,6 +24,17 @@ export interface PaymentAccountSummary {
   };
 }
 
+export interface CustomerPaymentSettlement {
+  treatment: 'OPEN_BALANCE' | 'CUSTOMER_ADVANCE' | 'ROUNDING';
+  invoice_settlement_amount: number;
+  difference: number;
+  customer_advance_amount: number;
+  rounding_amount: number;
+  rounding_direction?: 'OVERPAYMENT' | 'SHORTFALL';
+  requires_approval: boolean;
+  rounding_threshold: number;
+}
+
 export interface Payment {
   id: number;
   code: string;
@@ -52,6 +63,11 @@ export interface Payment {
   book_amount_idr?: number;
   forex_gain_loss_amount?: number;
   forex_gain_loss_type?: string;
+  settlement_treatment?: 'OPEN_BALANCE' | 'CUSTOMER_ADVANCE' | 'ROUNDING';
+  settlement_difference?: number;
+  settlement_reason?: string;
+  rounding_threshold?: number;
+  settlement?: CustomerPaymentSettlement;
   legacy_non_invoice_eligible?: boolean;
   method: string;
   reference: string;
@@ -159,6 +175,8 @@ export interface PaymentCreateRequest {
   reference?: string;
   notes?: string;
   require_director_approval?: boolean;
+  settlement_treatment?: 'OPEN_BALANCE' | 'CUSTOMER_ADVANCE' | 'ROUNDING';
+  settlement_reason?: string;
   allocations?: PaymentAllocation[];
   bill_allocations?: BillAllocation[];
 }
@@ -300,6 +318,8 @@ class PaymentService {
         method: data.method,
         reference: data.reference || '',
         notes: data.notes || '',
+        settlement_treatment: data.settlement_treatment,
+        settlement_reason: data.settlement_reason || '',
         require_director_approval: !!data.require_director_approval,
         auto_create_journal: true,
         preview_journal: false,
@@ -314,8 +334,13 @@ class PaymentService {
       const response = await api.post(API_ENDPOINTS.PAYMENTS.SSOT.RECEIVABLE, ssotData, {
         timeout: 60000 // 60 seconds timeout for receivable payment operations
       });
-      // SSOT returns data in response.data.data format
-      return response.data.data?.payment || response.data;
+      // Preserve settlement information so receipt forms can explain an
+      // overpayment/rounding outcome without another request.
+      const result = response.data.data || response.data;
+      if (result?.payment) {
+        return { ...result.payment, settlement: result.settlement } as Payment;
+      }
+      return result;
     } catch (error: any) {
       console.error('PaymentService - Error creating receivable payment:', error);
       console.log('PaymentService - Error details:', {
@@ -1112,6 +1137,8 @@ export interface PaymentWithJournalRequest {
   method: string;
   reference?: string;
   notes?: string;
+	settlement_treatment?: 'OPEN_BALANCE' | 'CUSTOMER_ADVANCE' | 'ROUNDING';
+	settlement_reason?: string;
   auto_create_journal?: boolean;
   preview_journal?: boolean;
   target_invoice_id?: number;
@@ -1132,6 +1159,16 @@ export interface PaymentWithJournalResponse {
     account_code: string;
   };
   allocations?: PaymentAllocation[];
+	settlement?: {
+		treatment: 'OPEN_BALANCE' | 'CUSTOMER_ADVANCE' | 'ROUNDING';
+		invoice_settlement_amount: number;
+		difference: number;
+		customer_advance_amount: number;
+		rounding_amount: number;
+		rounding_direction?: 'OVERPAYMENT' | 'SHORTFALL';
+		requires_approval: boolean;
+		rounding_threshold: number;
+	};
   summary: PaymentProcessingSummary;
   success: boolean;
   message: string;
