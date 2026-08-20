@@ -1045,11 +1045,23 @@ func (s *CashBankSSOTJournalAdapter) createActualWithdrawalJournalEntry(tx *gorm
 		transactionID = id
 		sourceID = &id
 	}
+	journalPrefix := "WIT"
+	sourceCodePrefix := "WITHDRAWAL"
+	descriptionPrefix := "Withdrawal"
+	debitDescriptionPrefix := "Counter account"
+	if request.TransactionType == TransactionTypeOwnerDrawing {
+		// An owner drawing remains a cash/bank withdrawal, but must be
+		// unmistakable in the immutable SSOT audit trail and journal history.
+		journalPrefix = "PRV"
+		sourceCodePrefix = "OWNER_DRAWING"
+		descriptionPrefix = "Owner drawing / prive"
+		debitDescriptionPrefix = "Owner drawing / prive account"
+	}
 	journal := buildCashBankJournalEntry(
-		"WIT",
+		journalPrefix,
 		models.SSOTSourceTypeCashBank,
-		fmt.Sprintf("WITHDRAWAL-%d", transactionID),
-		fmt.Sprintf("Withdrawal from %s: %s", account.Name, request.Description),
+		fmt.Sprintf("%s-%d", sourceCodePrefix, transactionID),
+		fmt.Sprintf("%s from %s: %s", descriptionPrefix, account.Name, request.Description),
 		request.Reference,
 		request.Notes,
 		request.Amount,
@@ -1079,7 +1091,7 @@ func (s *CashBankSSOTJournalAdapter) createActualWithdrawalJournalEntry(tx *gorm
 		JournalID:    journal.ID,
 		AccountID:    debitAccountID,
 		LineNumber:   1,
-		Description:  fmt.Sprintf("Counter account %s", debitAccountName),
+		Description:  fmt.Sprintf("%s %s", debitDescriptionPrefix, debitAccountName),
 		DebitAmount:  request.Amount,
 		CreditAmount: decimal.Zero,
 	}

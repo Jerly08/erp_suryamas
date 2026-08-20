@@ -36,7 +36,10 @@ func classifyCashBankTransactionError(err error) int {
 	case strings.Contains(errorText, "closed_period:"):
 		return http.StatusConflict
 	case strings.Contains(errorText, "permission to approve"),
-		strings.Contains(errorText, "permission to reject"):
+		strings.Contains(errorText, "permission to reject"),
+		strings.Contains(errorText, "owner drawing may only be posted"),
+		strings.Contains(errorText, "owner drawing requires an authenticated"),
+		strings.Contains(errorText, "owner drawing requires an active"):
 		return http.StatusForbidden
 	case strings.Contains(errorText, "not found"),
 		strings.Contains(errorText, "inactive"),
@@ -46,6 +49,11 @@ func classifyCashBankTransactionError(err error) int {
 		strings.Contains(errorText, "insufficient balance"),
 		strings.Contains(errorText, "saldo tersedia tidak cukup"),
 		strings.Contains(errorText, "amount must be greater than zero"),
+		strings.Contains(errorText, "invalid withdrawal purpose"),
+		strings.Contains(errorText, "owner drawing amount"),
+		strings.Contains(errorText, "owner drawing requires a prive"),
+		strings.Contains(errorText, "owner drawing reference is required"),
+		strings.Contains(errorText, "owner drawing notes are required"),
 		strings.Contains(errorText, "exchange rate required"),
 		strings.Contains(errorText, "already been reviewed"),
 		strings.Contains(errorText, "counter account"),
@@ -386,6 +394,19 @@ func (h *CashBankHandler) GetPaymentAccounts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, utils.SuccessResponse("Payment accounts retrieved successfully", accounts))
+}
+
+// GetOwnerDrawingAccounts handles GET /api/v1/cash-bank/owner-drawing-accounts.
+// It deliberately exposes only the small, explicitly designated prive/owner
+// drawing subset—not all equity accounts and not the generic payment selector.
+func (h *CashBankHandler) GetOwnerDrawingAccounts(c *gin.Context) {
+	accounts, err := h.cashBankService.GetOwnerDrawingAccounts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.CreateErrorResponse("Failed to retrieve owner drawing accounts", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("Owner drawing accounts retrieved successfully", accounts))
 }
 
 // GetDepositSourceAccounts handles GET /api/cash-bank/deposit-source-accounts

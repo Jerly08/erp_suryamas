@@ -33,6 +33,7 @@ interface SearchableSelectProps {
   isDisabled?: boolean;
   displayFormat?: (option: SearchableSelectOption) => string;
   filterFunction?: (option: SearchableSelectOption, searchTerm: string) => boolean;
+  renderEmptyState?: (searchTerm: string) => React.ReactNode;
   allowClear?: boolean;
   size?: 'sm' | 'md' | 'lg';
 }
@@ -52,6 +53,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
       (option.code && option.code.toLowerCase().includes(term))
     );
   },
+  renderEmptyState,
   allowClear = true,
   size = 'md',
 }) => {
@@ -352,9 +354,11 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
             </List>
           ) : (
             <Box p={4} textAlign="center">
-              <Text fontSize="sm" color={mutedTextColor}>
-                {searchTerm ? 'No results found' : 'No options available'}
-              </Text>
+              {renderEmptyState ? renderEmptyState(searchTerm) : (
+                <Text fontSize="sm" color={mutedTextColor}>
+                  {searchTerm ? 'No results found' : 'No options available'}
+                </Text>
+              )}
             </Box>
           )}
           </Box>

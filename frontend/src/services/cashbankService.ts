@@ -159,7 +159,11 @@ export interface WithdrawalRequest {
   amount: number;
   reference?: string;
   notes?: string;
-  // Optional: expense/target GL account for automatic journal integration
+  // OWNER_DRAWING is a controlled cash/bank withdrawal. The backend validates
+  // the user role and that target_account_id is an eligible Prive account.
+  purpose?: "OWNER_DRAWING";
+  // Optional target GL account for automatic journal integration. It is
+  // mandatory when purpose is OWNER_DRAWING.
   target_account_id?: number;
 }
 
@@ -704,6 +708,7 @@ class CashBankService {
     nonOperatingExpense: CashBankCounterpartyAccount[];
     liability: CashBankCounterpartyAccount[];
     asset: CashBankCounterpartyAccount[];
+    ownerDrawing: CashBankCounterpartyAccount[];
   }> {
     try {
       const [
@@ -711,6 +716,7 @@ class CashBankService {
         liabilityResponse,
         assetResponse,
         cashBankAccounts,
+        ownerDrawingResponse,
       ] = await Promise.all([
         api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
           params: { type: "EXPENSE", _t: Date.now() },
@@ -722,6 +728,18 @@ class CashBankService {
           params: { type: "ASSET", _t: Date.now() },
         }),
         this.getCashBankAccounts({ includeHolding: true }),
+        // Do not load generic Equity accounts here. The backend explicitly
+        // returns only active leaf accounts that are eligible for Owner
+        // Drawing/Prive withdrawals.
+        api.get(API_ENDPOINTS.CASH_BANK.OWNER_DRAWING_ACCOUNTS, {
+          params: { _t: Date.now() },
+        }).catch((error) => {
+          // Keep ordinary withdrawal purposes available if an older backend
+          // has not yet exposed this optional lookup. OWNER_DRAWING then has
+          // no selectable account and cannot be submitted.
+          console.warn("Unable to load Owner Drawing accounts:", error);
+          return { data: [] };
+        }),
       ]);
 
       const expenseAccounts = this.normalizeAccountList(
@@ -750,6 +768,9 @@ class CashBankService {
           (account) =>
             this.isActiveLeafAccount(account) &&
             !cashBankLinkedAccountIDs.has(account.id),
+        ),
+        ownerDrawing: this.normalizeAccountList(ownerDrawingResponse.data).filter(
+          (account) => this.isActiveLeafAccount(account),
         ),
       };
     } catch (error) {

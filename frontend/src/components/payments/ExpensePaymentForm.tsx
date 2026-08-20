@@ -924,6 +924,32 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                             onChange={(value) => field.onChange(value ? Number(value) : 0)}
                             placeholder={t('payments.form.selectAccount')}
                             isLoading={loadingAccounts}
+                            renderEmptyState={(searchTerm) => {
+                              const normalizedSearch = searchTerm.trim().toLowerCase();
+                              const isEquityOrPriveSearch = [
+                                '3102',
+                                'prive',
+                                'owner drawing',
+                                'pengambilan pemilik',
+                                'ekuitas',
+                                'equity',
+                              ].some((term) => normalizedSearch.includes(term));
+
+                              return isEquityOrPriveSearch ? (
+                                <Box textAlign="left">
+                                  <Text fontSize="sm" fontWeight="semibold" color={labelColor}>
+                                    Akun Prive/Ekuitas tidak tersedia di Pembayaran COA.
+                                  </Text>
+                                  <Text fontSize="xs" color={textColor} mt={1}>
+                                    Gunakan Kas-Bank → Withdrawal → Pengambilan Pemilik / Prive. Alur tersebut membuat jurnal Dr Prive / Cr Kas-Bank dan dikontrol Finance Manager atau Director.
+                                  </Text>
+                                </Box>
+                              ) : (
+                                <Text fontSize="sm" color={textColor}>
+                                  Tidak ada akun yang sesuai dalam kelompok akun yang diizinkan untuk pembayaran ini.
+                                </Text>
+                              );
+                            }}
                             allowClear
                             size="md"
                           />
@@ -931,7 +957,7 @@ const ExpensePaymentForm: React.FC<ExpensePaymentFormProps> = ({
                       />
                       <FormErrorMessage>{errors.expense_account_id?.message}</FormErrorMessage>
                       <FormHelperText color={textColor}>
-                        Pilih akun lawan kas/bank: beban, kewajiban, pinjaman karyawan, atau piutang intercompany.
+                        Pilih akun lawan kas/bank: beban, kewajiban, pinjaman karyawan, atau piutang intercompany. Akun Ekuitas/Prive (mis. 3102) sengaja tidak tersedia di form ini; gunakan Kas-Bank → Withdrawal → Pengambilan Pemilik / Prive.
                       </FormHelperText>
                     </FormControl>
                   )}

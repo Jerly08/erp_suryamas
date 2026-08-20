@@ -572,6 +572,25 @@ func (c *CashBankController) GetPaymentAccounts(ctx *gin.Context) {
 	})
 }
 
+// GetOwnerDrawingAccounts returns the restricted set of eligible prive/owner
+// drawing equity accounts. It intentionally does not turn the generic payment
+// COA selector into an all-equity selector.
+func (c *CashBankController) GetOwnerDrawingAccounts(ctx *gin.Context) {
+	accounts, err := c.cashBankService.GetOwnerDrawingAccounts()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to retrieve owner drawing accounts",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    accounts,
+	})
+}
+
 // GetAvailableGLAccounts godoc
 // @Summary Get available GL accounts for cash/bank creation
 // @Description Get GL accounts that are not already linked to any cash/bank account, filtered by type (CASH or BANK)

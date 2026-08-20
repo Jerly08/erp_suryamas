@@ -45,6 +45,8 @@ import cashbankService, {
   getAvailableBalance,
   getBookBalanceInIDR,
 } from '@/services/cashbankService';
+import { useAuth } from '@/contexts/AuthContext';
+import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
   getCashBankAmountPrecision,
@@ -56,13 +58,15 @@ type WithdrawalPurpose =
   | 'NON_OPERATING_EXPENSE'
   | 'OPERATING_EXPENSE'
   | 'LIABILITY_PAYMENT'
-  | 'ASSET_ACQUISITION';
+  | 'ASSET_ACQUISITION'
+  | 'OWNER_DRAWING';
 
 interface WithdrawalTargetAccounts {
   operatingExpense: CashBankCounterpartyAccount[];
   nonOperatingExpense: CashBankCounterpartyAccount[];
   liability: CashBankCounterpartyAccount[];
   asset: CashBankCounterpartyAccount[];
+  ownerDrawing: CashBankCounterpartyAccount[];
 }
 
 interface DepositWithdrawalFormProps {
@@ -115,6 +119,12 @@ const withdrawalPurposeOptions: Array<{
     helper: 'Dipakai untuk pembelian aset yang langsung dibayar dari cash-bank.',
     posting: 'Dr Asset / Cr Cash-Bank',
   },
+  {
+    value: 'OWNER_DRAWING',
+    label: 'Pengambilan Pemilik / Prive',
+    helper: 'Dipakai khusus untuk pengambilan pemilik yang harus dicatat ke akun Prive/Owner Drawing, bukan sebagai beban atau pembayaran COA umum.',
+    posting: 'Dr Prive / Cr Cash-Bank',
+  },
 ];
 
 const getCurrencyCode = (account?: CashBank | null): string => normalizeCashBankCurrency(account?.currency);
@@ -135,6 +145,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
   onSuccess,
   account,
 }) => {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     amount: 0,
@@ -151,6 +162,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
     nonOperatingExpense: [],
     liability: [],
     asset: [],
+    ownerDrawing: [],
   });
 
   const toast = useToast();
@@ -207,6 +219,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             nonOperatingExpense: [],
             liability: [],
             asset: [],
+            ownerDrawing: [],
           });
         }
       } finally {
@@ -248,6 +261,8 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         return targetAccounts.liability;
       case 'ASSET_ACQUISITION':
         return targetAccounts.asset;
+      case 'OWNER_DRAWING':
+        return targetAccounts.ownerDrawing;
       case 'NON_OPERATING_EXPENSE':
       default:
         return targetAccounts.nonOperatingExpense;
@@ -276,6 +291,19 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         throw new Error('Pilih akun lawan jurnal terlebih dahulu agar withdrawal diposting ke kelompok yang benar.');
       }
 
+      const isOwnerDrawing = formData.purpose === 'OWNER_DRAWING';
+      const normalizedRole = normalizeRole(user?.role);
+      const canPostOwnerDrawing = isFinanceManagerRole(normalizedRole) || normalizedRole === 'director';
+      if (isOwnerDrawing && !canPostOwnerDrawing) {
+        throw new Error('Pengambilan Pemilik / Prive hanya dapat diposting oleh Finance Manager atau Director.');
+      }
+      if (isOwnerDrawing && !formData.reference.trim()) {
+        throw new Error('Nomor referensi/bukti wajib diisi untuk Pengambilan Pemilik / Prive.');
+      }
+      if (isOwnerDrawing && !formData.notes.trim()) {
+        throw new Error('Catatan alasan pengambilan wajib diisi untuk Pengambilan Pemilik / Prive.');
+      }
+
       const requestData: WithdrawalRequest = {
         account_id: account.id,
         date: formData.date,
@@ -283,6 +311,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         reference: formData.reference,
         notes: formData.notes,
         target_account_id: parseInt(formData.target_account_id, 10),
+        ...(isOwnerDrawing ? { purpose: 'OWNER_DRAWING' as const } : {}),
       };
 
       await cashbankService.processWithdrawal(requestData);
@@ -382,6 +411,9 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
   const newBookBalanceIDR = currentBookBalanceIDR - bookImpactIDR;
   const isForeignCurrencyAccount = isCashBankForeignCurrency(currencyCode);
   const selectedPurposeOption = withdrawalPurposeOptions.find(option => option.value === formData.purpose) || withdrawalPurposeOptions[0];
+  const isOwnerDrawing = formData.purpose === 'OWNER_DRAWING';
+  const normalizedRole = normalizeRole(user?.role);
+  const canPostOwnerDrawing = isFinanceManagerRole(normalizedRole) || normalizedRole === 'director';
   const selectedTargetAccounts = getSelectedTargetAccounts();
   const selectedTargetAccount = selectedTargetAccounts.find(
     entry => entry.id === parseInt(formData.target_account_id || '0', 10),
@@ -392,13 +424,17 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
       ? 'Debit Account (Operating Expense)'
       : formData.purpose === 'LIABILITY_PAYMENT'
         ? 'Debit Account (Liability)'
-        : 'Debit Account (Asset)';
+        : formData.purpose === 'OWNER_DRAWING'
+          ? 'Debit Account (Pengambilan Pemilik / Prive)'
+          : 'Debit Account (Asset)';
   const targetAccountPlaceholder = formData.purpose === 'NON_OPERATING_EXPENSE'
     ? 'Select 8xxx non-operating expense account'
     : formData.purpose === 'OPERATING_EXPENSE'
       ? 'Select operating expense account'
-      : formData.purpose === 'LIABILITY_PAYMENT'
-        ? 'Select liability account to reduce'
+    : formData.purpose === 'LIABILITY_PAYMENT'
+      ? 'Select liability account to reduce'
+      : formData.purpose === 'OWNER_DRAWING'
+        ? 'Pilih akun Prive / Owner Drawing'
         : 'Select asset account to increase';
 
   return (
@@ -526,7 +562,7 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                   )}
                 </FormControl>
 
-                <FormControl>
+                <FormControl isRequired={isOwnerDrawing}>
                   <FormLabel>{t('payments.form.referenceNumber')}</FormLabel>
                   <Input
                     value={formData.reference}
@@ -534,9 +570,14 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     placeholder={t('payments.placeholders.referenceNumber')}
                     {...fieldStyles}
                   />
+                  {isOwnerDrawing && (
+                    <Text fontSize="xs" color={helperTextColor} mt={1}>
+                      Nomor bukti atau referensi pengambilan wajib dicatat untuk audit trail.
+                    </Text>
+                  )}
                 </FormControl>
 
-                <FormControl>
+                <FormControl isRequired={isOwnerDrawing}>
                   <FormLabel>{t('payments.form.notes')}</FormLabel>
                   <Textarea
                     value={formData.notes}
@@ -545,6 +586,11 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     rows={3}
                     {...fieldStyles}
                   />
+                  {isOwnerDrawing && (
+                    <Text fontSize="xs" color={helperTextColor} mt={1}>
+                      Jelaskan alasan dan pihak pemilik yang menerima pengambilan ini.
+                    </Text>
+                  )}
                 </FormControl>
               </VStack>
             </Box>
@@ -554,7 +600,9 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                 Posting Mapping
               </Text>
               <Text fontSize="sm" color={mutedTextColor} mb={3}>
-                Pilih tujuan jurnal debit agar withdrawal langsung masuk ke operasional, non-operasional, liability, atau asset yang tepat.
+                {isOwnerDrawing
+                  ? 'Pilih akun Prive yang telah disetujui. Tidak semua akun Ekuitas dapat digunakan untuk pengambilan pemilik.'
+                  : 'Pilih tujuan jurnal debit agar withdrawal langsung masuk ke operasional, non-operasional, liability, atau asset yang tepat.'}
               </Text>
 
               <VStack spacing={4} align="stretch">
@@ -588,6 +636,23 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                   </Box>
                 </Alert>
 
+                {isOwnerDrawing && (
+                  <Alert status="warning" borderRadius="md" alignItems="flex-start">
+                    <AlertIcon mt={1} />
+                    <Box>
+                      <AlertTitle fontSize="sm" mb={1}>Kontrol Pengambilan Pemilik</AlertTitle>
+                      <AlertDescription fontSize="sm">
+                        Hanya Finance Manager atau Director yang dapat memposting transaksi ini. Referensi dan alasan wajib diisi; backend akan memvalidasi akun Prive yang dipilih.
+                      </AlertDescription>
+                      {!canPostOwnerDrawing && (
+                        <Text fontSize="xs" mt={2} fontWeight="semibold">
+                          Role Anda tidak dapat memposting Pengambilan Pemilik / Prive.
+                        </Text>
+                      )}
+                    </Box>
+                  </Alert>
+                )}
+
                 <FormControl isRequired>
                   <FormLabel>{targetAccountLabel}</FormLabel>
                   <Select
@@ -600,12 +665,14 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                     {selectedTargetAccounts.map(entry => (
                       <option key={`${formData.purpose}-${entry.id}`} value={entry.id}>
                         {entry.code} - {entry.name}
-                        {entry.balance !== 0 && ` (Balance: ${entry.balance.toLocaleString('id-ID')})`}
+                        {typeof entry.balance === 'number' && entry.balance !== 0 && ` (Balance: ${entry.balance.toLocaleString('id-ID')})`}
                       </option>
                     ))}
                   </Select>
                   <Text fontSize="xs" color={helperTextColor} mt={1}>
-                    Akun lawan jurnal wajib dipilih supaya sistem tidak jatuh ke fallback expense yang generik.
+                    {isOwnerDrawing
+                      ? 'Daftar ini hanya berisi akun Prive/Owner Drawing aktif yang diizinkan oleh server.'
+                      : 'Akun lawan jurnal wajib dipilih supaya sistem tidak jatuh ke fallback expense yang generik.'}
                   </Text>
                   {loadingAccounts && (
                     <Text fontSize="xs" color={helperTextColor} mt={1}>
@@ -618,7 +685,9 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                   <Alert status="warning" borderRadius="md">
                     <AlertIcon />
                     <AlertDescription fontSize="sm">
-                      Belum ada akun aktif yang cocok untuk {selectedPurposeOption.label.toLowerCase()}. Tambahkan akun COA terlebih dahulu sebelum memproses withdrawal ini.
+                      {isOwnerDrawing
+                        ? 'Belum ada akun Prive/Owner Drawing aktif yang disetujui. Hubungi Administrator/Accounting untuk menandai akun yang tepat; jangan gunakan akun Ekuitas lain sebagai pengganti.'
+                        : `Belum ada akun aktif yang cocok untuk ${selectedPurposeOption.label.toLowerCase()}. Tambahkan akun COA terlebih dahulu sebelum memproses withdrawal ini.`}
                     </AlertDescription>
                   </Alert>
                 )}
@@ -745,7 +814,12 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             onClick={handleSubmit}
             isLoading={loading}
             loadingText={t('common.processing')}
-            isDisabled={formData.amount <= 0 || formData.amount > availableBalance || !formData.target_account_id}
+            isDisabled={
+              formData.amount <= 0 ||
+              formData.amount > availableBalance ||
+              !formData.target_account_id ||
+              (isOwnerDrawing && (!canPostOwnerDrawing || !formData.reference.trim() || !formData.notes.trim()))
+            }
           >
             {t('cashBank.processWithdrawal')}
           </Button>

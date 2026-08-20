@@ -61,6 +61,10 @@ func SetupPaymentRoutes(router *gin.RouterGroup, paymentController *controllers.
 		// Payment accounts endpoint - specifically for payment form dropdowns
 		cashbank.GET("/payment-accounts", permissionMiddleware.CanView("cash_bank"), cashBankController.GetPaymentAccounts)
 
+		// Controlled owner-drawing/prive lookup. This is deliberately separate
+		// from the generic payment COA selector, which must not expose equity.
+		cashbank.GET("/owner-drawing-accounts", permissionMiddleware.CanView("cash_bank"), cashBankController.GetOwnerDrawingAccounts)
+
 		// Revenue accounts endpoint - for deposit source selection
 		cashbank.GET("/revenue-accounts", permissionMiddleware.CanView("cash_bank"), cashBankController.GetRevenueAccounts)
 

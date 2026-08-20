@@ -680,10 +680,10 @@ func (s *UnifiedPeriodClosingService) ExecutePeriodClosing(ctx context.Context, 
 			return fmt.Errorf("period closing validation failed: %s", strings.Join(blockingMessages, " "))
 		}
 
-		// 1. Get retained earnings account
-		var retainedEarnings models.Account
-		if err := tx.Where("code = ? AND type = ?", "3102", "EQUITY").First(&retainedEarnings).Error; err != nil {
-			return fmt.Errorf("retained earnings account (3102) not found: %v", err)
+		// 1. Resolve the tenant's retained earnings account from its COA metadata.
+		retainedEarnings, err := s.getRetainedEarningsAccount(tx)
+		if err != nil {
+			return err
 		}
 
 		// 2. Get the latest accounting period context (for logging & validation only)
@@ -1097,10 +1097,10 @@ func (s *UnifiedPeriodClosingService) PreviewPeriodClosing(ctx context.Context, 
 
 	tx := s.db.WithContext(ctx)
 
-	// 1. Retained earnings account
-	var retainedEarnings models.Account
-	if err := tx.Where("code = ? AND type = ?", "3102", models.AccountTypeEquity).First(&retainedEarnings).Error; err != nil {
-		return nil, fmt.Errorf("retained earnings account (3102) not found: %v", err)
+	// 1. Resolve the tenant's retained earnings account from its COA metadata.
+	retainedEarnings, err := s.getRetainedEarningsAccount(tx)
+	if err != nil {
+		return nil, err
 	}
 
 	// 2. Info last closed period (untuk warning & auto-detection di UI)

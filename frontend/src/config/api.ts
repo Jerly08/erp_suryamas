@@ -192,6 +192,7 @@ export const API_ENDPOINTS = {
     PAYMENT_ACCOUNTS: "/api/v1/cash-bank/reports/payment-accounts",
     REVENUE_ACCOUNTS: "/api/v1/cash-bank/revenue-accounts",
     DEPOSIT_SOURCE_ACCOUNTS: "/api/v1/cash-bank/deposit-source-accounts",
+    OWNER_DRAWING_ACCOUNTS: "/api/v1/cash-bank/owner-drawing-accounts",
     REFERENCE_RATE: "/api/v1/cash-bank/reference-rate",
 
     // Summaries & reports

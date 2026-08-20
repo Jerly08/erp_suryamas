@@ -82,6 +82,7 @@ func SetupCashBankSSOTRoutes(v1 *gin.RouterGroup, db *gorm.DB, jwtManager *middl
 		// Backward-compatibility routes (documented path without /reports prefix)
 		cashBankGroup.GET("/balance-summary", permMiddleware.CanView("cash_bank"), cashBankHandler.GetBalanceSummary)
 		cashBankGroup.GET("/payment-accounts", permMiddleware.CanView("cash_bank"), cashBankHandler.GetPaymentAccounts)
+		cashBankGroup.GET("/owner-drawing-accounts", permMiddleware.CanView("cash_bank"), cashBankHandler.GetOwnerDrawingAccounts)
 		cashBankGroup.GET("/deposit-source-accounts", permMiddleware.CanView("cash_bank"), cashBankHandler.GetDepositSourceAccounts)
 		cashBankGroup.GET("/reference-rate", permMiddleware.CanView("cash_bank"), cashBankHandler.GetReferenceExchangeRate)
 		cashBankGroup.GET("/revenue-accounts", permMiddleware.CanView("cash_bank"), func(c *gin.Context) {
