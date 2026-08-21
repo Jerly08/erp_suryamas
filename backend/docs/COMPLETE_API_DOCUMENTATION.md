@@ -742,18 +742,21 @@
 }
 ```
 
-### 4. Process Withdrawal
-**Endpoint**: `POST /api/v1/cash-bank/withdrawal`
+### 4. Process Owner Drawing / Prive Withdrawal
+**Endpoint**: `POST /api/v1/cash-bank/transactions/withdrawal`
+
+Endpoint ini hanya untuk pengambilan pemilik/Prive. Untuk beban gunakan Pembayaran COA, untuk hutang gunakan pembayaran Purchase/termin, dan untuk aset gunakan Purchases.
 
 **Request Body**:
 ```json
 {
-  "cash_bank_account_id": 1,
+  "account_id": 1,
+  "date": "2026-08-21",
   "amount": 2000000.00,
-  "transaction_date": "2025-01-01",
-  "description": "Office rent payment",
-  "reference": "WD-001",
-  "expense_account_id": 40
+  "reference": "PRV-20260821-001",
+  "notes": "Pengambilan pemilik sesuai persetujuan",
+  "purpose": "OWNER_DRAWING",
+  "target_account_id": 3102
 }
 ```
 

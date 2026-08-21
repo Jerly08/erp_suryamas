@@ -2629,6 +2629,160 @@
     "balancePreview": "Balance Preview",
     "availableBalance": "Available Balance",
     "newBalanceAfter": "New balance after",
+    "withdrawalForm": {
+      "ownerDrawingTitle": "Owner's Withdrawal / Drawing",
+      "ownerDrawingDetails": "Owner's Withdrawal Details",
+      "autoJournal": "AUTO JOURNAL ENTRY",
+      "accountTypeCash": "CASH",
+      "accountTypeBank": "BANK",
+      "currentNativeBalance": "Current Account Balance",
+      "available": "Available",
+      "ledgerBookBalance": "Ledger book balance: {{amount}}",
+      "availableToUse": "Available to use: {{amount}}",
+      "nativeBadge": "ACCOUNT CURRENCY {{currency}}",
+      "bookIdrBadge": "IDR BOOK VALUE",
+      "foreignCurrencyImpact": "The {{currency}} withdrawal reduces the account balance in {{currency}} and the ledger book value in IDR.",
+      "idrImpact": "For an IDR account, the account balance and ledger book value decrease by the same amount.",
+      "foreignCurrencyRateHelp": "The system uses the current book rate to release the IDR book value; this form does not request a new rate.",
+      "idrBalanceHelp": "The system only allows the available balance to be used, not funds that are currently frozen.",
+      "amountExceedsAvailable": "The amount exceeds the available balance and cannot be posted.",
+      "postingMapping": "Journal Mapping",
+      "ownerDrawingJournalMapping": "Owner's Drawing Journal Mapping",
+      "ownerDrawingMappingHelp": "Select an approved drawing account. Not every equity account can be used for an owner's withdrawal.",
+      "ownerDrawingMappingDescription": "The owner's withdrawal will be recorded as {{posting}}. Select an approved Owner's Drawing account so the transaction is not posted as an expense or general COA payment.",
+      "standardMappingHelp": "Choose the debit journal purpose so the withdrawal is recorded to the appropriate operating expense, non-operating expense, liability, or asset.",
+      "purpose": "Withdrawal Purpose / Debit Group",
+      "mappingTitle": "Journal Mapping",
+      "mappingDescription": "{{purpose}} means {{posting}}. This helps ensure outgoing transactions are not always recorded as operating expenses.",
+      "ownerControlTitle": "Owner's Withdrawal Control",
+      "ownerControlDescription": "Only a Finance Manager or Director can post this transaction. A reference and reason are required, and the system will validate the selected drawing account.",
+      "ownerControlRoleDenied": "Your role cannot post an Owner's Withdrawal / Drawing transaction.",
+      "ownerReferenceHelp": "A supporting reference or withdrawal document number is required for the audit trail.",
+      "ownerNotesHelp": "Explain the reason and the owner receiving this withdrawal.",
+      "ownerDrawingOnlyTitle": "Direct withdrawals are only for Owner's Withdrawal / Drawing",
+      "ownerDrawingOnlyDescription": "This form only records an owner's withdrawal to an approved Owner's Drawing account. Expenses, liabilities, assets, and fund transfers must use their source workflow so documents and subledgers remain in sync.",
+      "guidedWorkflows": {
+        "title": "Need a different transaction?",
+        "description": "Choose the appropriate workflow. These links do not create a journal entry from the withdrawal form.",
+        "expense": {
+          "title": "Pay an expense or general liability",
+          "description": "Use Payments for COA payments, operating/non-operating expenses, and general liabilities.",
+          "action": "Open Payments"
+        },
+        "vendor": {
+          "title": "Pay a vendor payable / installment",
+          "description": "Use Payments, then select the purchase invoice or installment so the payable balance and vendor history are settled too.",
+          "action": "Open Vendor Payments"
+        },
+        "asset": {
+          "title": "Buy an asset",
+          "description": "Create a Purchase with an Asset-type item so the vendor, tax, Asset Register, and depreciation are recorded completely.",
+          "action": "Open Purchases"
+        },
+        "payroll": {
+          "title": "Pay salary, social security, or income tax",
+          "description": "Use Payroll so the payroll status and related liabilities are updated too.",
+          "action": "Open Payroll"
+        },
+        "transfer": {
+          "title": "Move funds between accounts",
+          "description": "To move funds from {{accountName}} to another bank or petty-cash account, close this form and select Transfer Funds on the account. Do not record it as a withdrawal.",
+          "action": "Close withdrawal form"
+        }
+      },
+      "targetBalance": "Balance: {{amount}}",
+      "processing": "Recording Owner's Drawing...",
+      "submitOwnerDrawing": "Record Owner's Drawing",
+      "purposes": {
+        "nonOperating": {
+          "label": "Non-Operating Expense",
+          "helper": "Use for interest, foreign-exchange loss, loss on asset disposal, and other non-operating expenses.",
+          "posting": "Dr 8xxx / Cr Cash-Bank"
+        },
+        "operating": {
+          "label": "Operating Expense",
+          "helper": "Use for routine operating costs such as rent, electricity, utilities, and administration.",
+          "posting": "Dr 6xxx / Cr Cash-Bank"
+        },
+        "liability": {
+          "label": "Liability Payment",
+          "helper": "Use to settle debt or reduce a liability from cash or bank.",
+          "posting": "Dr Liability / Cr Cash-Bank"
+        },
+        "asset": {
+          "label": "Asset Acquisition",
+          "helper": "Use for an asset purchase paid directly from cash or bank.",
+          "posting": "Dr Asset / Cr Cash-Bank"
+        },
+        "ownerDrawing": {
+          "label": "Owner's Withdrawal / Drawing",
+          "helper": "Use only for an owner's withdrawal posted to an Owner's Drawing account, not an expense or a general COA payment.",
+          "posting": "Dr Owner's Drawing / Cr Cash-Bank"
+        }
+      },
+      "targets": {
+        "nonOperating": {
+          "label": "Debit Account (Non-Operating Expense)",
+          "placeholder": "Select a 8xxx non-operating expense account"
+        },
+        "operating": {
+          "label": "Debit Account (Operating Expense)",
+          "placeholder": "Select an operating expense account"
+        },
+        "liability": {
+          "label": "Debit Account (Liability)",
+          "placeholder": "Select the liability account to reduce"
+        },
+        "asset": {
+          "label": "Debit Account (Asset)",
+          "placeholder": "Select the asset account to increase"
+        },
+        "ownerDrawing": {
+          "label": "Debit Account (Owner's Withdrawal / Drawing)",
+          "placeholder": "Select an Owner's Drawing account",
+          "help": "This list contains only active Owner's Drawing accounts permitted by the server.",
+          "empty": "There is no approved active Owner's Drawing account yet. Ask an Administrator or Accounting to mark the correct account; do not use another equity account as a substitute.",
+          "loadError": "The Owner's Drawing account list could not be loaded. Check your connection or access, then try again.",
+          "retry": "Try again"
+        },
+        "standardHelp": "A counter account is required so the system does not fall back to a generic expense account.",
+        "standardEmpty": "There is no active account suitable for {{purpose}}. Add the COA account before processing this withdrawal.",
+        "loading": "Loading available counter accounts..."
+      },
+      "journalPreview": {
+        "title": "Journal Preview",
+        "entry": "Automatic Journal Entry",
+        "balanced": "BALANCED",
+        "counterAccount": "Counter Account",
+        "balanceDecrease": "Account balance decreases",
+        "totalBalance": "Total Balanced"
+      },
+      "balancePreview": {
+        "nativeAmountOut": "Amount out (account currency)",
+        "bookAmountReleased": "Book value released",
+        "endingNativeBalance": "Ending account balance",
+        "endingBookBalance": "Ending ledger book balance: {{amount}}",
+        "carryingRate": "Book rate for the ledger release: 1 {{currency}} = {{rate}} IDR"
+      },
+      "errors": {
+        "noAccount": "No account is selected.",
+        "amountMustBeGreaterThanZero": "The withdrawal amount must be greater than zero.",
+        "insufficientBalance": "Available balance is insufficient. Available: {{available}}",
+        "targetRequired": "Select an Owner's Drawing account before posting the withdrawal.",
+        "ownerDrawingRole": "An Owner's Withdrawal / Drawing can only be posted by a Finance Manager or Director.",
+        "ownerDrawingReference": "A reference number or supporting document is required for an Owner's Withdrawal / Drawing.",
+        "ownerDrawingNotes": "A reason note is required for an Owner's Withdrawal / Drawing.",
+        "failedToProcess": "Failed to process the withdrawal.",
+        "timeout": "The withdrawal process exceeded the time limit. Wait a moment, then check the account balance before trying again."
+      },
+      "success": {
+        "title": "Owner's Drawing Recorded",
+        "description": "{{amount}} recorded as an owner's withdrawal from {{accountName}}",
+        "debit": "Debit: {{accountName}} ({{amount}})",
+        "credit": "Credit: {{accountName}} (-{{amount}})",
+        "balanced": "The automatic journal entry is balanced."
+      }
+    },
     "transactionTimeout": "Transaction Timeout",
     "transactionFailed": "Transaction Failed",
     "depositSuccessful": "Deposit Successful",

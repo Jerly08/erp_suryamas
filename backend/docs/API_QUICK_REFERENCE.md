@@ -153,7 +153,7 @@ Header: Authorization: Bearer <token>
 | DELETE | `/api/v1/cash-bank/accounts/{id}` | Delete cash bank account |
 | GET | `/api/v1/cash-bank/accounts/{id}/transactions` | Account transactions |
 | POST | `/api/v1/cash-bank/deposit` | Process deposit |
-| POST | `/api/v1/cash-bank/withdrawal` | Process withdrawal |
+| POST | `/api/v1/cash-bank/transactions/withdrawal` | Controlled owner drawing / Prive withdrawal |
 | POST | `/api/v1/cash-bank/transfer` | Bank transfer |
 | GET | `/api/v1/cash-bank/balance-summary` | Balance summary |
 

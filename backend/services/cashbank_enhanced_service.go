@@ -1,16 +1,17 @@
 package services
 
 import (
-	"context"
-	"fmt"
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/repositories"
+	"context"
+	"fmt"
 	"gorm.io/gorm"
+	"strings"
 )
 
 // CashBankEnhancedService wraps existing CashBankService with new accounting integration
 type CashBankEnhancedService struct {
-	*CashBankService                    // Embed existing service
+	*CashBankService  // Embed existing service
 	accountingService *CashBankAccountingService
 	validationService *CashBankValidationService
 }
@@ -22,10 +23,10 @@ func NewCashBankEnhancedService(
 ) *CashBankEnhancedService {
 	// Create base service
 	baseService := NewCashBankService(db, cashBankRepo, accountRepo)
-	
+
 	// Create accounting service
 	accountingService := NewCashBankAccountingService(db)
-	
+
 	// Create validation service
 	validationService := NewCashBankValidationService(db, accountingService)
 
@@ -66,7 +67,7 @@ func (s *CashBankEnhancedService) ProcessDepositV2(request DepositRequest, userI
 
 	// Get the latest transaction that was created
 	var transaction models.CashBankTransaction
-	err = s.db.Where("cash_bank_id = ? AND reference_type = ? AND amount = ?", 
+	err = s.db.Where("cash_bank_id = ? AND reference_type = ? AND amount = ?",
 		request.AccountID, models.JournalRefDeposit, request.Amount).
 		Order("created_at DESC").First(&transaction).Error
 
@@ -77,45 +78,21 @@ func (s *CashBankEnhancedService) ProcessDepositV2(request DepositRequest, userI
 	return &transaction, nil
 }
 
-// ProcessWithdrawalV2 uses the new accounting service for automatic journal entries
-func (s *CashBankEnhancedService) ProcessWithdrawalV2(request WithdrawalRequest, userID uint, expenseAccountID uint) (*models.CashBankTransaction, error) {
-	// Validate that the cash bank account is linked to COA
-	integrity, err := s.validationService.ValidateCashBankIntegrity(request.AccountID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to validate cash bank integrity: %v", err)
+// ProcessWithdrawalV2 is retained for legacy callers. Direct generic
+// withdrawals are no longer allowed, so this method delegates to the
+// policy-enforcing CashBankService implementation instead of using the lower
+// level accounting withdrawal helper (which remains valid for payment flows).
+//
+// legacyTargetAccountID is accepted only to preserve older OWNER_DRAWING
+// callers that supplied the counter account as the third argument. The normal
+// request.TargetAccountID field takes precedence when it is supplied.
+func (s *CashBankEnhancedService) ProcessWithdrawalV2(request WithdrawalRequest, userID uint, legacyTargetAccountID uint) (*models.CashBankTransaction, error) {
+	if request.TargetAccountID == nil && legacyTargetAccountID > 0 && strings.EqualFold(strings.TrimSpace(request.Purpose), WithdrawalPurposeOwnerDrawing) {
+		targetAccountID := legacyTargetAccountID
+		request.TargetAccountID = &targetAccountID
 	}
 
-	if integrity.Issue == "NOT_LINKED" {
-		return nil, fmt.Errorf("cash bank account must be linked to COA before processing transactions")
-	}
-
-	// Use new accounting service for automatic journal entries and balance sync
-	ctx := context.Background() // Create a background context
-	err = s.accountingService.ProcessCashBankWithdrawal(
-		ctx,
-		request.AccountID,
-		request.Amount,
-		expenseAccountID,
-		models.JournalRefWithdrawal,
-		0, // No specific reference for direct withdrawal
-		request.Notes,
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to process withdrawal: %v", err)
-	}
-
-	// Get the latest transaction that was created
-	var transaction models.CashBankTransaction
-	err = s.db.Where("cash_bank_id = ? AND reference_type = ? AND amount = ?", 
-		request.AccountID, models.JournalRefWithdrawal, -request.Amount).
-		Order("created_at DESC").First(&transaction).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve created transaction: %v", err)
-	}
-
-	return &transaction, nil
+	return s.CashBankService.ProcessWithdrawal(request, userID)
 }
 
 // ProcessTransferV2 uses the new accounting service for automatic journal entries
@@ -324,17 +301,17 @@ func (s *CashBankEnhancedService) getRecommendations(status map[string]interface
 
 	if issueBreakdown, ok := status["issue_breakdown"].(map[string]int); ok {
 		if count, exists := issueBreakdown["NOT_LINKED"]; exists && count > 0 {
-			recommendations = append(recommendations, 
+			recommendations = append(recommendations,
 				fmt.Sprintf("Link %d unlinked cash/bank accounts to COA accounts", count))
 		}
 
 		if count, exists := issueBreakdown["BALANCE_MISMATCH"]; exists && count > 0 {
-			recommendations = append(recommendations, 
+			recommendations = append(recommendations,
 				fmt.Sprintf("Fix %d balance mismatches using AutoFixSyncIssues()", count))
 		}
 
 		if count, exists := issueBreakdown["TRANSACTION_SUM_MISMATCH"]; exists && count > 0 {
-			recommendations = append(recommendations, 
+			recommendations = append(recommendations,
 				fmt.Sprintf("Recalculate %d accounts with transaction sum mismatches", count))
 		}
 	}

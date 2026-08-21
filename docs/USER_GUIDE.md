@@ -678,16 +678,18 @@ Digunakan untuk mencatat penerimaan uang ke dalam akun (misal: Setoran Modal).
 4. Klik **Process Deposit**.
 
 ### b. Tarik Dana (Make Withdrawal)
-Digunakan untuk mencatat pengeluaran uang dari akun.
+Digunakan khusus untuk mencatat **pengambilan pemilik/Prive** dari akun kas atau bank.
 1. Klik ikon **Make Withdrawal** (panah turun oranye).
 2. Isi form:
     - **Transaction Date**: Tanggal transaksi.
     - **Amount**: Jumlah uang yang dikeluarkan.
     - **Reference**: Nomor referensi.
-    - **Notes**: Catatan.
-3. **Manual Journal Mode** (Opsional):
-    - Jika diaktifkan, Anda dapat menentukan jurnal manual untuk transaksi ini (misal: untuk memecah biaya ke beberapa akun beban).
+    - **Notes**: Alasan pengambilan.
+    - **Owner Drawing / Prive Account**: Pilih akun Prive yang telah disetujui.
+3. Hanya Finance Manager atau Direktur yang dapat memposting transaksi ini.
 4. Klik **Process Withdrawal**.
+
+Untuk biaya, utang vendor, pajak/payroll, atau pembelian aset, gunakan modul Pembayaran, Purchases, Pajak, atau Payroll yang sesuai. Untuk perpindahan antar rekening internal gunakan Transfer Dana.
 
 ### c. Transfer Dana (Transfer Funds)
 Digunakan untuk memindahkan dana antar akun internal (misal: dari Bank ke Kas Kecil).
@@ -797,5 +799,4 @@ Sistem mendukung dua metode penyusutan utama:
    - Menggunakan tarif penyusutan ganda dari metode garis lurus.
 
 Nilai buku aset akan berkurang secara otomatis seiring berjalannya waktu berdasarkan metode yang dipilih.
-
 

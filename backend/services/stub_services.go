@@ -4,6 +4,7 @@ import (
 	"app-sistem-akuntansi/models"
 	"app-sistem-akuntansi/utils"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -718,6 +719,51 @@ func (s *CashBankSSOTJournalAdapter) CreateDepositJournalEntryWithTx(tx *gorm.DB
 
 func (s *CashBankSSOTJournalAdapter) CreateWithdrawalJournalEntryWithTx(tx *gorm.DB, account *models.CashBank, transaction *models.CashBankTransaction, request *CashBankJournalRequest) (*models.SSOTJournalEntry, error) {
 	// ✅ CASH & BANK auto-posting is ALLOWED (different from sales)
+	// This adapter is deliberately owner-drawing-only.  Keep the invariant here
+	// as well as in ProcessWithdrawal so a future internal caller cannot revive
+	// a generic expense/liability/asset withdrawal simply by passing a counter
+	// account.
+	if request == nil || request.TransactionType != TransactionTypeOwnerDrawing {
+		return nil, fmt.Errorf("withdrawal journal is restricted to OWNER_DRAWING; use the payment, purchase, or transfer workflow for business transactions")
+	}
+	if account == nil {
+		return nil, fmt.Errorf("owner drawing journal requires a cash/bank account")
+	}
+	// An owner drawing may never silently fall back to a generic expense account.
+	// The caller must choose and validate an explicit Prive counter account before
+	// a journal is created.
+	if request == nil || request.CounterAccountID == nil || *request.CounterAccountID == 0 {
+		return nil, fmt.Errorf("withdrawal journal requires an explicit counter account; default expense fallback is disabled")
+	}
+	if request.CreatedBy == 0 {
+		return nil, fmt.Errorf("owner drawing journal requires an authenticated Finance Manager or Director")
+	}
+
+	var creator models.User
+	if err := tx.Where("id = ? AND deleted_at IS NULL AND is_active = ?", request.CreatedBy, true).First(&creator).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("owner drawing journal requires an active Finance Manager or Director")
+		}
+		return nil, fmt.Errorf("failed to verify owner drawing journal authority: %w", err)
+	}
+	if !models.IsFinanceManagerRole(creator.Role) && models.NormalizeRole(creator.Role) != models.RoleDirector {
+		return nil, fmt.Errorf("owner drawing journal may only be posted by a Finance Manager or Director")
+	}
+
+	var counterAccount models.Account
+	if err := tx.Where("id = ? AND deleted_at IS NULL", *request.CounterAccountID).First(&counterAccount).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("owner drawing counter account %d not found", *request.CounterAccountID)
+		}
+		return nil, fmt.Errorf("failed to load owner drawing counter account %d: %w", *request.CounterAccountID, err)
+	}
+	if !isOwnerDrawingAccount(&counterAccount) {
+		return nil, fmt.Errorf("counter account %s is not an eligible prive/owner drawing equity account", counterAccount.Code)
+	}
+	if counterAccount.ID == account.AccountID {
+		return nil, fmt.Errorf("counter account %s must be different from the cash/bank GL account", counterAccount.Code)
+	}
+
 	return s.createActualWithdrawalJournalEntry(tx, account, transaction, request)
 }
 
@@ -1036,6 +1082,10 @@ func (s *CashBankSSOTJournalAdapter) createActualDepositJournalEntry(tx *gorm.DB
 }
 
 func (s *CashBankSSOTJournalAdapter) createActualWithdrawalJournalEntry(tx *gorm.DB, account *models.CashBank, transaction *models.CashBankTransaction, request *CashBankJournalRequest) (*models.SSOTJournalEntry, error) {
+	if request == nil || request.CounterAccountID == nil || *request.CounterAccountID == 0 {
+		return nil, fmt.Errorf("withdrawal journal requires an explicit counter account; default expense fallback is disabled")
+	}
+
 	// Create SSOT journal entry for withdrawal and proper lines (Debit expense/target, Credit Cash/Bank)
 	// Insert as DRAFT first to avoid trigger validation before lines are created
 	var sourceID *uint64
@@ -1072,17 +1122,10 @@ func (s *CashBankSSOTJournalAdapter) createActualWithdrawalJournalEntry(tx *gorm
 	if err := tx.Create(journal).Error; err != nil {
 		return nil, fmt.Errorf("failed to create withdrawal journal entry: %v", err)
 	}
-	// Determine debit account (target/expense)
-	var debitAccountID uint64
-	if request.CounterAccountID != nil && *request.CounterAccountID > 0 {
-		debitAccountID = *request.CounterAccountID
-	} else {
-		if id, err := findDefaultExpenseAccountID(tx); err == nil {
-			debitAccountID = id
-		} else {
-			return nil, fmt.Errorf("failed to resolve expense account: %v", err)
-		}
-	}
+	// The public adapter checks this before creating a journal. Keep the
+	// dereference explicit here to make the absence of a default-expense path
+	// clear even if this implementation is reused internally later.
+	debitAccountID := *request.CounterAccountID
 	debitAccountName := "Counter Account"
 	if resolvedAccount, err := findAccountByID(tx, debitAccountID); err == nil && resolvedAccount != nil {
 		debitAccountName = resolvedAccount.Name
@@ -1965,51 +2008,6 @@ func findAccountByID(tx *gorm.DB, accountID uint64) (*models.Account, error) {
 		return nil, err
 	}
 	return &account, nil
-}
-
-func findDefaultExpenseAccountID(tx *gorm.DB) (uint64, error) {
-	// Try code 6999 (Misc Expense) as a common default if exists
-	type row struct {
-		ID   uint64
-		Code string
-		Type string
-	}
-	var r row
-	if err := tx.Raw("SELECT id, code, type FROM accounts WHERE deleted_at IS NULL AND code = '6999' LIMIT 1").Scan(&r).Error; err == nil && r.ID > 0 {
-		return r.ID, nil
-	}
-
-	// Create default 6999 if not found
-	log.Printf("⚠️ [EXPENSE LOOKUP] Default expense account not found, creating 6999")
-	newExpense := &models.Account{
-		Code:        "6999",
-		Name:        "BEBAN LAIN-LAIN",
-		Type:        "EXPENSE",
-		Category:    "OPERATING_EXPENSE",
-		Level:       3,
-		IsHeader:    false,
-		IsActive:    true,
-		Description: "Auto-created default expense account",
-	}
-
-	// Try to find parent 6000
-	var parentID uint
-	if err := tx.Raw("SELECT id FROM accounts WHERE code = '6000' LIMIT 1").Scan(&parentID).Error; err == nil && parentID > 0 {
-		newExpense.ParentID = &parentID
-	}
-
-	if err := tx.Create(newExpense).Error; err != nil {
-		log.Printf("⚠️ [EXPENSE LOOKUP] Failed to create 6999: %v. Fallback to any EXPENSE account", err)
-		// Fallback: any EXPENSE account
-		r = row{}
-		if err := tx.Raw("SELECT id, code, type FROM accounts WHERE deleted_at IS NULL AND type = 'EXPENSE' ORDER BY code LIMIT 1").Scan(&r).Error; err == nil && r.ID > 0 {
-			return r.ID, nil
-		}
-		return 0, fmt.Errorf("no default EXPENSE account found")
-	}
-
-	log.Printf("✅ [EXPENSE LOOKUP] Created default expense account 6999: ID=%d", newExpense.ID)
-	return uint64(newExpense.ID), nil
 }
 
 // UltraFastPaymentService STUB

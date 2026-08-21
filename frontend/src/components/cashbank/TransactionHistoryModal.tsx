@@ -260,7 +260,10 @@ const TransactionHistoryModal: React.FC<TransactionHistoryModalProps> = ({
       case 'WITHDRAWAL':
         return { label: t('common.transactionTypes.withdrawal'), color: 'red' };
       case 'OWNER_DRAWING':
-        return { label: 'Pengambilan Pemilik / Prive', color: 'orange' };
+        return {
+          label: t('cashBank.withdrawalForm.purposes.ownerDrawing.label'),
+          color: 'orange',
+        };
       case 'TRANSFER':
         return { label: t('common.transactionTypes.transfer'), color: 'blue' };
       case 'OPENING_BALANCE':

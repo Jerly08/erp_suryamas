@@ -10,6 +10,7 @@ import (
 	"app-sistem-akuntansi/repositories"
 
 	"github.com/glebarez/sqlite"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -225,7 +226,7 @@ func TestProcessWithdrawalOwnerDrawingAllowsDirector(t *testing.T) {
 	require.Equal(t, TransactionTypeOwnerDrawing, transaction.ReferenceType)
 }
 
-func TestProcessWithdrawalOwnerDrawingRejectsRetainedEarningsAndKeepsGenericRules(t *testing.T) {
+func TestProcessWithdrawalOwnerDrawingRejectsRetainedEarningsWithoutSideEffects(t *testing.T) {
 	db := setupOwnerDrawingTestDB(t)
 	fixture := seedOwnerDrawingFixture(t, db)
 
@@ -236,27 +237,234 @@ func TestProcessWithdrawalOwnerDrawingRejectsRetainedEarningsAndKeepsGenericRule
 	require.ErrorContains(t, err, "not an eligible prive/owner drawing equity account")
 	require.EqualValues(t, 1, cashBankTransactionCount(t, db))
 
-	// A generic withdrawal still has its established behavior: Accounting can
-	// post it to an allowed expense account, but cannot use equity simply by
-	// omitting the OWNER_DRAWING purpose.
-	genericTargetID := fixture.expenseAccount.ID
-	genericRequest := WithdrawalRequest{
-		AccountID:       fixture.cashBank.ID,
-		Date:            CustomDate(time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC)),
-		Amount:          25_000,
-		TargetAccountID: &genericTargetID,
-		Reference:       "WIT-20260821-001",
-		Notes:           "Beban operasional test",
-	}
-	transaction, err := fixture.service.ProcessWithdrawal(genericRequest, fixture.accounting.ID)
-	require.NoError(t, err)
-	require.Equal(t, TransactionTypeWithdrawal, transaction.ReferenceType)
+	var reloadedCashBank models.CashBank
+	require.NoError(t, db.First(&reloadedCashBank, fixture.cashBank.ID).Error)
+	require.InDelta(t, 500_000, reloadedCashBank.Balance, 0.001)
+}
 
-	priveTargetID := fixture.priveAccount.ID
-	genericRequest.TargetAccountID = &priveTargetID
-	genericRequest.Reference = "WIT-20260821-002"
-	_, err = fixture.service.ProcessWithdrawal(genericRequest, fixture.accounting.ID)
-	require.ErrorContains(t, err, "counter account 3102 has invalid type EQUITY")
+func TestProcessWithdrawalRejectsNonOwnerDrawingPurposesWithoutSideEffects(t *testing.T) {
+	db := setupOwnerDrawingTestDB(t)
+	fixture := seedOwnerDrawingFixture(t, db)
+	targetAccountID := fixture.expenseAccount.ID
+
+	testCases := []struct {
+		name          string
+		purpose       string
+		expectedRoute string
+	}{
+		{
+			name:          "missing purpose",
+			purpose:       "",
+			expectedRoute: "Payment workflow",
+		},
+		{
+			name:          "operating expense",
+			purpose:       WithdrawalPurposeOperatingExpense,
+			expectedRoute: "Payment workflow",
+		},
+		{
+			name:          "non-operating expense",
+			purpose:       WithdrawalPurposeNonOperatingExpense,
+			expectedRoute: "Payment workflow",
+		},
+		{
+			name:          "liability payment",
+			purpose:       WithdrawalPurposeLiabilityPayment,
+			expectedRoute: "Payment workflow",
+		},
+		{
+			name:          "asset acquisition",
+			purpose:       WithdrawalPurposeAssetAcquisition,
+			expectedRoute: "Purchase workflow",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := WithdrawalRequest{
+				AccountID:       fixture.cashBank.ID,
+				Date:            CustomDate(time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC)),
+				Amount:          25_000,
+				Purpose:         testCase.purpose,
+				TargetAccountID: &targetAccountID,
+				Reference:       "WIT-20260821-001",
+				Notes:           "Generic direct withdrawal must be rejected",
+			}
+
+			_, err := fixture.service.ProcessWithdrawal(request, fixture.accounting.ID)
+			require.ErrorContains(t, err, "invalid withdrawal purpose")
+			require.ErrorContains(t, err, "OWNER_DRAWING")
+			require.ErrorContains(t, err, testCase.expectedRoute)
+			require.EqualValues(t, 1, cashBankTransactionCount(t, db), "only opening balance may exist")
+
+			var reloadedCashBank models.CashBank
+			require.NoError(t, db.First(&reloadedCashBank, fixture.cashBank.ID).Error)
+			require.InDelta(t, 500_000, reloadedCashBank.Balance, 0.001)
+		})
+	}
+}
+
+func TestWithdrawalJournalRequiresExplicitCounterAccount(t *testing.T) {
+	db := setupOwnerDrawingTestDB(t)
+	fixture := seedOwnerDrawingFixture(t, db)
+
+	transaction := &models.CashBankTransaction{ID: 99}
+	journalRequest := &CashBankJournalRequest{
+		TransactionType: TransactionTypeOwnerDrawing,
+		CashBankID:      uint64(fixture.cashBank.ID),
+		Date:            time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC),
+		Reference:       "PRV-20260821-NO-COUNTER",
+		Description:     "Must not create a default expense journal",
+		CreatedBy:       uint64(fixture.financeManager.ID),
+	}
+
+	tx := db.Begin()
+	require.NoError(t, tx.Error)
+	defer tx.Rollback()
+
+	_, err := fixture.service.sSOTJournalAdapter.CreateWithdrawalJournalEntryWithTx(
+		tx,
+		&fixture.cashBank,
+		transaction,
+		journalRequest,
+	)
+	require.ErrorContains(t, err, "requires an explicit counter account")
+	require.ErrorContains(t, err, "default expense fallback is disabled")
+
+	var journalCount int64
+	require.NoError(t, db.Model(&models.SSOTJournalEntry{}).Count(&journalCount).Error)
+	require.Zero(t, journalCount, "the adapter must reject before creating a journal")
+}
+
+func TestWithdrawalJournalRejectsGenericTransactionTypeEvenWithCounterAccount(t *testing.T) {
+	db := setupOwnerDrawingTestDB(t)
+	fixture := seedOwnerDrawingFixture(t, db)
+
+	counterAccountID := uint64(fixture.expenseAccount.ID)
+	journalRequest := &CashBankJournalRequest{
+		TransactionType:  TransactionTypeWithdrawal,
+		CashBankID:       uint64(fixture.cashBank.ID),
+		Amount:           decimal.NewFromInt(25_000),
+		Date:             time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC),
+		Reference:        "WIT-20260821-GENERIC",
+		Description:      "Generic direct withdrawal must be blocked",
+		CounterAccountID: &counterAccountID,
+		CreatedBy:        uint64(fixture.financeManager.ID),
+	}
+
+	tx := db.Begin()
+	require.NoError(t, tx.Error)
+	defer tx.Rollback()
+
+	_, err := fixture.service.sSOTJournalAdapter.CreateWithdrawalJournalEntryWithTx(
+		tx,
+		&fixture.cashBank,
+		&models.CashBankTransaction{ID: 100},
+		journalRequest,
+	)
+	require.ErrorContains(t, err, "restricted to OWNER_DRAWING")
+
+	var journalCount int64
+	require.NoError(t, db.Model(&models.SSOTJournalEntry{}).Count(&journalCount).Error)
+	require.Zero(t, journalCount, "the adapter must reject before creating a generic withdrawal journal")
+}
+
+func TestWithdrawalJournalRejectsForgedOwnerDrawingWithNonPriveAccount(t *testing.T) {
+	db := setupOwnerDrawingTestDB(t)
+	fixture := seedOwnerDrawingFixture(t, db)
+
+	counterAccountID := uint64(fixture.expenseAccount.ID)
+	journalRequest := &CashBankJournalRequest{
+		TransactionType:  TransactionTypeOwnerDrawing,
+		CashBankID:       uint64(fixture.cashBank.ID),
+		Amount:           decimal.NewFromInt(25_000),
+		Date:             time.Date(2026, time.August, 21, 0, 0, 0, 0, time.UTC),
+		Reference:        "PRV-20260821-FORGED",
+		Description:      "Forged owner drawing must be blocked",
+		CounterAccountID: &counterAccountID,
+		CreatedBy:        uint64(fixture.financeManager.ID),
+	}
+
+	tx := db.Begin()
+	require.NoError(t, tx.Error)
+	defer tx.Rollback()
+
+	_, err := fixture.service.sSOTJournalAdapter.CreateWithdrawalJournalEntryWithTx(
+		tx,
+		&fixture.cashBank,
+		&models.CashBankTransaction{ID: 101},
+		journalRequest,
+	)
+	require.ErrorContains(t, err, "not an eligible prive/owner drawing equity account")
+
+	var journalCount int64
+	require.NoError(t, db.Model(&models.SSOTJournalEntry{}).Count(&journalCount).Error)
+	require.Zero(t, journalCount, "the adapter must reject before creating a forged owner drawing journal")
+}
+
+func TestLegacyWithdrawalEntryPointsDelegateToControlledOwnerDrawing(t *testing.T) {
+	t.Run("simple service", func(t *testing.T) {
+		db := setupOwnerDrawingTestDB(t)
+		fixture := seedOwnerDrawingFixture(t, db)
+
+		transaction, err := fixture.service.ProcessWithdrawalSimple(
+			ownerDrawingRequest(fixture, fixture.priveAccount.ID),
+			fixture.financeManager.ID,
+		)
+		require.NoError(t, err)
+		require.Equal(t, TransactionTypeOwnerDrawing, transaction.ReferenceType)
+	})
+
+	t.Run("enhanced service accepts legacy owner drawing target", func(t *testing.T) {
+		db := setupOwnerDrawingTestDB(t)
+		fixture := seedOwnerDrawingFixture(t, db)
+		enhancedService := NewCashBankEnhancedService(
+			db,
+			repositories.NewCashBankRepository(db),
+			repositories.NewAccountRepository(db),
+		)
+
+		request := ownerDrawingRequest(fixture, fixture.priveAccount.ID)
+		request.TargetAccountID = nil
+		transaction, err := enhancedService.ProcessWithdrawalV2(
+			request,
+			fixture.financeManager.ID,
+			fixture.priveAccount.ID,
+		)
+		require.NoError(t, err)
+		require.Equal(t, TransactionTypeOwnerDrawing, transaction.ReferenceType)
+	})
+}
+
+func TestLegacyWithdrawalEntryPointsRejectGenericDirectWithdrawals(t *testing.T) {
+	t.Run("simple service", func(t *testing.T) {
+		db := setupOwnerDrawingTestDB(t)
+		fixture := seedOwnerDrawingFixture(t, db)
+		request := ownerDrawingRequest(fixture, fixture.expenseAccount.ID)
+		request.Purpose = WithdrawalPurposeOperatingExpense
+
+		_, err := fixture.service.ProcessWithdrawalSimple(request, fixture.accounting.ID)
+		require.ErrorContains(t, err, "invalid withdrawal purpose")
+		require.ErrorContains(t, err, "Payment workflow")
+		require.EqualValues(t, 1, cashBankTransactionCount(t, db))
+	})
+
+	t.Run("enhanced service", func(t *testing.T) {
+		db := setupOwnerDrawingTestDB(t)
+		fixture := seedOwnerDrawingFixture(t, db)
+		enhancedService := NewCashBankEnhancedService(
+			db,
+			repositories.NewCashBankRepository(db),
+			repositories.NewAccountRepository(db),
+		)
+		request := ownerDrawingRequest(fixture, fixture.expenseAccount.ID)
+		request.Purpose = WithdrawalPurposeOperatingExpense
+
+		_, err := enhancedService.ProcessWithdrawalV2(request, fixture.accounting.ID, fixture.expenseAccount.ID)
+		require.ErrorContains(t, err, "invalid withdrawal purpose")
+		require.ErrorContains(t, err, "Payment workflow")
+		require.EqualValues(t, 1, cashBankTransactionCount(t, db))
+	})
 }
 
 func TestOwnerDrawingValidationAndLookupOnlyExposeEligiblePriveAccounts(t *testing.T) {

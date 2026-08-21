@@ -2427,6 +2427,160 @@
     "balancePreview": "Pratinjau Saldo",
     "availableBalance": "Saldo Tersedia",
     "newBalanceAfter": "Saldo baru setelah",
+    "withdrawalForm": {
+      "ownerDrawingTitle": "Pengambilan Pemilik / Prive",
+      "ownerDrawingDetails": "Detail Pengambilan Pemilik",
+      "autoJournal": "JURNAL OTOMATIS",
+      "accountTypeCash": "KAS",
+      "accountTypeBank": "BANK",
+      "currentNativeBalance": "Saldo Rekening Saat Ini",
+      "available": "Tersedia",
+      "ledgerBookBalance": "Nilai buku ledger: {{amount}}",
+      "availableToUse": "Saldo yang dapat digunakan: {{amount}}",
+      "nativeBadge": "MATA UANG AKUN {{currency}}",
+      "bookIdrBadge": "NILAI BUKU IDR",
+      "foreignCurrencyImpact": "Penarikan {{currency}} mengurangi saldo rekening dalam {{currency}} serta nilai buku ledger dalam IDR.",
+      "idrImpact": "Untuk rekening IDR, saldo rekening dan nilai buku ledger berkurang dengan nominal yang sama.",
+      "foreignCurrencyRateHelp": "Sistem menggunakan kurs buku saat ini untuk melepas nilai buku IDR; formulir ini tidak meminta kurs baru.",
+      "idrBalanceHelp": "Sistem hanya mengizinkan pemakaian saldo tersedia, bukan saldo yang sedang dibekukan.",
+      "amountExceedsAvailable": "Nominal melebihi saldo tersedia dan tidak dapat diposting.",
+      "postingMapping": "Pemetaan Jurnal",
+      "ownerDrawingJournalMapping": "Pemetaan Jurnal Prive",
+      "ownerDrawingMappingHelp": "Pilih akun Prive yang telah disetujui. Tidak semua akun Ekuitas dapat digunakan untuk pengambilan pemilik.",
+      "ownerDrawingMappingDescription": "Pengambilan pemilik akan dicatat sebagai {{posting}}. Pilih akun Prive yang telah disetujui agar transaksi tidak masuk sebagai beban atau pembayaran COA umum.",
+      "standardMappingHelp": "Pilih tujuan jurnal debit agar penarikan langsung dicatat ke beban operasional, beban non-operasional, kewajiban, atau aset yang tepat.",
+      "purpose": "Tujuan Penarikan / Kelompok Debit",
+      "mappingTitle": "Pemetaan Jurnal",
+      "mappingDescription": "{{purpose}} berarti {{posting}}. Ini membantu memastikan transaksi keluar tidak selalu dicatat sebagai beban operasional.",
+      "ownerControlTitle": "Kontrol Pengambilan Pemilik",
+      "ownerControlDescription": "Hanya Finance Manager atau Direktur yang dapat memposting transaksi ini. Referensi dan alasan wajib diisi; sistem akan memvalidasi akun Prive yang dipilih.",
+      "ownerControlRoleDenied": "Peran Anda tidak dapat memposting Pengambilan Pemilik / Prive.",
+      "ownerReferenceHelp": "Nomor bukti atau referensi pengambilan wajib dicatat untuk jejak audit.",
+      "ownerNotesHelp": "Jelaskan alasan serta pihak pemilik yang menerima pengambilan ini.",
+      "ownerDrawingOnlyTitle": "Penarikan langsung khusus Pengambilan Pemilik / Prive",
+      "ownerDrawingOnlyDescription": "Form ini hanya digunakan untuk mencatat pengambilan pemilik ke akun Prive yang disetujui. Beban, utang, aset, dan perpindahan dana harus diproses melalui alur asalnya agar dokumen serta subledger tetap sinkron.",
+      "guidedWorkflows": {
+        "title": "Butuh transaksi lain?",
+        "description": "Pilih alur yang sesuai. Tautan ini tidak membuat jurnal dari form penarikan.",
+        "expense": {
+          "title": "Bayar beban atau kewajiban umum",
+          "description": "Gunakan Pembayaran untuk pembayaran COA, beban operasional/non-operasional, dan kewajiban umum.",
+          "action": "Buka Pembayaran"
+        },
+        "vendor": {
+          "title": "Bayar utang vendor / termin",
+          "description": "Gunakan Pembayaran lalu pilih invoice atau termin pembelian agar saldo utang dan riwayat vendor ikut terlunasi.",
+          "action": "Buka Pembayaran Vendor"
+        },
+        "asset": {
+          "title": "Beli aset",
+          "description": "Buat Pembelian dengan item bertipe Aset agar vendor, PPN, Asset Register, dan depresiasi tercatat lengkap.",
+          "action": "Buka Pembelian"
+        },
+        "payroll": {
+          "title": "Bayar gaji, BPJS, atau PPh",
+          "description": "Gunakan Payroll agar status penggajian dan kewajiban terkait ikut diperbarui.",
+          "action": "Buka Payroll"
+        },
+        "transfer": {
+          "title": "Pindahkan dana antar rekening",
+          "description": "Untuk memindahkan dana dari {{accountName}} ke bank atau kas kecil lain, tutup form ini lalu pilih Transfer Dana pada rekening tersebut. Jangan catat sebagai penarikan.",
+          "action": "Tutup form penarikan"
+        }
+      },
+      "targetBalance": "Saldo: {{amount}}",
+      "processing": "Memproses pengambilan Prive...",
+      "submitOwnerDrawing": "Catat Pengambilan Prive",
+      "purposes": {
+        "nonOperating": {
+          "label": "Beban Non-Operasional",
+          "helper": "Digunakan untuk bunga, rugi selisih kurs, rugi penjualan aset, dan beban non-operasional lainnya.",
+          "posting": "Dr 8xxx / Cr Kas-Bank"
+        },
+        "operating": {
+          "label": "Beban Operasional",
+          "helper": "Digunakan untuk biaya operasional rutin seperti sewa, listrik, utilitas, dan biaya administrasi.",
+          "posting": "Dr 6xxx / Cr Kas-Bank"
+        },
+        "liability": {
+          "label": "Pembayaran Kewajiban",
+          "helper": "Digunakan untuk pelunasan utang atau pengurangan kewajiban dari kas/bank.",
+          "posting": "Dr Kewajiban / Cr Kas-Bank"
+        },
+        "asset": {
+          "label": "Pembelian Aset",
+          "helper": "Digunakan untuk pembelian aset yang langsung dibayar dari kas/bank.",
+          "posting": "Dr Aset / Cr Kas-Bank"
+        },
+        "ownerDrawing": {
+          "label": "Pengambilan Pemilik / Prive",
+          "helper": "Digunakan khusus untuk pengambilan pemilik yang dicatat ke akun Prive, bukan sebagai beban atau pembayaran COA umum.",
+          "posting": "Dr Prive / Cr Kas-Bank"
+        }
+      },
+      "targets": {
+        "nonOperating": {
+          "label": "Akun Debit (Beban Non-Operasional)",
+          "placeholder": "Pilih akun beban non-operasional 8xxx"
+        },
+        "operating": {
+          "label": "Akun Debit (Beban Operasional)",
+          "placeholder": "Pilih akun beban operasional"
+        },
+        "liability": {
+          "label": "Akun Debit (Kewajiban)",
+          "placeholder": "Pilih akun kewajiban yang dikurangi"
+        },
+        "asset": {
+          "label": "Akun Debit (Aset)",
+          "placeholder": "Pilih akun aset yang bertambah"
+        },
+        "ownerDrawing": {
+          "label": "Akun Debit (Pengambilan Pemilik / Prive)",
+          "placeholder": "Pilih akun Prive / Pengambilan Pemilik",
+          "help": "Daftar ini hanya berisi akun Prive/Pengambilan Pemilik aktif yang diizinkan oleh server.",
+          "empty": "Belum ada akun Prive/Pengambilan Pemilik aktif yang disetujui. Hubungi Administrator atau Accounting untuk menandai akun yang tepat; jangan gunakan akun Ekuitas lain sebagai pengganti.",
+          "loadError": "Daftar akun Prive tidak dapat dimuat. Periksa koneksi atau akses Anda, lalu coba lagi.",
+          "retry": "Coba lagi"
+        },
+        "standardHelp": "Akun lawan jurnal wajib dipilih agar sistem tidak memakai akun beban umum sebagai cadangan.",
+        "standardEmpty": "Belum ada akun aktif yang cocok untuk {{purpose}}. Tambahkan akun COA terlebih dahulu sebelum memproses penarikan ini.",
+        "loading": "Memuat daftar akun lawan jurnal..."
+      },
+      "journalPreview": {
+        "title": "Pratinjau Jurnal",
+        "entry": "Jurnal Otomatis",
+        "balanced": "SEIMBANG",
+        "counterAccount": "Akun Lawan",
+        "balanceDecrease": "Saldo rekening berkurang",
+        "totalBalance": "Total Seimbang"
+      },
+      "balancePreview": {
+        "nativeAmountOut": "Nominal keluar (mata uang akun)",
+        "bookAmountReleased": "Nilai buku yang dilepas",
+        "endingNativeBalance": "Saldo rekening akhir",
+        "endingBookBalance": "Saldo buku akhir: {{amount}}",
+        "carryingRate": "Kurs buku untuk pelepasan ledger: 1 {{currency}} = {{rate}} IDR"
+      },
+      "errors": {
+        "noAccount": "Belum ada rekening yang dipilih.",
+        "amountMustBeGreaterThanZero": "Nominal penarikan harus lebih besar dari nol.",
+        "insufficientBalance": "Saldo tersedia tidak cukup. Tersedia: {{available}}",
+        "targetRequired": "Pilih akun Prive / Pengambilan Pemilik terlebih dahulu.",
+        "ownerDrawingRole": "Pengambilan Pemilik / Prive hanya dapat diposting oleh Finance Manager atau Direktur.",
+        "ownerDrawingReference": "Nomor referensi atau bukti wajib diisi untuk Pengambilan Pemilik / Prive.",
+        "ownerDrawingNotes": "Catatan alasan pengambilan wajib diisi untuk Pengambilan Pemilik / Prive.",
+        "failedToProcess": "Gagal memproses penarikan.",
+        "timeout": "Proses penarikan melebihi batas waktu. Tunggu sebentar lalu periksa saldo rekening sebelum mencoba kembali."
+      },
+      "success": {
+        "title": "Pengambilan Prive Berhasil",
+        "description": "{{amount}} dicatat sebagai pengambilan pemilik dari {{accountName}}",
+        "debit": "Debit: {{accountName}} ({{amount}})",
+        "credit": "Kredit: {{accountName}} (-{{amount}})",
+        "balanced": "Jurnal otomatis sudah seimbang."
+      }
+    },
     "transactionTimeout": "Waktu Transaksi Habis",
     "transactionFailed": "Transaksi Gagal",
     "depositSuccessful": "Setor dana berhasil",

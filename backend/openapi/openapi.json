@@ -6066,18 +6066,29 @@
         "notes": {
           "type": "string"
         },
+        "purpose": {
+          "description": "Must be OWNER_DRAWING. Direct cash/bank withdrawal is only for controlled owner drawing / Prive.",
+          "enum": [
+            "OWNER_DRAWING"
+          ],
+          "type": "string"
+        },
         "reference": {
           "type": "string"
         },
         "target_account_id": {
-          "description": "Optional: Expense account for withdrawal target",
+          "description": "Required: active leaf EQUITY account explicitly configured as Prive / owner drawing.",
           "type": "integer"
         }
       },
       "required": [
         "account_id",
         "amount",
-        "date"
+        "date",
+        "notes",
+        "purpose",
+        "reference",
+        "target_account_id"
       ],
       "type": "object"
     },
@@ -6691,15 +6702,40 @@
     },
     "/api/v1/cash-bank/transactions/withdrawal": {
       "post": {
-        "summary": "POST /api/v1/cash-bank/transactions/withdrawal",
-        "description": "Auto-generated documentation placeholder for active route POST /api/v1/cash-bank/transactions/withdrawal. Add Swagger annotations to the bound handler for full request/response metadata.",
-        "tags": [
-          "Cash Bank"
+        "consumes": [
+          "application/json"
         ],
+        "description": "Creates a controlled owner drawing / Prive transaction. Direct withdrawals are reserved for an approved Prive account and require an active Finance Manager or Director. Record expenses and liabilities through Payments, asset purchases through Purchases, and internal cash/bank movements through Transfer.",
+        "tags": [
+          "CashBank"
+        ],
+        "parameters": [
+          {
+            "description": "Owner drawing / Prive withdrawal data",
+            "in": "body",
+            "name": "withdrawal",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/services.WithdrawalRequest"
+            }
+          }
+        ],
+        "produces": [
+          "application/json"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "summary": "Process controlled owner drawing / Prive withdrawal",
         "operationId": "post_api_v1_cash_bank_transactions_withdrawal",
         "responses": {
-          "200": {
-            "description": "Success"
+          "201": {
+            "description": "Created",
+            "schema": {
+              "$ref": "#/definitions/models.CashBankTransaction"
+            }
           }
         }
       }
@@ -6764,10 +6800,10 @@
         "consumes": [
           "application/json"
         ],
-        "description": "Withdraw money from cash/bank account",
+        "description": "Compatibility alias for /api/v1/cash-bank/transactions/withdrawal. Creates a controlled owner drawing / Prive only; it is not a generic expense, liability, asset, or transfer endpoint.",
         "parameters": [
           {
-            "description": "Withdrawal data",
+            "description": "Owner drawing / Prive withdrawal data",
             "in": "body",
             "name": "withdrawal",
             "required": true,
@@ -6792,7 +6828,7 @@
             "Bearer": []
           }
         ],
-        "summary": "Process withdrawal",
+        "summary": "Process controlled owner drawing / Prive withdrawal (compatibility alias)",
         "tags": [
           "CashBank"
         ],
@@ -8461,21 +8497,6 @@
           "Cashbank"
         ],
         "operationId": "post_api_v1_cashbank_deposit",
-        "responses": {
-          "200": {
-            "description": "Success"
-          }
-        }
-      }
-    },
-    "/api/v1/cashbank/withdrawal": {
-      "post": {
-        "summary": "POST /api/v1/cashbank/withdrawal",
-        "description": "Auto-generated documentation placeholder for active route POST /api/v1/cashbank/withdrawal. Add Swagger annotations to the bound handler for full request/response metadata.",
-        "tags": [
-          "Cashbank"
-        ],
-        "operationId": "post_api_v1_cashbank_withdrawal",
         "responses": {
           "200": {
             "description": "Success"

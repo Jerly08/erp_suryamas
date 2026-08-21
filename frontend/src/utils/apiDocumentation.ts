@@ -13,15 +13,15 @@ export const SWAGGER_ENDPOINTS = {
   // Admin
   ADMIN_CHECK_CASHBANK_GL: '/api/admin/check-cashbank-gl-links',
 
-  // CashBank (legacy group under v1)
-  CASHBANK_ACCOUNTS: '/api/v1/cashbank/accounts',
-  CASHBANK_ACCOUNT_BY_ID: (id: number) => `/api/v1/cashbank/accounts/${id}`,
-  CASHBANK_ACCOUNT_TRANSACTIONS: (id: number) => `/api/v1/cashbank/accounts/${id}/transactions`,
-  CASHBANK_BALANCE_SUMMARY: '/api/v1/cashbank/balance-summary',
-  CASHBANK_DEPOSIT: '/api/v1/cashbank/deposit',
-  CASHBANK_PAYMENT_ACCOUNTS: '/api/v1/cashbank/payment-accounts',
-  CASHBANK_TRANSFER: '/api/v1/cashbank/transfer',
-  CASHBANK_WITHDRAWAL: '/api/v1/cashbank/withdrawal',
+  // CashBank
+  CASHBANK_ACCOUNTS: '/api/v1/cash-bank/accounts',
+  CASHBANK_ACCOUNT_BY_ID: (id: number) => `/api/v1/cash-bank/accounts/${id}`,
+  CASHBANK_ACCOUNT_TRANSACTIONS: (id: number) => `/api/v1/cash-bank/accounts/${id}/transactions`,
+  CASHBANK_BALANCE_SUMMARY: '/api/v1/cash-bank/reports/balance-summary',
+  CASHBANK_DEPOSIT: '/api/v1/cash-bank/transactions/deposit',
+  CASHBANK_PAYMENT_ACCOUNTS: '/api/v1/cash-bank/reports/payment-accounts',
+  CASHBANK_TRANSFER: '/api/v1/cash-bank/transactions/transfer',
+  CASHBANK_WITHDRAWAL: '/api/v1/cash-bank/transactions/withdrawal',
 
   // Balance Monitoring
   MONITORING_BALANCE_HEALTH: '/api/monitoring/balance-health',

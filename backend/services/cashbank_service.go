@@ -68,10 +68,10 @@ const (
 	TransferStatusRejected        = "REJECTED"
 )
 
-// Withdrawal purpose values are intentionally narrow.  Generic withdrawals
-// retain their existing counter-account rules; OWNER_DRAWING is an opt-in,
-// controlled path for a withdrawal to an eligible prive/owner-drawing equity
-// account.
+// Withdrawal purpose values are retained so legacy clients receive a clear,
+// actionable validation error. Direct cash/bank withdrawal is now reserved
+// exclusively for the controlled OWNER_DRAWING flow; expenses, liabilities,
+// and asset acquisitions must use their dedicated business workflows.
 const (
 	WithdrawalPurposeOperatingExpense    = "OPERATING_EXPENSE"
 	WithdrawalPurposeNonOperatingExpense = "NON_OPERATING_EXPENSE"
@@ -644,13 +644,16 @@ func (s *CashBankService) validateCounterAccountWithTx(tx *gorm.DB, counterAccou
 func normalizeWithdrawalPurpose(purpose string) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(purpose))
 	switch normalized {
-	case "",
-		WithdrawalPurposeOperatingExpense,
-		WithdrawalPurposeNonOperatingExpense,
-		WithdrawalPurposeLiabilityPayment,
-		WithdrawalPurposeAssetAcquisition,
-		WithdrawalPurposeOwnerDrawing:
-		return normalized, nil
+	case WithdrawalPurposeOwnerDrawing:
+		return WithdrawalPurposeOwnerDrawing, nil
+	case "":
+		return "", errors.New("invalid withdrawal purpose: direct cash-bank withdrawals require OWNER_DRAWING; use the Payment workflow for expenses or liabilities, the Purchase workflow for asset acquisitions, or Cash-Bank Transfer between cash/bank accounts")
+	case WithdrawalPurposeOperatingExpense, WithdrawalPurposeNonOperatingExpense:
+		return "", fmt.Errorf("invalid withdrawal purpose %q for direct cash-bank withdrawal: use the Payment workflow for expense payments; only OWNER_DRAWING is supported", normalized)
+	case WithdrawalPurposeLiabilityPayment:
+		return "", fmt.Errorf("invalid withdrawal purpose %q for direct cash-bank withdrawal: use the appropriate Payment workflow for liability settlement; only OWNER_DRAWING is supported", normalized)
+	case WithdrawalPurposeAssetAcquisition:
+		return "", fmt.Errorf("invalid withdrawal purpose %q for direct cash-bank withdrawal: use the Purchase workflow with an asset item; only OWNER_DRAWING is supported", normalized)
 	default:
 		return "", fmt.Errorf("invalid withdrawal purpose %q", purpose)
 	}
@@ -1513,22 +1516,26 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 	}
 	request.Purpose = purpose
 
-	isOwnerDrawing := purpose == WithdrawalPurposeOwnerDrawing
-	if isOwnerDrawing {
-		request.Reference = strings.TrimSpace(request.Reference)
-		request.Notes = strings.TrimSpace(request.Notes)
-		if request.Amount <= 0 {
-			return nil, errors.New("owner drawing amount must be greater than zero")
-		}
-		if request.TargetAccountID == nil || *request.TargetAccountID == 0 {
-			return nil, errors.New("owner drawing requires a prive/owner drawing target account")
-		}
-		if request.Reference == "" {
-			return nil, errors.New("owner drawing reference is required")
-		}
-		if request.Notes == "" {
-			return nil, errors.New("owner drawing notes are required")
-		}
+	// normalizeWithdrawalPurpose deliberately permits only OWNER_DRAWING. Keep
+	// this defensive check next to the mutation path so future call sites cannot
+	// accidentally reintroduce a generic direct withdrawal.
+	if purpose != WithdrawalPurposeOwnerDrawing {
+		return nil, errors.New("invalid withdrawal purpose: direct cash-bank withdrawals only support OWNER_DRAWING")
+	}
+
+	request.Reference = strings.TrimSpace(request.Reference)
+	request.Notes = strings.TrimSpace(request.Notes)
+	if request.Amount <= 0 {
+		return nil, errors.New("owner drawing amount must be greater than zero")
+	}
+	if request.TargetAccountID == nil || *request.TargetAccountID == 0 {
+		return nil, errors.New("owner drawing requires a prive/owner drawing target account")
+	}
+	if request.Reference == "" {
+		return nil, errors.New("owner drawing reference is required")
+	}
+	if request.Notes == "" {
+		return nil, errors.New("owner drawing notes are required")
 	}
 
 	tx := s.db.Begin()
@@ -1537,11 +1544,9 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 		return nil, fmt.Errorf("failed to begin withdrawal transaction: %w", tx.Error)
 	}
 
-	if isOwnerDrawing {
-		if err := s.validateOwnerDrawingAuthority(tx, userID); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
+	if err := s.validateOwnerDrawingAuthority(tx, userID); err != nil {
+		tx.Rollback()
+		return nil, err
 	}
 
 	if err := CheckClosedPeriod(tx, request.Date.ToTimeWithCurrentTime()); err != nil {
@@ -1564,17 +1569,10 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 		}
 	}
 
-	var targetAccount *models.Account
-	if request.TargetAccountID != nil {
-		if isOwnerDrawing {
-			targetAccount, err = s.validateOwnerDrawingCounterAccountWithTx(tx, *request.TargetAccountID, account.AccountID)
-		} else {
-			targetAccount, err = s.validateCounterAccountWithTx(tx, *request.TargetAccountID, account.AccountID, models.AccountTypeExpense, models.AccountTypeLiability, models.AccountTypeAsset)
-		}
-		if err != nil {
-			tx.Rollback()
-			return nil, err
-		}
+	targetAccount, err := s.validateOwnerDrawingCounterAccountWithTx(tx, *request.TargetAccountID, account.AccountID)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
 	}
 
 	availableBalance := account.AvailableBalance()
@@ -1608,16 +1606,10 @@ func (s *CashBankService) ProcessWithdrawal(request WithdrawalRequest, userID ui
 		return nil, fmt.Errorf("failed to sync COA balance for GL account %d: %v", account.AccountID, err)
 	}
 
-	referenceType := TransactionTypeWithdrawal
-	journalTransactionType := TransactionTypeWithdrawal
-	journalDescription := fmt.Sprintf("Withdrawal from %s", account.Name)
-	transactionNotes := request.Notes
-	if isOwnerDrawing {
-		referenceType = TransactionTypeOwnerDrawing
-		journalTransactionType = TransactionTypeOwnerDrawing
-		journalDescription = fmt.Sprintf("Owner drawing / prive from %s to %s (%s)", account.Name, targetAccount.Name, targetAccount.Code)
-		transactionNotes = fmt.Sprintf("Ref %s — Owner drawing / prive to %s (%s): %s", request.Reference, targetAccount.Name, targetAccount.Code, request.Notes)
-	}
+	referenceType := TransactionTypeOwnerDrawing
+	journalTransactionType := TransactionTypeOwnerDrawing
+	journalDescription := fmt.Sprintf("Owner drawing / prive from %s to %s (%s)", account.Name, targetAccount.Name, targetAccount.Code)
+	transactionNotes := fmt.Sprintf("Ref %s — Owner drawing / prive to %s (%s): %s", request.Reference, targetAccount.Name, targetAccount.Code, request.Notes)
 
 	transaction := &models.CashBankTransaction{
 		CashBankID:      request.AccountID,
@@ -2247,10 +2239,11 @@ type WithdrawalRequest struct {
 	Amount    float64    `json:"amount" binding:"required,min=0"`
 	Reference string     `json:"reference"`
 	Notes     string     `json:"notes"`
-	// Purpose remains optional for backward-compatible generic withdrawals.
-	// OWNER_DRAWING activates the stricter prive/owner-drawing validation path.
+	// Direct cash/bank withdrawals are reserved for the controlled
+	// OWNER_DRAWING flow. Expenses, liabilities, and asset purchases must be
+	// recorded through their dedicated payment or purchase workflows.
 	Purpose         string `json:"purpose"`
-	TargetAccountID *uint  `json:"target_account_id"` // Optional for generic withdrawal; required for OWNER_DRAWING.
+	TargetAccountID *uint  `json:"target_account_id"` // Required: eligible prive/owner-drawing equity account.
 }
 
 type ReconciliationRequest struct {

@@ -161,7 +161,7 @@ Modul ini dipakai untuk:
 - membuat rekening kas dan bank operasional
 - melihat saldo, dana dibekukan, dan saldo tersedia
 - melakukan deposit
-- melakukan withdrawal
+- melakukan withdrawal khusus pengambilan pemilik/Prive
 - transfer antar rekening internal
 - melihat histori transaksi
 - freeze dan unfreeze dana
@@ -216,22 +216,24 @@ Tips:
 
 ### 6.5. Cara melakukan Withdrawal
 
-Gunakan `Withdrawal` jika ada uang keluar dari akun kas/bank.
+Gunakan `Withdrawal` hanya untuk **pengambilan pemilik/Prive** dari akun kas/bank.
 
 Contoh kasus:
-- biaya operasional dibayar langsung dari kas/bank
-- pengeluaran tertentu di luar modul pembelian
-- penarikan dana ke rekening lain secara manual
+- pengambilan dana perusahaan oleh pemilik yang dicatat ke akun Prive
 
 Langkah:
 1. Pilih akun.
 2. Klik `Withdrawal`.
-3. Isi tanggal, nominal, dan keterangan.
-4. Tentukan akun lawan transaksi jika diminta.
+3. Pilih akun Prive/Pengambilan Pemilik yang telah disetujui.
+4. Isi tanggal, nominal, nomor referensi, dan alasan pengambilan.
 5. Simpan.
 
 Catatan:
-- jika pengeluaran sebenarnya adalah pembelian resmi ke vendor, lebih baik lewat modul `Purchases` agar hutang, pajak, dan histori pembelian tercatat rapi
+- biaya operasional atau non-operasional → gunakan `Pembayaran` / Pembayaran COA
+- utang vendor/PO → gunakan pembayaran PO atau termin di `Purchases`
+- pajak dan payroll → gunakan settlement pada modul terkait
+- pembelian aset → gunakan `Purchases` dengan tipe item `ASSET`, agar Asset Register dan depresiasi dibuat dengan benar
+- perpindahan bank ke kas kecil atau antar rekening internal → gunakan `Transfer`, bukan Withdrawal
 
 ### 6.6. Cara transfer antar Cash & Bank
 
@@ -286,7 +288,7 @@ Cocok dipakai saat:
 ### 6.10. Catatan penting Cash & Bank
 
 - Akun non-operasional atau holding account biasanya punya pembatasan transaksi langsung.
-- Jika tombol deposit/withdrawal tidak aktif, cek jenis akun dan aturan penggunaannya.
+- Jika tombol deposit/withdrawal tidak aktif, cek jenis akun dan aturan penggunaannya. Withdrawal hanya tersedia untuk pengambilan pemilik/Prive yang disetujui.
 - Cash & Bank sangat terintegrasi dengan pembelian, penjualan, dan pembayaran. Pastikan setup-nya rapi sejak awal.
 
 ## 7. Products: Import Komponen dan Membuat Target Assembly

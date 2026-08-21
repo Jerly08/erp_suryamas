@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Alert,
   AlertDescription,
@@ -54,21 +55,6 @@ import {
   normalizeCashBankCurrency,
 } from '@/utils/cashBankCurrency';
 
-type WithdrawalPurpose =
-  | 'NON_OPERATING_EXPENSE'
-  | 'OPERATING_EXPENSE'
-  | 'LIABILITY_PAYMENT'
-  | 'ASSET_ACQUISITION'
-  | 'OWNER_DRAWING';
-
-interface WithdrawalTargetAccounts {
-  operatingExpense: CashBankCounterpartyAccount[];
-  nonOperatingExpense: CashBankCounterpartyAccount[];
-  liability: CashBankCounterpartyAccount[];
-  asset: CashBankCounterpartyAccount[];
-  ownerDrawing: CashBankCounterpartyAccount[];
-}
-
 interface DepositWithdrawalFormProps {
   isOpen: boolean;
   onClose: () => void;
@@ -89,52 +75,14 @@ interface ApiErrorShape {
   message?: string;
 }
 
-const withdrawalPurposeOptions: Array<{
-  value: WithdrawalPurpose;
-  label: string;
-  helper: string;
-  posting: string;
-}> = [
-  {
-    value: 'NON_OPERATING_EXPENSE',
-    label: 'Beban Non Operasional',
-    helper: 'Dipakai untuk bunga, rugi selisih kurs, rugi penjualan aset, dan beban non-operasional lain.',
-    posting: 'Dr 8xxx / Cr Cash-Bank',
-  },
-  {
-    value: 'OPERATING_EXPENSE',
-    label: 'Beban Operasional',
-    helper: 'Dipakai untuk biaya operasional rutin seperti sewa, listrik, utilitas, dan biaya administrasi.',
-    posting: 'Dr 6xxx / Cr Cash-Bank',
-  },
-  {
-    value: 'LIABILITY_PAYMENT',
-    label: 'Pembayaran Liability',
-    helper: 'Dipakai untuk pelunasan utang atau pengurangan kewajiban dari kas/bank.',
-    posting: 'Dr Liability / Cr Cash-Bank',
-  },
-  {
-    value: 'ASSET_ACQUISITION',
-    label: 'Pembelian Asset',
-    helper: 'Dipakai untuk pembelian aset yang langsung dibayar dari cash-bank.',
-    posting: 'Dr Asset / Cr Cash-Bank',
-  },
-  {
-    value: 'OWNER_DRAWING',
-    label: 'Pengambilan Pemilik / Prive',
-    helper: 'Dipakai khusus untuk pengambilan pemilik yang harus dicatat ke akun Prive/Owner Drawing, bukan sebagai beban atau pembayaran COA umum.',
-    posting: 'Dr Prive / Cr Cash-Bank',
-  },
-];
-
 const getCurrencyCode = (account?: CashBank | null): string => normalizeCashBankCurrency(account?.currency);
 
-const formatNativeAmount = (currency: string, amount: number): string => `${currency} ${Math.abs(amount || 0).toLocaleString('id-ID', {
+const formatNativeAmount = (currency: string, amount: number, locale: string): string => `${currency} ${Math.abs(amount || 0).toLocaleString(locale, {
   minimumFractionDigits: getCashBankAmountPrecision(currency),
   maximumFractionDigits: getCashBankAmountPrecision(currency),
 })}`;
 
-const formatIDRAmount = (amount: number): string => `IDR ${(amount || 0).toLocaleString('id-ID', {
+const formatIDRAmount = (amount: number, locale: string): string => `IDR ${(amount || 0).toLocaleString(locale, {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 })}`;
@@ -145,28 +93,27 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
   onSuccess,
   account,
 }) => {
+  const router = useRouter();
   const { user } = useAuth();
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     amount: 0,
     reference: '',
     notes: '',
-    purpose: 'NON_OPERATING_EXPENSE' as WithdrawalPurpose,
     target_account_id: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [targetAccounts, setTargetAccounts] = useState<WithdrawalTargetAccounts>({
-    operatingExpense: [],
-    nonOperatingExpense: [],
-    liability: [],
-    asset: [],
-    ownerDrawing: [],
-  });
+  const [targetAccountsLoadError, setTargetAccountsLoadError] = useState(false);
+  const [targetAccountsLoadAttempt, setTargetAccountsLoadAttempt] = useState(0);
+  const [targetAccounts, setTargetAccounts] = useState<CashBankCounterpartyAccount[]>([]);
 
   const toast = useToast();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  const numberLocale = language === 'en' ? 'en-US' : 'id-ID';
+  const formatNative = (currency: string, amount: number) => formatNativeAmount(currency, amount, numberLocale);
+  const formatIDR = (amount: number) => formatIDRAmount(amount, numberLocale);
   const modalBg = useColorModeValue('white', 'gray.800');
   const modalHeaderBg = useColorModeValue('gray.50', 'whiteAlpha.100');
   const modalFooterBg = useColorModeValue('gray.50', 'gray.900');
@@ -207,20 +154,16 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
     const loadWithdrawalTargets = async () => {
       try {
         setLoadingAccounts(true);
-        const accounts = await cashbankService.getWithdrawalTargetAccounts();
+        setTargetAccountsLoadError(false);
+        const accounts = await cashbankService.getOwnerDrawingAccounts();
         if (!cancelled) {
           setTargetAccounts(accounts);
         }
       } catch (loadError) {
         console.error('Error loading withdrawal target accounts:', loadError);
         if (!cancelled) {
-          setTargetAccounts({
-            operatingExpense: [],
-            nonOperatingExpense: [],
-            liability: [],
-            asset: [],
-            ownerDrawing: [],
-          });
+          setTargetAccounts([]);
+          setTargetAccountsLoadError(true);
         }
       } finally {
         if (!cancelled) {
@@ -234,7 +177,11 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [isOpen, targetAccountsLoadAttempt]);
+
+  const retryLoadOwnerDrawingAccounts = () => {
+    setTargetAccountsLoadAttempt(previous => previous + 1);
+  };
 
   const handleInputChange = (field: string, value: string | number) => {
     setFormData(prev => ({
@@ -244,64 +191,40 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
     setError(null);
   };
 
-  const handlePurposeChange = (value: WithdrawalPurpose) => {
-    setFormData(prev => ({
-      ...prev,
-      purpose: value,
-      target_account_id: '',
-    }));
-    setError(null);
-  };
-
-  const getSelectedTargetAccounts = (): CashBankCounterpartyAccount[] => {
-    switch (formData.purpose) {
-      case 'OPERATING_EXPENSE':
-        return targetAccounts.operatingExpense;
-      case 'LIABILITY_PAYMENT':
-        return targetAccounts.liability;
-      case 'ASSET_ACQUISITION':
-        return targetAccounts.asset;
-      case 'OWNER_DRAWING':
-        return targetAccounts.ownerDrawing;
-      case 'NON_OPERATING_EXPENSE':
-      default:
-        return targetAccounts.nonOperatingExpense;
-    }
-  };
-
   const handleSubmit = async () => {
     try {
       setLoading(true);
       setError(null);
 
       if (!account) {
-        throw new Error('No account selected');
+        throw new Error(t('cashBank.withdrawalForm.errors.noAccount'));
       }
 
       if (formData.amount <= 0) {
-        throw new Error('Amount must be greater than zero');
+        throw new Error(t('cashBank.withdrawalForm.errors.amountMustBeGreaterThanZero'));
       }
 
       const availableBalance = getAvailableBalance(account);
       if (formData.amount > availableBalance) {
-        throw new Error(`Insufficient balance. Available: ${formatNativeAmount(getCurrencyCode(account), availableBalance)}`);
+        throw new Error(t('cashBank.withdrawalForm.errors.insufficientBalance', {
+          available: formatNative(getCurrencyCode(account), availableBalance),
+        }));
       }
 
       if (!formData.target_account_id) {
-        throw new Error('Pilih akun lawan jurnal terlebih dahulu agar withdrawal diposting ke kelompok yang benar.');
+        throw new Error(t('cashBank.withdrawalForm.errors.targetRequired'));
       }
 
-      const isOwnerDrawing = formData.purpose === 'OWNER_DRAWING';
       const normalizedRole = normalizeRole(user?.role);
       const canPostOwnerDrawing = isFinanceManagerRole(normalizedRole) || normalizedRole === 'director';
-      if (isOwnerDrawing && !canPostOwnerDrawing) {
-        throw new Error('Pengambilan Pemilik / Prive hanya dapat diposting oleh Finance Manager atau Director.');
+      if (!canPostOwnerDrawing) {
+        throw new Error(t('cashBank.withdrawalForm.errors.ownerDrawingRole'));
       }
-      if (isOwnerDrawing && !formData.reference.trim()) {
-        throw new Error('Nomor referensi/bukti wajib diisi untuk Pengambilan Pemilik / Prive.');
+      if (!formData.reference.trim()) {
+        throw new Error(t('cashBank.withdrawalForm.errors.ownerDrawingReference'));
       }
-      if (isOwnerDrawing && !formData.notes.trim()) {
-        throw new Error('Catatan alasan pengambilan wajib diisi untuk Pengambilan Pemilik / Prive.');
+      if (!formData.notes.trim()) {
+        throw new Error(t('cashBank.withdrawalForm.errors.ownerDrawingNotes'));
       }
 
       const requestData: WithdrawalRequest = {
@@ -311,12 +234,12 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         reference: formData.reference,
         notes: formData.notes,
         target_account_id: parseInt(formData.target_account_id, 10),
-        ...(isOwnerDrawing ? { purpose: 'OWNER_DRAWING' as const } : {}),
+        purpose: 'OWNER_DRAWING',
       };
 
       await cashbankService.processWithdrawal(requestData);
 
-      const selectedTargetAccount = getSelectedTargetAccounts().find(
+      const selectedTargetAccount = targetAccounts.find(
         entry => entry.id === parseInt(formData.target_account_id, 10),
       );
       const carryingRate = getCurrencyCode(account) === 'IDR'
@@ -329,20 +252,29 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         : formData.amount * carryingRate;
 
       toast({
-        title: 'Withdrawal Successful',
+        title: t('cashBank.withdrawalForm.success.title'),
         description: (
           <Box>
             <Text fontSize="sm" fontWeight="bold">
-              {formatNativeAmount(getCurrencyCode(account), formData.amount)} withdrawn from {account.name}
+              {t('cashBank.withdrawalForm.success.description', {
+                amount: formatNative(getCurrencyCode(account), formData.amount),
+                accountName: account.name,
+              })}
             </Text>
             <Text fontSize="xs" color={mutedTextColor} mt={1}>
-              Debit: {selectedTargetAccount?.name || 'Counter account'} ({formatIDRAmount(bookImpactIDR)})
+              {t('cashBank.withdrawalForm.success.debit', {
+                accountName: selectedTargetAccount?.name || t('cashBank.withdrawalForm.journalPreview.counterAccount'),
+                amount: formatIDR(bookImpactIDR),
+              })}
             </Text>
             <Text fontSize="xs" color={mutedTextColor}>
-              Credit: {account.name} (-{formatNativeAmount(getCurrencyCode(account), formData.amount)})
+              {t('cashBank.withdrawalForm.success.credit', {
+                accountName: account.name,
+                amount: formatNative(getCurrencyCode(account), formData.amount),
+              })}
             </Text>
             <Text fontSize="xs" color="orange.500" mt={1} fontWeight="bold">
-              Double-entry balanced automatically.
+              {t('cashBank.withdrawalForm.success.balanced')}
             </Text>
           </Box>
         ),
@@ -362,12 +294,12 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
         normalizedError.response?.data?.error ||
         normalizedError.response?.data?.message ||
         normalizedError.message ||
-        'Failed to process withdrawal';
-      let errorTitle = 'Transaction Failed';
+        t('cashBank.withdrawalForm.errors.failedToProcess');
+      let errorTitle = t('cashBank.transactionFailed');
 
       if (normalizedError.code === 'ECONNABORTED' || normalizedError.message?.includes('timeout') || normalizedError.message?.includes('exceeded')) {
-        errorTitle = 'Transaction Timeout';
-        errorMessage = 'The withdrawal operation timed out. Please wait a moment and check the account balance before retrying.';
+        errorTitle = t('cashBank.transactionTimeout');
+        errorMessage = t('cashBank.withdrawalForm.errors.timeout');
       }
 
       setError(errorMessage);
@@ -390,10 +322,14 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
       amount: 0,
       reference: '',
       notes: '',
-      purpose: 'NON_OPERATING_EXPENSE',
       target_account_id: '',
     });
     onClose();
+  };
+
+  const handleGuidedNavigation = (path: string) => {
+    handleClose();
+    router.push(path);
   };
 
   if (!account) {
@@ -410,32 +346,11 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
   const newBalance = account.balance - formData.amount;
   const newBookBalanceIDR = currentBookBalanceIDR - bookImpactIDR;
   const isForeignCurrencyAccount = isCashBankForeignCurrency(currencyCode);
-  const selectedPurposeOption = withdrawalPurposeOptions.find(option => option.value === formData.purpose) || withdrawalPurposeOptions[0];
-  const isOwnerDrawing = formData.purpose === 'OWNER_DRAWING';
   const normalizedRole = normalizeRole(user?.role);
   const canPostOwnerDrawing = isFinanceManagerRole(normalizedRole) || normalizedRole === 'director';
-  const selectedTargetAccounts = getSelectedTargetAccounts();
-  const selectedTargetAccount = selectedTargetAccounts.find(
+  const selectedTargetAccount = targetAccounts.find(
     entry => entry.id === parseInt(formData.target_account_id || '0', 10),
   );
-  const targetAccountLabel = formData.purpose === 'NON_OPERATING_EXPENSE'
-    ? 'Debit Account (Non-Operating Expense)'
-    : formData.purpose === 'OPERATING_EXPENSE'
-      ? 'Debit Account (Operating Expense)'
-      : formData.purpose === 'LIABILITY_PAYMENT'
-        ? 'Debit Account (Liability)'
-        : formData.purpose === 'OWNER_DRAWING'
-          ? 'Debit Account (Pengambilan Pemilik / Prive)'
-          : 'Debit Account (Asset)';
-  const targetAccountPlaceholder = formData.purpose === 'NON_OPERATING_EXPENSE'
-    ? 'Select 8xxx non-operating expense account'
-    : formData.purpose === 'OPERATING_EXPENSE'
-      ? 'Select operating expense account'
-    : formData.purpose === 'LIABILITY_PAYMENT'
-      ? 'Select liability account to reduce'
-      : formData.purpose === 'OWNER_DRAWING'
-        ? 'Pilih akun Prive / Owner Drawing'
-        : 'Select asset account to increase';
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} size="2xl" scrollBehavior="inside">
@@ -443,17 +358,16 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
       <ModalContent bg={modalBg} border="1px solid" borderColor={borderColor}>
         <ModalHeader bg={modalHeaderBg} borderBottom="1px solid" borderColor={borderColor}>
           <Flex alignItems="center" gap={3}>
-            <Text fontSize="lg">Withdrawal</Text>
             <Box>
               <Text fontSize="lg" fontWeight="bold" color={sectionTitleColor}>
-                {t('cashBank.makeWithdrawal')}
+                {t('cashBank.withdrawalForm.ownerDrawingTitle')}
               </Text>
               <Text fontSize="sm" color={helperTextColor} fontFamily="mono">
                 {account.name} ({account.code})
               </Text>
             </Box>
             <Badge colorScheme="orange" variant="solid" fontSize="xs">
-              AUTO DOUBLE ENTRY
+              {t('cashBank.withdrawalForm.autoJournal')}
             </Badge>
           </Flex>
         </ModalHeader>
@@ -478,28 +392,42 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
               <Box bg={panelBg} p={4} borderRadius="md" border="1px solid" borderColor={panelBorderColor}>
                 <Flex justify="space-between" align="center" mb={2}>
                   <Box>
-                    <Text fontSize="sm" color={mutedTextColor} mb={1}>Account Name</Text>
+                    <Text fontSize="sm" color={mutedTextColor} mb={1}>
+                      {t('cashBank.accountName')}
+                    </Text>
                     <Text fontWeight="medium" color={bodyTextColor}>{account.name}</Text>
                   </Box>
                   <Badge colorScheme={account.type === 'CASH' ? 'green' : 'blue'}>
-                    {account.type}
+                    {account.type === 'CASH'
+                      ? t('cashBank.withdrawalForm.accountTypeCash')
+                      : t('cashBank.withdrawalForm.accountTypeBank')}
                   </Badge>
                 </Flex>
 
                 <Stat>
-                  <StatLabel color={mutedTextColor}>Current Native Balance</StatLabel>
+                  <StatLabel color={mutedTextColor}>
+                    {t('cashBank.withdrawalForm.currentNativeBalance')}
+                  </StatLabel>
                   <StatNumber color={account.balance < 0 ? 'red.500' : 'green.600'} fontFamily="mono">
-                    {formatNativeAmount(currencyCode, account.balance)}
+                    {formatNative(currencyCode, account.balance)}
                     {account.balance < 0 && ' (Dr)'}
                   </StatNumber>
                   <StatHelpText color={helperTextColor}>
-                    {account.balance < 0 ? 'Overdraft' : account.balance > 0 ? 'Available' : 'Zero Balance'}
+                    {account.balance < 0
+                      ? t('cashBank.overdraft')
+                      : account.balance > 0
+                        ? t('cashBank.withdrawalForm.available')
+                        : t('cashBank.zeroBalance')}
                   </StatHelpText>
                   <StatHelpText color={helperTextColor}>
-                    Book balance for ledger: {formatIDRAmount(currentBookBalanceIDR)}
+                    {t('cashBank.withdrawalForm.ledgerBookBalance', {
+                      amount: formatIDR(currentBookBalanceIDR),
+                    })}
                   </StatHelpText>
                   <StatHelpText color="orange.500">
-                    Available to use: {formatNativeAmount(currencyCode, availableBalance)}
+                    {t('cashBank.withdrawalForm.availableToUse', {
+                      amount: formatNative(currencyCode, availableBalance),
+                    })}
                   </StatHelpText>
                 </Stat>
               </Box>
@@ -509,25 +437,144 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
               <AlertIcon mt={1} />
               <Box>
                 <Flex gap={2} mb={2} wrap="wrap">
-                  <Badge colorScheme="blue" variant="subtle">NATIVE {currencyCode}</Badge>
-                  <Badge colorScheme="green" variant="subtle">BOOK IDR</Badge>
+                  <Badge colorScheme="blue" variant="subtle">
+                    {t('cashBank.withdrawalForm.nativeBadge', { currency: currencyCode })}
+                  </Badge>
+                  <Badge colorScheme="green" variant="subtle">
+                    {t('cashBank.withdrawalForm.bookIdrBadge')}
+                  </Badge>
                 </Flex>
                 <Text fontSize="sm" fontWeight="medium">
                   {isForeignCurrencyAccount
-                    ? `Withdrawal ${currencyCode} memengaruhi saldo native dalam ${currencyCode} dan book value ledger dalam IDR.`
-                    : 'Untuk akun IDR, saldo rekening dan nilai buku ledger berkurang dengan angka yang sama.'}
+                    ? t('cashBank.withdrawalForm.foreignCurrencyImpact', { currency: currencyCode })
+                    : t('cashBank.withdrawalForm.idrImpact')}
                 </Text>
                 <Text fontSize="xs" color={mutedTextColor} mt={1}>
                   {isForeignCurrencyAccount
-                    ? 'Sistem memakai carrying rate buku saat ini untuk melepas nilai buku IDR, jadi modal ini tidak meminta kurs baru.'
-                    : 'Sistem hanya mengizinkan pemakaian saldo tersedia, bukan saldo yang sedang dibekukan.'}
+                    ? t('cashBank.withdrawalForm.foreignCurrencyRateHelp')
+                    : t('cashBank.withdrawalForm.idrBalanceHelp')}
                 </Text>
               </Box>
             </Alert>
 
+            <Alert status="warning" borderRadius="md" alignItems="flex-start">
+              <AlertIcon mt={1} />
+              <Box>
+                <AlertTitle fontSize="sm" mb={1}>
+                  {t('cashBank.withdrawalForm.ownerDrawingOnlyTitle')}
+                </AlertTitle>
+                <AlertDescription fontSize="sm">
+                  {t('cashBank.withdrawalForm.ownerDrawingOnlyDescription')}
+                </AlertDescription>
+              </Box>
+            </Alert>
+
+            <Box>
+              <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={1}>
+                {t('cashBank.withdrawalForm.guidedWorkflows.title')}
+              </Text>
+              <Text fontSize="sm" color={mutedTextColor} mb={3}>
+                {t('cashBank.withdrawalForm.guidedWorkflows.description')}
+              </Text>
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+                <Box bg={panelBg} p={4} borderRadius="md" border="1px solid" borderColor={panelBorderColor}>
+                  <Text fontSize="sm" fontWeight="semibold" color={bodyTextColor}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.expense.title')}
+                  </Text>
+                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.expense.description')}
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    colorScheme="blue"
+                    mt={3}
+                    onClick={() => handleGuidedNavigation('/payments')}
+                  >
+                    {t('cashBank.withdrawalForm.guidedWorkflows.expense.action')}
+                  </Button>
+                </Box>
+
+                <Box bg={panelBg} p={4} borderRadius="md" border="1px solid" borderColor={panelBorderColor}>
+                  <Text fontSize="sm" fontWeight="semibold" color={bodyTextColor}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.vendor.title')}
+                  </Text>
+                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.vendor.description')}
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    colorScheme="blue"
+                    mt={3}
+                    onClick={() => handleGuidedNavigation('/payments')}
+                  >
+                    {t('cashBank.withdrawalForm.guidedWorkflows.vendor.action')}
+                  </Button>
+                </Box>
+
+                <Box bg={panelBg} p={4} borderRadius="md" border="1px solid" borderColor={panelBorderColor}>
+                  <Text fontSize="sm" fontWeight="semibold" color={bodyTextColor}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.asset.title')}
+                  </Text>
+                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.asset.description')}
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    colorScheme="purple"
+                    mt={3}
+                    onClick={() => handleGuidedNavigation('/purchases')}
+                  >
+                    {t('cashBank.withdrawalForm.guidedWorkflows.asset.action')}
+                  </Button>
+                </Box>
+
+                <Box bg={panelBg} p={4} borderRadius="md" border="1px solid" borderColor={panelBorderColor}>
+                  <Text fontSize="sm" fontWeight="semibold" color={bodyTextColor}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.payroll.title')}
+                  </Text>
+                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.payroll.description')}
+                  </Text>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    colorScheme="teal"
+                    mt={3}
+                    onClick={() => handleGuidedNavigation('/payroll')}
+                  >
+                    {t('cashBank.withdrawalForm.guidedWorkflows.payroll.action')}
+                  </Button>
+                </Box>
+
+                <Box
+                  bg={panelBg}
+                  p={4}
+                  borderRadius="md"
+                  border="1px solid"
+                  borderColor={panelBorderColor}
+                  gridColumn={{ md: '1 / -1' }}
+                >
+                  <Text fontSize="sm" fontWeight="semibold" color={bodyTextColor}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.transfer.title')}
+                  </Text>
+                  <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.transfer.description', {
+                      accountName: account.name,
+                    })}
+                  </Text>
+                  <Button size="sm" variant="outline" colorScheme="orange" mt={3} onClick={handleClose}>
+                    {t('cashBank.withdrawalForm.guidedWorkflows.transfer.action')}
+                  </Button>
+                </Box>
+              </SimpleGrid>
+            </Box>
+
             <Box>
               <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={3}>
-                {t('cashBank.transactionDetails')}
+                {t('cashBank.withdrawalForm.ownerDrawingDetails')}
               </Text>
 
               <VStack spacing={4} align="stretch">
@@ -557,137 +604,127 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                   </NumberInput>
                   {formData.amount > availableBalance && (
                     <Text fontSize="xs" color="red.500" mt={1}>
-                      Amount exceeds available balance and cannot be posted.
+                      {t('cashBank.withdrawalForm.amountExceedsAvailable')}
                     </Text>
                   )}
                 </FormControl>
 
-                <FormControl isRequired={isOwnerDrawing}>
+                <FormControl isRequired>
                   <FormLabel>{t('payments.form.referenceNumber')}</FormLabel>
                   <Input
                     value={formData.reference}
                     onChange={(e) => handleInputChange('reference', e.target.value)}
-                    placeholder={t('payments.placeholders.referenceNumber')}
+                    placeholder={t('common.placeholders.referenceNumber')}
                     {...fieldStyles}
                   />
-                  {isOwnerDrawing && (
-                    <Text fontSize="xs" color={helperTextColor} mt={1}>
-                      Nomor bukti atau referensi pengambilan wajib dicatat untuk audit trail.
-                    </Text>
-                  )}
+                  <Text fontSize="xs" color={helperTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.ownerReferenceHelp')}
+                  </Text>
                 </FormControl>
 
-                <FormControl isRequired={isOwnerDrawing}>
+                <FormControl isRequired>
                   <FormLabel>{t('payments.form.notes')}</FormLabel>
                   <Textarea
                     value={formData.notes}
                     onChange={(e) => handleInputChange('notes', e.target.value)}
-                    placeholder={t('payments.placeholders.notes')}
+                    placeholder={t('common.placeholders.notes')}
                     rows={3}
                     {...fieldStyles}
                   />
-                  {isOwnerDrawing && (
-                    <Text fontSize="xs" color={helperTextColor} mt={1}>
-                      Jelaskan alasan dan pihak pemilik yang menerima pengambilan ini.
-                    </Text>
-                  )}
+                  <Text fontSize="xs" color={helperTextColor} mt={1}>
+                    {t('cashBank.withdrawalForm.ownerNotesHelp')}
+                  </Text>
                 </FormControl>
               </VStack>
             </Box>
 
             <Box>
               <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={3}>
-                Posting Mapping
+                {t('cashBank.withdrawalForm.ownerDrawingJournalMapping')}
               </Text>
               <Text fontSize="sm" color={mutedTextColor} mb={3}>
-                {isOwnerDrawing
-                  ? 'Pilih akun Prive yang telah disetujui. Tidak semua akun Ekuitas dapat digunakan untuk pengambilan pemilik.'
-                  : 'Pilih tujuan jurnal debit agar withdrawal langsung masuk ke operasional, non-operasional, liability, atau asset yang tepat.'}
+                {t('cashBank.withdrawalForm.ownerDrawingMappingHelp')}
               </Text>
 
               <VStack spacing={4} align="stretch">
-                <FormControl isRequired>
-                  <FormLabel>Withdrawal Purpose / Debit Group</FormLabel>
-                  <Select
-                    value={formData.purpose}
-                    onChange={(e) => handlePurposeChange(e.target.value as WithdrawalPurpose)}
-                    {...fieldStyles}
-                  >
-                    {withdrawalPurposeOptions.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                  <Text fontSize="xs" color={helperTextColor} mt={1}>
-                    {selectedPurposeOption.helper}
-                  </Text>
-                </FormControl>
-
                 <Alert status="info" borderRadius="md" alignItems="flex-start">
                   <AlertIcon mt={1} />
                   <Box>
                     <AlertTitle fontSize="sm" mb={1}>
-                      Mapping title
+                      {t('cashBank.withdrawalForm.mappingTitle')}
                     </AlertTitle>
                     <AlertDescription fontSize="sm">
-                      <strong>{selectedPurposeOption.label}</strong> berarti <strong>{selectedPurposeOption.posting}</strong>. Ini membantu user melihat bahwa transaksi keluar tidak selalu berarti beban operasional.
+                      {t('cashBank.withdrawalForm.ownerDrawingMappingDescription', {
+                        posting: t('cashBank.withdrawalForm.purposes.ownerDrawing.posting'),
+                      })}
                     </AlertDescription>
                   </Box>
                 </Alert>
 
-                {isOwnerDrawing && (
-                  <Alert status="warning" borderRadius="md" alignItems="flex-start">
-                    <AlertIcon mt={1} />
-                    <Box>
-                      <AlertTitle fontSize="sm" mb={1}>Kontrol Pengambilan Pemilik</AlertTitle>
-                      <AlertDescription fontSize="sm">
-                        Hanya Finance Manager atau Director yang dapat memposting transaksi ini. Referensi dan alasan wajib diisi; backend akan memvalidasi akun Prive yang dipilih.
-                      </AlertDescription>
-                      {!canPostOwnerDrawing && (
-                        <Text fontSize="xs" mt={2} fontWeight="semibold">
-                          Role Anda tidak dapat memposting Pengambilan Pemilik / Prive.
-                        </Text>
-                      )}
-                    </Box>
-                  </Alert>
-                )}
+                <Alert status="warning" borderRadius="md" alignItems="flex-start">
+                  <AlertIcon mt={1} />
+                  <Box>
+                    <AlertTitle fontSize="sm" mb={1}>
+                      {t('cashBank.withdrawalForm.ownerControlTitle')}
+                    </AlertTitle>
+                    <AlertDescription fontSize="sm">
+                      {t('cashBank.withdrawalForm.ownerControlDescription')}
+                    </AlertDescription>
+                    {!canPostOwnerDrawing && (
+                      <Text fontSize="xs" mt={2} fontWeight="semibold">
+                        {t('cashBank.withdrawalForm.ownerControlRoleDenied')}
+                      </Text>
+                    )}
+                  </Box>
+                </Alert>
 
                 <FormControl isRequired>
-                  <FormLabel>{targetAccountLabel}</FormLabel>
+                  <FormLabel>{t('cashBank.withdrawalForm.targets.ownerDrawing.label')}</FormLabel>
                   <Select
                     value={formData.target_account_id}
                     onChange={(e) => handleInputChange('target_account_id', e.target.value)}
-                    placeholder={targetAccountPlaceholder}
-                    isDisabled={loadingAccounts}
+                    placeholder={t('cashBank.withdrawalForm.targets.ownerDrawing.placeholder')}
+                    isDisabled={loadingAccounts || targetAccountsLoadError}
                     {...fieldStyles}
                   >
-                    {selectedTargetAccounts.map(entry => (
-                      <option key={`${formData.purpose}-${entry.id}`} value={entry.id}>
+                    {targetAccounts.map(entry => (
+                      <option key={entry.id} value={entry.id}>
                         {entry.code} - {entry.name}
-                        {typeof entry.balance === 'number' && entry.balance !== 0 && ` (Balance: ${entry.balance.toLocaleString('id-ID')})`}
+                        {typeof entry.balance === 'number'
+                          && entry.balance !== 0
+                          && ` (${t('cashBank.withdrawalForm.targetBalance', {
+                            amount: entry.balance.toLocaleString(numberLocale),
+                          })})`}
                       </option>
                     ))}
                   </Select>
                   <Text fontSize="xs" color={helperTextColor} mt={1}>
-                    {isOwnerDrawing
-                      ? 'Daftar ini hanya berisi akun Prive/Owner Drawing aktif yang diizinkan oleh server.'
-                      : 'Akun lawan jurnal wajib dipilih supaya sistem tidak jatuh ke fallback expense yang generik.'}
+                    {t('cashBank.withdrawalForm.targets.ownerDrawing.help')}
                   </Text>
                   {loadingAccounts && (
                     <Text fontSize="xs" color={helperTextColor} mt={1}>
-                      Loading available target accounts...
+                      {t('cashBank.withdrawalForm.targets.loading')}
                     </Text>
                   )}
                 </FormControl>
 
-                {!loadingAccounts && selectedTargetAccounts.length === 0 && (
+                {!loadingAccounts && targetAccountsLoadError && (
+                  <Alert status="error" borderRadius="md" alignItems="center">
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm" flex="1">
+                      {t('cashBank.withdrawalForm.targets.ownerDrawing.loadError')}
+                    </AlertDescription>
+                    <Button size="xs" variant="outline" colorScheme="red" onClick={retryLoadOwnerDrawingAccounts}>
+                      {t('cashBank.withdrawalForm.targets.ownerDrawing.retry')}
+                    </Button>
+                  </Alert>
+                )}
+
+                {!loadingAccounts && !targetAccountsLoadError && targetAccounts.length === 0 && (
                   <Alert status="warning" borderRadius="md">
                     <AlertIcon />
                     <AlertDescription fontSize="sm">
-                      {isOwnerDrawing
-                        ? 'Belum ada akun Prive/Owner Drawing aktif yang disetujui. Hubungi Administrator/Accounting untuk menandai akun yang tepat; jangan gunakan akun Ekuitas lain sebagai pengganti.'
-                        : `Belum ada akun aktif yang cocok untuk ${selectedPurposeOption.label.toLowerCase()}. Tambahkan akun COA terlebih dahulu sebelum memproses withdrawal ini.`}
+                      {t('cashBank.withdrawalForm.targets.ownerDrawing.empty')}
                     </AlertDescription>
                   </Alert>
                 )}
@@ -697,16 +734,16 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             {formData.amount > 0 && (
               <Box>
                 <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={3}>
-                  Double-Entry Preview
+                  {t('cashBank.withdrawalForm.journalPreview.title')}
                 </Text>
                 <Box bg={previewBg} p={4} borderRadius="md" border="1px solid" borderColor={previewBorderColor}>
                   <VStack spacing={3} align="stretch">
                     <HStack justify="space-between">
                       <Text fontSize="sm" fontWeight="bold" color="orange.600">
-                        Journal Entry (Auto-Generated)
+                        {t('cashBank.withdrawalForm.journalPreview.entry')}
                       </Text>
                       <Badge colorScheme="orange" variant="solid" fontSize="xs">
-                        BALANCED
+                        {t('cashBank.withdrawalForm.journalPreview.balanced')}
                       </Badge>
                     </HStack>
 
@@ -717,18 +754,18 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                         <Badge colorScheme="green" variant="outline" fontSize="xs">DR</Badge>
                         <Box>
                           <Text fontSize="sm" fontWeight="medium" color={bodyTextColor}>
-                            {selectedTargetAccount?.name || selectedPurposeOption.label}
+                            {selectedTargetAccount?.name || t('cashBank.withdrawalForm.journalPreview.counterAccount')}
                           </Text>
                           <Text fontSize="xs" color={mutedTextColor} fontFamily="mono">
                             {selectedTargetAccount?.code || '-'}
                           </Text>
                           <Text fontSize="xs" color={helperTextColor}>
-                            {selectedPurposeOption.posting}
+                            {t('cashBank.withdrawalForm.purposes.ownerDrawing.posting')}
                           </Text>
                         </Box>
                       </HStack>
                       <Text fontSize="sm" fontWeight="bold" fontFamily="mono" color="green.600">
-                        +{formatIDRAmount(bookImpactIDR)}
+                        +{formatIDR(bookImpactIDR)}
                       </Text>
                     </HStack>
 
@@ -738,20 +775,24 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
                         <Box>
                           <Text fontSize="sm" fontWeight="medium" color={bodyTextColor}>{account.name}</Text>
                           <Text fontSize="xs" color={mutedTextColor} fontFamily="mono">{account.code}</Text>
-                          <Text fontSize="xs" color={helperTextColor}>Saldo rekening berkurang</Text>
+                          <Text fontSize="xs" color={helperTextColor}>
+                            {t('cashBank.withdrawalForm.journalPreview.balanceDecrease')}
+                          </Text>
                         </Box>
                       </HStack>
                       <Text fontSize="sm" fontWeight="bold" fontFamily="mono" color="orange.600">
-                        -{formatNativeAmount(currencyCode, formData.amount)}
+                        -{formatNative(currencyCode, formData.amount)}
                       </Text>
                     </HStack>
 
                     <Divider />
 
                     <HStack justify="space-between">
-                      <Text fontSize="sm" fontWeight="bold" color={bodyTextColor}>Total Balance</Text>
+                      <Text fontSize="sm" fontWeight="bold" color={bodyTextColor}>
+                        {t('cashBank.withdrawalForm.journalPreview.totalBalance')}
+                      </Text>
                       <Text fontSize="sm" fontWeight="bold" color="green.600">
-                        DR {formatIDRAmount(bookImpactIDR)} = CR {formatIDRAmount(bookImpactIDR)}
+                        DR {formatIDR(bookImpactIDR)} = CR {formatIDR(bookImpactIDR)}
                       </Text>
                     </HStack>
                   </VStack>
@@ -762,40 +803,51 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             {formData.amount > 0 && (
               <Box>
                 <Text fontSize="md" fontWeight="semibold" color={sectionTitleColor} mb={3}>
-                  Balance Preview
+                  {t('cashBank.balancePreview')}
                 </Text>
                 <Alert status={newBalance < 0 ? 'warning' : 'info'} borderRadius="md">
                   <AlertIcon />
                   <Box w="full">
                     <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
                       <Box>
-                        <Text fontSize="xs" color={mutedTextColor}>Native amount out</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>
+                          {t('cashBank.withdrawalForm.balancePreview.nativeAmountOut')}
+                        </Text>
                         <Text fontSize="sm" fontWeight="bold" color="orange.600" fontFamily="mono">
-                          -{formatNativeAmount(currencyCode, formData.amount)}
+                          -{formatNative(currencyCode, formData.amount)}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontSize="xs" color={mutedTextColor}>Book amount released</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>
+                          {t('cashBank.withdrawalForm.balancePreview.bookAmountReleased')}
+                        </Text>
                         <Text fontSize="sm" fontWeight="bold" color="blue.600" fontFamily="mono">
-                          {formatIDRAmount(bookImpactIDR)}
+                          {formatIDR(bookImpactIDR)}
                         </Text>
                       </Box>
                       <Box>
-                        <Text fontSize="xs" color={mutedTextColor}>Ending native balance</Text>
+                        <Text fontSize="xs" color={mutedTextColor}>
+                          {t('cashBank.withdrawalForm.balancePreview.endingNativeBalance')}
+                        </Text>
                         <Text fontSize="sm" fontWeight="bold" color={newBalance < 0 ? 'red.500' : 'green.600'} fontFamily="mono">
-                          {formatNativeAmount(currencyCode, newBalance)}
+                          {formatNative(currencyCode, newBalance)}
                         </Text>
                       </Box>
                     </SimpleGrid>
                     <Text fontSize="sm" mt={3} color={bodyTextColor}>
-                      Ending book balance: {formatIDRAmount(newBookBalanceIDR)}
+                      {t('cashBank.withdrawalForm.balancePreview.endingBookBalance', {
+                        amount: formatIDR(newBookBalanceIDR),
+                      })}
                     </Text>
                     {isForeignCurrencyAccount && (
                       <Text fontSize="xs" color={mutedTextColor} mt={1}>
-                        Carrying rate used for ledger release: 1 {currencyCode} = {currentBookRate.toLocaleString('id-ID', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 4,
-                        })} IDR
+                        {t('cashBank.withdrawalForm.balancePreview.carryingRate', {
+                          currency: currencyCode,
+                          rate: currentBookRate.toLocaleString(numberLocale, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 4,
+                          }),
+                        })}
                       </Text>
                     )}
                   </Box>
@@ -813,15 +865,17 @@ const DepositWithdrawalForm: React.FC<DepositWithdrawalFormProps> = ({
             colorScheme="orange"
             onClick={handleSubmit}
             isLoading={loading}
-            loadingText={t('common.processing')}
+            loadingText={t('cashBank.withdrawalForm.processing')}
             isDisabled={
               formData.amount <= 0 ||
               formData.amount > availableBalance ||
               !formData.target_account_id ||
-              (isOwnerDrawing && (!canPostOwnerDrawing || !formData.reference.trim() || !formData.notes.trim()))
+              !canPostOwnerDrawing ||
+              !formData.reference.trim() ||
+              !formData.notes.trim()
             }
           >
-            {t('cashBank.processWithdrawal')}
+            {t('cashBank.withdrawalForm.submitOwnerDrawing')}
           </Button>
         </ModalFooter>
       </ModalContent>

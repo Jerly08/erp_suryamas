@@ -541,7 +541,7 @@ export default function ManualEntryForm({
 
       toast({
         title: t("common.error"),
-        description: `Akun Cash & Bank terhubung tidak bisa dipakai di jurnal manual: ${blockedAccountSummary}. Gunakan menu Deposit, Withdrawal, atau Transfer.`,
+        description: `Akun Cash & Bank terhubung tidak bisa dipakai di jurnal manual: ${blockedAccountSummary}. Gunakan Deposit untuk penerimaan, Transfer untuk perpindahan antar rekening, Pembayaran/Purchases untuk transaksi bisnis, atau Withdrawal khusus Prive.`,
         status: "error",
         duration: 6000,
       });
@@ -638,7 +638,7 @@ export default function ManualEntryForm({
       const message =
         typeof error?.message === "string" &&
         error.message.includes("linked to Cash & Bank")
-          ? "Akun kas/bank yang terhubung ke modul Cash & Bank tidak bisa dipakai di jurnal manual. Gunakan menu Deposit, Withdrawal, atau Transfer agar saldo tetap sinkron."
+          ? "Akun kas/bank yang terhubung ke modul Cash & Bank tidak bisa dipakai di jurnal manual. Gunakan Deposit untuk penerimaan, Transfer untuk perpindahan antar rekening, Pembayaran/Purchases untuk transaksi bisnis, atau Withdrawal khusus Prive agar saldo tetap sinkron."
           : error.message || t("journal.create_error");
       toast({
         title: t("common.error"),
@@ -698,8 +698,10 @@ export default function ManualEntryForm({
             </Text>
             <Text fontSize="sm">
               Untuk menjaga saldo buku besar dan modul Cash & Bank tetap
-              sinkron, transaksi kas/bank harus dicatat lewat menu Deposit,
-              Withdrawal, atau Transfer.
+              sinkron, transaksi kas/bank harus dicatat lewat Deposit untuk
+              penerimaan, Transfer untuk perpindahan rekening, workflow
+              Pembayaran/Purchases untuk transaksi bisnis, atau Withdrawal
+              khusus Prive.
             </Text>
             {hasBlockedCashBankSelection && (
               <Text fontSize="sm" mt={1}>
@@ -912,7 +914,8 @@ export default function ManualEntryForm({
                                 <Text fontSize="xs" color="orange.500" mt={1}>
                                   Akun ini terhubung ke modul Cash & Bank. Pilih
                                   akun lain atau catat transaksi lewat Deposit,
-                                  Withdrawal, atau Transfer.
+                                  Transfer, workflow Pembayaran/Purchases, atau
+                                  Withdrawal khusus Prive.
                                 </Text>
                               )}
                             </>

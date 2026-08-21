@@ -49,7 +49,7 @@ curl -H "Authorization: Bearer {{ACCESS_TOKEN}}" \
 - GET  /api/cashbank/accounts/{id}/transactions
 - GET  /api/cashbank/balance-summary — ringkas saldo
 - POST /api/cashbank/deposit — setoran
-- POST /api/cashbank/withdrawal — penarikan
+- POST /api/v1/cash-bank/transactions/withdrawal — pengambilan pemilik/Prive terkontrol
 - POST /api/cashbank/transfer — transfer antar akun
 - GET  /api/cashbank/payment-accounts — akun untuk pembayaran
 
@@ -172,7 +172,7 @@ curl -H "Authorization: Bearer {{ACCESS_TOKEN}}" \
 Step-by-step alur singkat (praktis)
 1. Login → simpan {{ACCESS_TOKEN}}
 2. Cek kesehatan: GET /api/v1/health & /api/monitoring/balance-health
-3. CashBank: daftar akun → lakukan deposit/withdrawal/transfer → cek transaksi per akun
+3. CashBank: daftar akun → lakukan deposit, transfer, atau withdrawal Prive → cek transaksi per akun. Biaya/utang/aset dicatat lewat modul Pembayaran atau Purchases.
 4. Purchases: GET /api/purchases/{id}/for-payment → POST /api/purchases/{id}/integrated-payment
 5. Payments (SSOT): preview-journal → enhanced-with-journal → (opsional) reverse
 6. Reports: jalankan optimized/SSOT sesuai kebutuhan

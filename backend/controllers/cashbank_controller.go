@@ -373,15 +373,15 @@ func (c *CashBankController) ProcessDeposit(ctx *gin.Context) {
 }
 
 // ProcessWithdrawal godoc
-// @Summary Process withdrawal
-// @Description Withdraw money from cash/bank account
+// @Summary Process controlled owner drawing / Prive withdrawal
+// @Description Direct withdrawals are reserved for an approved owner drawing / Prive account. Expenses and liabilities must use Payments; asset purchases must use Purchases; internal movements must use Cash-Bank Transfer.
 // @Tags CashBank
 // @Accept json
 // @Produce json
 // @Security Bearer
 // @Param withdrawal body services.WithdrawalRequest true "Withdrawal data"
 // @Success 201 {object} models.CashBankTransaction
-// @Router /api/cashbank/withdrawal [post]
+// @Router /api/v1/cash-bank/transactions/withdrawal [post]
 func (c *CashBankController) ProcessWithdrawal(ctx *gin.Context) {
 	var request services.WithdrawalRequest
 	if err := ctx.ShouldBindJSON(&request); err != nil {

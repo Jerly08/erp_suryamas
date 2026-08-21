@@ -157,14 +157,12 @@ export interface WithdrawalRequest {
   account_id: number;
   date: string;
   amount: number;
-  reference?: string;
-  notes?: string;
-  // OWNER_DRAWING is a controlled cash/bank withdrawal. The backend validates
-  // the user role and that target_account_id is an eligible Prive account.
-  purpose?: "OWNER_DRAWING";
-  // Optional target GL account for automatic journal integration. It is
-  // mandatory when purpose is OWNER_DRAWING.
-  target_account_id?: number;
+  reference: string;
+  notes: string;
+  // Direct withdrawals are reserved for Owner's Drawing / Prive. The backend
+  // validates the user role and selected eligible equity account.
+  purpose: "OWNER_DRAWING";
+  target_account_id: number;
 }
 
 export interface TransactionFilter {
@@ -318,39 +316,6 @@ class CashBankService {
         "DIVIDEND_INCOME",
         "GAIN_ON_SALE",
         "OTHER_INCOME",
-      ].includes(category)
-    );
-  }
-
-  private isOperatingExpenseAccount(
-    account: CashBankCounterpartyAccount,
-  ): boolean {
-    const category = (account.category || "").toUpperCase();
-    return [
-      "OPERATING_EXPENSE",
-      "ADMINISTRATIVE_EXPENSE",
-      "SELLING_EXPENSE",
-      "MARKETING_EXPENSE",
-      "GENERAL_EXPENSE",
-      "DEPRECIATION_EXPENSE",
-      "AMORTIZATION_EXPENSE",
-      "BAD_DEBT_EXPENSE",
-    ].includes(category);
-  }
-
-  private isNonOperatingExpenseAccount(
-    account: CashBankCounterpartyAccount,
-  ): boolean {
-    const code = (account.code || "").toUpperCase();
-    const category = (account.category || "").toUpperCase();
-    return (
-      code.startsWith("8") ||
-      [
-        "NON_OPERATING_EXPENSE",
-        "INTEREST_EXPENSE",
-        "FINANCIAL_EXPENSE",
-        "LOSS_ON_SALE",
-        "OTHER_EXPENSE",
       ].includes(category)
     );
   }
@@ -703,78 +668,20 @@ class CashBankService {
     }
   }
 
-  async getWithdrawalTargetAccounts(): Promise<{
-    operatingExpense: CashBankCounterpartyAccount[];
-    nonOperatingExpense: CashBankCounterpartyAccount[];
-    liability: CashBankCounterpartyAccount[];
-    asset: CashBankCounterpartyAccount[];
-    ownerDrawing: CashBankCounterpartyAccount[];
-  }> {
+  // Direct withdrawals are restricted to Owner's Drawing / Prive. The server
+  // exposes only approved, active accounts, so this lookup intentionally does
+  // not fetch generic expense, liability, asset, or equity COA lists.
+  async getOwnerDrawingAccounts(): Promise<CashBankCounterpartyAccount[]> {
     try {
-      const [
-        expenseResponse,
-        liabilityResponse,
-        assetResponse,
-        cashBankAccounts,
-        ownerDrawingResponse,
-      ] = await Promise.all([
-        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
-          params: { type: "EXPENSE", _t: Date.now() },
-        }),
-        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
-          params: { type: "LIABILITY", _t: Date.now() },
-        }),
-        api.get(API_ENDPOINTS.ACCOUNTS.LIST, {
-          params: { type: "ASSET", _t: Date.now() },
-        }),
-        this.getCashBankAccounts({ includeHolding: true }),
-        // Do not load generic Equity accounts here. The backend explicitly
-        // returns only active leaf accounts that are eligible for Owner
-        // Drawing/Prive withdrawals.
-        api.get(API_ENDPOINTS.CASH_BANK.OWNER_DRAWING_ACCOUNTS, {
-          params: { _t: Date.now() },
-        }).catch((error) => {
-          // Keep ordinary withdrawal purposes available if an older backend
-          // has not yet exposed this optional lookup. OWNER_DRAWING then has
-          // no selectable account and cannot be submitted.
-          console.warn("Unable to load Owner Drawing accounts:", error);
-          return { data: [] };
-        }),
-      ]);
-
-      const expenseAccounts = this.normalizeAccountList(
-        expenseResponse.data,
-      ).filter((account) => this.isActiveLeafAccount(account));
-      const cashBankLinkedAccountIDs = new Set(
-        cashBankAccounts
-          .map((account) => account.account_id)
-          .filter(
-            (accountID): accountID is number =>
-              typeof accountID === "number" && accountID > 0,
-          ),
+      const response = await api.get(
+        API_ENDPOINTS.CASH_BANK.OWNER_DRAWING_ACCOUNTS,
+        { params: { _t: Date.now() } },
       );
-
-      return {
-        operatingExpense: expenseAccounts.filter((account) =>
-          this.isOperatingExpenseAccount(account),
-        ),
-        nonOperatingExpense: expenseAccounts.filter((account) =>
-          this.isNonOperatingExpenseAccount(account),
-        ),
-        liability: this.normalizeAccountList(liabilityResponse.data).filter(
-          (account) => this.isActiveLeafAccount(account),
-        ),
-        asset: this.normalizeAccountList(assetResponse.data).filter(
-          (account) =>
-            this.isActiveLeafAccount(account) &&
-            !cashBankLinkedAccountIDs.has(account.id),
-        ),
-        ownerDrawing: this.normalizeAccountList(ownerDrawingResponse.data).filter(
-          (account) => this.isActiveLeafAccount(account),
-        ),
-      };
+      return this.normalizeAccountList(response.data).filter((account) =>
+        this.isActiveLeafAccount(account),
+      );
     } catch (error) {
-      console.error("Error fetching withdrawal target accounts:", error);
+      console.error("Error fetching owner drawing accounts:", error);
       throw error;
     }
   }
