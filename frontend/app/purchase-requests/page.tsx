@@ -100,9 +100,15 @@ const PURCHASE_REQUEST_PAGE_SIZE_OPTIONS = [10, 25, 50];
 const PURCHASE_REQUEST_PROGRESS_FILTERS = [
   { value: "", label: "Semua Progress" },
   { value: "WAITING_FINANCE_STAFF", label: "Belum Review Finance Staff" },
-  { value: "FINANCE_STAFF_APPROVED", label: "Sudah Review Finance Staff" },
+  {
+    value: "FINANCE_STAFF_APPROVED",
+    label: "Sudah Review Finance Staff — Semua Status",
+  },
   { value: "WAITING_FINANCE_MANAGER", label: "Belum Review Finance Manager" },
-  { value: "FINANCE_MANAGER_APPROVED", label: "Sudah Review Finance Manager" },
+  {
+    value: "FINANCE_MANAGER_APPROVED",
+    label: "Sudah Review Finance Manager — Semua Status",
+  },
   {
     value: "FINANCE_MANAGER_APPROVED_WITHOUT_PURCHASE",
     label: "FM Approved - Belum Pembelian",
@@ -120,15 +126,26 @@ const PURCHASE_REQUEST_PROGRESS_FILTERS = [
   { value: "AWAITING_REQUESTER_REVISION", label: "Menunggu Revisi PIC" },
   { value: "REQUESTER_REVISION_REVIEW", label: "Revisi PIC Dalam Review" },
   { value: "WAITING_DIRECTOR", label: "Menunggu Director" },
-  { value: "APPROVED", label: "PR Approved" },
-  { value: "REJECTED", label: "PR Rejected" },
-  { value: "CANCELLED", label: "PR Cancelled" },
   { value: "PURCHASE_CREATED", label: "Sudah Dibuat Pembelian" },
   { value: "PAYMENT_CREATED", label: "Sudah Ada Pembayaran" },
 ] as const;
 
 type PurchaseRequestProgressFilter =
   (typeof PURCHASE_REQUEST_PROGRESS_FILTERS)[number]["value"];
+
+const PURCHASE_REQUEST_STATUS_FILTERS = [
+  { value: "", label: "Semua Status" },
+  { value: "DRAFT", label: "Draft" },
+  { value: "PENDING_APPROVAL", label: "Menunggu Approval" },
+  { value: "APPROVED", label: "Approved" },
+  { value: "REJECTED", label: "Rejected" },
+  { value: "AWAITING_REVISION", label: "Menunggu Revisi PIC" },
+  { value: "CANCELLED", label: "Cancelled" },
+  { value: "COMPLETED", label: "Selesai / PO Processed" },
+] as const;
+
+type PurchaseRequestStatusFilter =
+  (typeof PURCHASE_REQUEST_STATUS_FILTERS)[number]["value"];
 
 type PurchaseRequestFormItem = {
   source: "catalog" | "manual";
@@ -208,6 +225,11 @@ export default function PurchaseRequestsPage() {
   const [vendorFilter, setVendorFilter] = useState("");
   const [progressFilter, setProgressFilter] =
     useState<PurchaseRequestProgressFilter>("");
+  const [statusFilter, setStatusFilter] =
+    useState<PurchaseRequestStatusFilter>("");
+  const [readyForPurchaseShortcutActive, setReadyForPurchaseShortcutActive] =
+    useState(false);
+  const readyForPurchaseShortcutActiveRef = useRef(false);
   const [startDateFilter, setStartDateFilter] = useState("");
   const [endDateFilter, setEndDateFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -362,6 +384,11 @@ export default function PurchaseRequestsPage() {
   const [requesterRevisionNotes, setRequesterRevisionNotes] = useState("");
   const [cancelReason, setCancelReason] = useState("");
   const handledNotificationRequestId = useRef<string | null>(null);
+  const purchaseRequestFetchSequence = useRef(0);
+  const readyForPurchasePreviousFilters = useRef<{
+    progressFilter: PurchaseRequestProgressFilter;
+    statusFilter: PurchaseRequestStatusFilter;
+  } | null>(null);
   const cancelLeastDestructiveRef = useRef<HTMLButtonElement>(null);
   const requesterRevisionLeastDestructiveRef = useRef<HTMLButtonElement>(null);
 
@@ -403,11 +430,19 @@ export default function PurchaseRequestsPage() {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (
+    onlyReadyForPurchase = readyForPurchaseShortcutActiveRef.current,
+  ) => {
+    const fetchSequence = ++purchaseRequestFetchSequence.current;
+
     try {
       setLoading(true);
       const [prsRes, projectsRes, vendorsRes, productsRes] = await Promise.all([
-        purchaseRequestService.getAll(),
+        purchaseRequestService.getAll(
+          undefined,
+          onlyReadyForPurchase ? "APPROVED" : undefined,
+          onlyReadyForPurchase,
+        ),
         projectService.getAll().catch(() => []),
         searchableSelectService
           .getVendors({ is_active: true, limit: 1000 })
@@ -417,14 +452,20 @@ export default function PurchaseRequestsPage() {
           .then((res) => res.data.data)
           .catch(() => []),
       ]);
+
+      if (fetchSequence !== purchaseRequestFetchSequence.current) return;
+
       setRequests(prsRes || []);
       setProjects(projectsRes || []);
       setVendors(vendorsRes || []);
       setProducts(productsRes || []);
     } catch (error) {
+      if (fetchSequence !== purchaseRequestFetchSequence.current) return;
       toast({ title: "Gagal memuat data", status: "error", duration: 3000 });
     } finally {
-      setLoading(false);
+      if (fetchSequence === purchaseRequestFetchSequence.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -2142,7 +2183,11 @@ export default function PurchaseRequestsPage() {
 
   const hasFinanceStaffReview = (pr?: PurchaseRequest | null) => {
     return (
-      Boolean(pr?.finance_staff_approved_by || pr?.finance_staff_approved_at) ||
+      Boolean(
+        pr?.finance_staff_approved_by ||
+          pr?.finance_staff_approved_at ||
+          pr?.finance_staff_review_notes?.trim(),
+      ) ||
       (pr?.items || []).some(
         (item) => normalizeDecision(item.finance_staff_decision) !== "PENDING",
       )
@@ -2152,12 +2197,40 @@ export default function PurchaseRequestsPage() {
   const hasFinanceManagerReview = (pr?: PurchaseRequest | null) => {
     return (
       Boolean(
-        pr?.finance_manager_approved_by || pr?.finance_manager_approved_at,
+        pr?.finance_manager_approved_by ||
+          pr?.finance_manager_approved_at ||
+          pr?.finance_manager_review_notes?.trim(),
       ) ||
       (pr?.items || []).some(
         (item) => normalizeDecision(item.finance_manager_decision) !== "PENDING",
       )
     );
+  };
+
+  // FinanceManagerApprovedAt records that FM completed a review, including a
+  // full rejection. A PR is only FM-approved when at least one item received
+  // an explicit APPROVED decision from FM.
+  const hasFinanceManagerApproval = (pr?: PurchaseRequest | null) => {
+    return (pr?.items || []).some(
+      (item) => normalizeDecision(item.finance_manager_decision) === "APPROVED",
+    );
+  };
+
+  // Keep the manual progress filter aligned with the server-side
+  // available_for_purchase query: a cancelled Purchase is historical data,
+  // not an active realization that should hide a PR from procurement.
+  const hasActivePurchaseForProgressFilter = (
+    pr?: PurchaseRequest | null,
+  ) => {
+    return (pr?.items || []).some((item) => {
+      if (item.purchase?.id) {
+        return item.purchase.status.toUpperCase() !== "CANCELLED";
+      }
+
+      // Items.Purchase is normally preloaded. Treat an unresolved linked ID as
+      // active conservatively rather than offering the PR for a second purchase.
+      return Boolean(item.purchase_id);
+    });
   };
 
   const matchesProgressFilter = (pr: PurchaseRequest) => {
@@ -2168,6 +2241,8 @@ export default function PurchaseRequestsPage() {
     const realizationStatus = (pr.realization_status || "").toUpperCase();
     const hasStaffReview = hasFinanceStaffReview(pr);
     const hasManagerReview = hasFinanceManagerReview(pr);
+    const hasManagerApproval = hasFinanceManagerApproval(pr);
+    const hasActivePurchase = hasActivePurchaseForProgressFilter(pr);
 
     switch (progressFilter) {
       case "WAITING_FINANCE_STAFF":
@@ -2183,7 +2258,11 @@ export default function PurchaseRequestsPage() {
       case "FINANCE_MANAGER_APPROVED":
         return hasManagerReview;
       case "FINANCE_MANAGER_APPROVED_WITHOUT_PURCHASE":
-        return hasManagerReview && !realization.hasPurchase;
+        return (
+          pr.status === "APPROVED" &&
+          hasManagerApproval &&
+          !hasActivePurchase
+        );
       case "AWAITING_VENDOR_INVOICE":
         return (
           pr.requires_vendor_invoice &&
@@ -2225,12 +2304,6 @@ export default function PurchaseRequestsPage() {
         );
       case "WAITING_DIRECTOR":
         return pr.status === "PENDING_APPROVAL" && stage === "DIRECTOR";
-      case "APPROVED":
-        return pr.status === "APPROVED";
-      case "REJECTED":
-        return pr.status === "REJECTED";
-      case "CANCELLED":
-        return pr.status === "CANCELLED";
       case "PURCHASE_CREATED":
         return realization.hasPurchase;
       case "PAYMENT_CREATED":
@@ -2623,17 +2696,81 @@ export default function PurchaseRequestsPage() {
     searchQuery ||
       vendorFilter ||
       progressFilter ||
+      statusFilter ||
+      readyForPurchaseShortcutActive ||
       startDateFilter ||
       endDateFilter,
   );
 
+  const handleProgressFilterChange = (
+    nextProgressFilter: PurchaseRequestProgressFilter,
+  ) => {
+    setProgressFilter(nextProgressFilter);
+
+    if (readyForPurchaseShortcutActive && nextProgressFilter !== "") {
+      setReadyForPurchaseShortcutActive(false);
+      readyForPurchaseShortcutActiveRef.current = false;
+      readyForPurchasePreviousFilters.current = null;
+      void fetchData(false);
+    }
+  };
+
+  const handleStatusFilterChange = (
+    nextStatusFilter: PurchaseRequestStatusFilter,
+  ) => {
+    setStatusFilter(nextStatusFilter);
+
+    if (readyForPurchaseShortcutActive && nextStatusFilter !== "APPROVED") {
+      setReadyForPurchaseShortcutActive(false);
+      readyForPurchaseShortcutActiveRef.current = false;
+      readyForPurchasePreviousFilters.current = null;
+      void fetchData(false);
+    }
+  };
+
+  const handleReadyForPurchaseShortcut = () => {
+    if (readyForPurchaseShortcutActive) {
+      const previousFilters = readyForPurchasePreviousFilters.current;
+
+      setReadyForPurchaseShortcutActive(false);
+      readyForPurchaseShortcutActiveRef.current = false;
+      setProgressFilter(previousFilters?.progressFilter || "");
+      setStatusFilter(previousFilters?.statusFilter || "");
+      readyForPurchasePreviousFilters.current = null;
+      setCurrentPage(1);
+      void fetchData(false);
+      return;
+    }
+
+    readyForPurchasePreviousFilters.current = {
+      progressFilter,
+      statusFilter,
+    };
+    setReadyForPurchaseShortcutActive(true);
+    readyForPurchaseShortcutActiveRef.current = true;
+    setProgressFilter("");
+    setStatusFilter("APPROVED");
+    setCurrentPage(1);
+    void fetchData(true);
+  };
+
   const handleClearFilters = () => {
+    const shouldReloadAllRequests = readyForPurchaseShortcutActive;
+
     setSearchQuery("");
     setVendorFilter("");
     setProgressFilter("");
+    setStatusFilter("");
+    setReadyForPurchaseShortcutActive(false);
+    readyForPurchaseShortcutActiveRef.current = false;
+    readyForPurchasePreviousFilters.current = null;
     setStartDateFilter("");
     setEndDateFilter("");
     setCurrentPage(1);
+
+    if (shouldReloadAllRequests) {
+      void fetchData(false);
+    }
   };
 
   const filteredRequests = requests.filter((r) => {
@@ -2665,6 +2802,7 @@ export default function PurchaseRequestsPage() {
       !vendorFilter ||
       r.vendor_id?.toString() === vendorFilter ||
       r.vendor?.id?.toString() === vendorFilter;
+    const matchesStatus = !statusFilter || r.status === statusFilter;
 
     const requestDate = getDateKey(r.created_at);
     const matchesStartDate =
@@ -2675,6 +2813,7 @@ export default function PurchaseRequestsPage() {
     return (
       matchesSearch &&
       matchesVendor &&
+      matchesStatus &&
       matchesProgressFilter(r) &&
       !isDateRangeInvalid &&
       matchesStartDate &&
@@ -2695,6 +2834,8 @@ export default function PurchaseRequestsPage() {
     searchQuery,
     vendorFilter,
     progressFilter,
+    statusFilter,
+    readyForPurchaseShortcutActive,
     startDateFilter,
     endDateFilter,
     pageSize,
@@ -3223,14 +3364,14 @@ export default function PurchaseRequestsPage() {
                 />
               </FormControl>
 
-		              <FormControl maxW={{ base: "100%", md: "260px" }}>
-		                <FormLabel fontSize="sm" color={mutedTextColor}>
-		                  Progress
+	              <FormControl maxW={{ base: "100%", md: "260px" }}>
+	                <FormLabel fontSize="sm" color={mutedTextColor}>
+	                  Progress
 	                </FormLabel>
 	                <Select
 	                  value={progressFilter}
 	                  onChange={(e) =>
-	                    setProgressFilter(
+	                    handleProgressFilterChange(
 	                      e.target.value as PurchaseRequestProgressFilter,
 	                    )
 	                  }
@@ -3247,6 +3388,45 @@ export default function PurchaseRequestsPage() {
 	                  ))}
 	                </Select>
 	              </FormControl>
+
+              <FormControl maxW={{ base: "100%", md: "220px" }}>
+                <FormLabel fontSize="sm" color={mutedTextColor}>
+                  Status PR
+                </FormLabel>
+                <Select
+                  value={statusFilter}
+                  onChange={(e) =>
+                    handleStatusFilterChange(
+                      e.target.value as PurchaseRequestStatusFilter,
+                    )
+                  }
+                  bg={inputBg}
+                  borderColor={inputBorderColor}
+                  color={textColor}
+                  _hover={{ borderColor: inputBorderColor }}
+                  _focusVisible={fieldFocusStyles}
+                >
+                  {PURCHASE_REQUEST_STATUS_FILTERS.map((option) => (
+                    <option key={option.value || "all"} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <Tooltip label="Menampilkan PR berstatus final Approved yang belum memiliki pembelian aktif.">
+                <Button
+                  leftIcon={<FiPackage />}
+                  colorScheme="green"
+                  variant={
+                    readyForPurchaseShortcutActive ? "solid" : "outline"
+                  }
+                  onClick={handleReadyForPurchaseShortcut}
+                  aria-pressed={readyForPurchaseShortcutActive}
+                >
+                  Siap Dibuat Pembelian
+                </Button>
+              </Tooltip>
 
 	              <FormControl maxW={{ base: "100%", md: "180px" }}>
                 <FormLabel fontSize="sm" color={mutedTextColor}>
@@ -3380,9 +3560,20 @@ export default function PurchaseRequestsPage() {
 	                          <Text fontSize="sm">
 	                            {getStageLabel(pr) || "Selesai"}
 	                          </Text>
-	                          {pr.finance_manager_approved_at && (
-	                            <Badge colorScheme="green" mt={1}>
-	                              FM Approved
+	                          {hasFinanceManagerReview(pr) && (
+	                            <Badge
+	                              colorScheme={
+	                                pr.status === "APPROVED" &&
+	                                hasFinanceManagerApproval(pr)
+	                                  ? "green"
+	                                  : "blue"
+	                              }
+	                              mt={1}
+	                            >
+	                              {pr.status === "APPROVED" &&
+	                              hasFinanceManagerApproval(pr)
+	                                ? "FM Approved"
+	                                : "FM Reviewed"}
 	                            </Badge>
 	                          )}
                             {pr.requires_vendor_invoice && (

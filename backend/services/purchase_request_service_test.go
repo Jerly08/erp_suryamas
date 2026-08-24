@@ -1657,6 +1657,34 @@ func TestGetPurchaseRequestsAvailableForPurchaseExcludesLinkedRequests(t *testin
 	}
 	require.NoError(t, db.Create(&availablePR).Error)
 
+	// A PR can have a Finance Manager review record even when every item was
+	// rejected. It must never be returned by the "available for purchase"
+	// shortcut: that shortcut is for final APPROVED PRs only, not merely PRs
+	// that have been reviewed by the Finance Manager.
+	financeManagerReviewedAt := time.Now()
+	rejectedAfterFMReviewPR := models.PurchaseRequest{
+		PRNumber:                 "PR-REJECTED-AFTER-FM-REVIEW",
+		RequesterID:              requester.ID,
+		Department:               "ops",
+		Status:                   models.PRStatusRejected,
+		CurrentApprovalStage:     models.PRApprovalStageFinalized,
+		FinanceManagerApprovedBy: &approvedBy,
+		FinanceManagerApprovedAt: &financeManagerReviewedAt,
+		RejectionReason:          "Seluruh item ditolak finance manager",
+		Items: []models.PurchaseRequestItem{
+			{
+				ProductID:              uintPtr(product.ID),
+				ItemName:               product.Name,
+				Quantity:               1,
+				EstimatedPrice:         100000,
+				TotalEstimatedPrice:    100000,
+				ApprovalStatus:         models.PRItemDecisionRejected,
+				FinanceManagerDecision: models.PRItemDecisionRejected,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&rejectedAfterFMReviewPR).Error)
+
 	usedPR := models.PurchaseRequest{
 		PRNumber:                 "PR-USED",
 		RequesterID:              requester.ID,
@@ -1733,6 +1761,14 @@ func TestGetPurchaseRequestsAvailableForPurchaseExcludesLinkedRequests(t *testin
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	require.Equal(t, "PR-AVAILABLE", list[0].PRNumber)
+
+	// The backend also enforces APPROVED itself when only
+	// available_for_purchase=true is supplied, so callers cannot accidentally
+	// reintroduce the rejected FM-reviewed PR by omitting the status parameter.
+	availableOnlyList, err := service.GetPurchaseRequests(financeManager.ID, financeManager.Role, "", "", true, 0)
+	require.NoError(t, err)
+	require.Len(t, availableOnlyList, 1)
+	require.Equal(t, "PR-AVAILABLE", availableOnlyList[0].PRNumber)
 
 	editList, err := service.GetPurchaseRequests(financeManager.ID, financeManager.Role, "", "APPROVED", true, linkedPurchase.ID)
 	require.NoError(t, err)
