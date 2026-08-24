@@ -141,6 +141,7 @@ func RunMigrations(db *gorm.DB) {
 		&models.PurchasePaymentTerm{},
 		&models.PurchaseCOARevision{},
 		&models.PurchasePrePostingRevision{},
+		&models.PurchasePrePostingRevisionChange{},
 
 		// Payment & Cash Bank models
 		&models.Payment{},

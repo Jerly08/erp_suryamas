@@ -147,6 +147,19 @@ func (s *PurchaseService) syncLinkedPurchaseRequestItems(purchase *models.Purcha
 		return nil
 	}
 
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return s.syncLinkedPurchaseRequestItemsInTransaction(tx, purchase)
+	})
+}
+
+func (s *PurchaseService) syncLinkedPurchaseRequestItemsInTransaction(
+	tx *gorm.DB,
+	purchase *models.Purchase,
+) error {
+	if purchase == nil || purchase.PurchaseRequestID == nil {
+		return nil
+	}
+
 	selectedItemIDs := make(map[uint]struct{})
 	for _, item := range purchase.PurchaseItems {
 		if item.PurchaseRequestItemID != nil {
@@ -154,42 +167,36 @@ func (s *PurchaseService) syncLinkedPurchaseRequestItems(purchase *models.Purcha
 		}
 	}
 
-	if len(selectedItemIDs) == 0 {
-		return nil
+	var pr models.PurchaseRequest
+	if err := tx.Preload("Items").First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
+		return err
 	}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var pr models.PurchaseRequest
-		if err := tx.Preload("Items").First(&pr, *purchase.PurchaseRequestID).Error; err != nil {
-			return err
-		}
+	now := time.Now()
+	for index := range pr.Items {
+		item := &pr.Items[index]
 
-		now := time.Now()
-		for index := range pr.Items {
-			item := &pr.Items[index]
-
-			if item.PurchaseID != nil && *item.PurchaseID == purchase.ID {
-				if _, keepReservation := selectedItemIDs[item.ID]; !keepReservation {
-					item.PurchaseID = nil
-					item.PurchasedAt = nil
-				}
-			}
-
-			if _, shouldReserve := selectedItemIDs[item.ID]; shouldReserve {
-				if item.ApprovalStatus != models.PRItemDecisionApproved {
-					return fmt.Errorf("purchase request item %d is not approved", item.ID)
-				}
-				if item.PurchaseID != nil && *item.PurchaseID != purchase.ID {
-					return fmt.Errorf("purchase request item %d is already linked to another purchase", item.ID)
-				}
-
-				item.PurchaseID = &purchase.ID
-				item.PurchasedAt = &now
+		if item.PurchaseID != nil && *item.PurchaseID == purchase.ID {
+			if _, keepReservation := selectedItemIDs[item.ID]; !keepReservation {
+				item.PurchaseID = nil
+				item.PurchasedAt = nil
 			}
 		}
 
-		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&pr).Error
-	})
+		if _, shouldReserve := selectedItemIDs[item.ID]; shouldReserve {
+			if item.ApprovalStatus != models.PRItemDecisionApproved {
+				return fmt.Errorf("purchase request item %d is not approved", item.ID)
+			}
+			if item.PurchaseID != nil && *item.PurchaseID != purchase.ID {
+				return fmt.Errorf("purchase request item %d is already linked to another purchase", item.ID)
+			}
+
+			item.PurchaseID = &purchase.ID
+			item.PurchasedAt = &now
+		}
+	}
+
+	return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&pr).Error
 }
 
 func (s *PurchaseService) releaseLinkedPurchaseRequestItems(purchase *models.Purchase) error {

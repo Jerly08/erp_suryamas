@@ -15,11 +15,85 @@ import (
 
 var purchasePrePostingRevisionTypes = map[string]struct{}{
 	"TRANSACTION_DATE":      {},
+	"VENDOR":                {},
+	"PROJECT":               {},
 	"VENDOR_OR_PROJECT":     {},
 	"ITEMS_AND_AMOUNT":      {},
 	"TAX_AND_COST":          {},
 	"PAYMENT_CONFIGURATION": {},
 	"OTHER":                 {},
+}
+
+// purchasePrePostingRevisionBusinessSnapshot captures the business-facing
+// values that may change while a PO is returned to Finance Staff. It is stored
+// per save in PurchasePrePostingRevisionChange so the evidence remains
+// append-only even when the user saves more than once before resubmitting.
+type purchasePrePostingRevisionBusinessSnapshot struct {
+	PurchaseCode      string                                          `json:"purchase_code"`
+	PurchaseRequestID *uint                                           `json:"purchase_request_id,omitempty"`
+	Vendor            purchasePrePostingRevisionVendorSnapshot        `json:"vendor"`
+	Project           *purchasePrePostingRevisionProjectSnapshot      `json:"project,omitempty"`
+	TransactionDate   time.Time                                       `json:"transaction_date"`
+	DueDate           time.Time                                       `json:"due_date"`
+	Discount          float64                                         `json:"discount"`
+	TaxAndCost        purchasePrePostingRevisionTaxAndCostSnapshot    `json:"tax_and_cost"`
+	Payment           purchasePrePostingRevisionPaymentSnapshot       `json:"payment"`
+	Notes             string                                          `json:"notes"`
+	Items             []purchasePrePostingRevisionItemSnapshot        `json:"items"`
+	PaymentTerms      []purchasePrePostingRevisionPaymentTermSnapshot `json:"payment_terms"`
+}
+
+type purchasePrePostingRevisionVendorSnapshot struct {
+	ID   uint   `json:"id"`
+	Code string `json:"code,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type purchasePrePostingRevisionProjectSnapshot struct {
+	ID     uint   `json:"id"`
+	Code   string `json:"code,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+type purchasePrePostingRevisionTaxAndCostSnapshot struct {
+	PPNRate              float64 `json:"ppn_rate"`
+	OtherTaxAdditions    float64 `json:"other_tax_additions"`
+	PPh21Rate            float64 `json:"pph21_rate"`
+	PPh23Rate            float64 `json:"pph23_rate"`
+	OtherTaxDeductions   float64 `json:"other_tax_deductions"`
+	FreightCost          float64 `json:"freight_cost"`
+	OtherCostAmount      float64 `json:"other_cost_amount"`
+	OtherCostDescription string  `json:"other_cost_description"`
+	OtherCostAccountID   *uint   `json:"other_cost_account_id,omitempty"`
+}
+
+type purchasePrePostingRevisionPaymentSnapshot struct {
+	Method           string `json:"method"`
+	BankAccountID    *uint  `json:"bank_account_id,omitempty"`
+	CreditAccountID  *uint  `json:"credit_account_id,omitempty"`
+	PaymentReference string `json:"payment_reference"`
+}
+
+type purchasePrePostingRevisionItemSnapshot struct {
+	ID                    uint    `json:"id"`
+	ProductID             *uint   `json:"product_id,omitempty"`
+	PurchaseRequestItemID *uint   `json:"purchase_request_item_id,omitempty"`
+	ItemType              string  `json:"item_type"`
+	Description           string  `json:"description"`
+	Quantity              int     `json:"quantity"`
+	UnitPrice             float64 `json:"unit_price"`
+	Discount              float64 `json:"discount"`
+	Tax                   float64 `json:"tax"`
+	ExpenseAccountID      uint    `json:"expense_account_id"`
+}
+
+type purchasePrePostingRevisionPaymentTermSnapshot struct {
+	Sequence    int       `json:"sequence"`
+	Percentage  float64   `json:"percentage"`
+	Amount      float64   `json:"amount"`
+	DueDate     time.Time `json:"due_date"`
+	Description string    `json:"description"`
 }
 
 // ListPurchasePrePostingRevisions returns the auditable history for a
@@ -298,11 +372,380 @@ func (s *PurchaseService) getPurchasePrePostingRevisionByID(
 }
 
 func (s *PurchaseService) purchasePrePostingRevisionQuery(db *gorm.DB) *gorm.DB {
-	return db.
+	query := db.
 		Preload("Requester").
 		Preload("FinanceManager").
 		Preload("OpenedBy").
 		Preload("ResubmittedByUser")
+
+	// Deployments that have not yet run the append-only audit migration must
+	// still be able to read older revision headers. New deployments create this
+	// table through migration 088 before the API is used.
+	if db.Migrator().HasTable(&models.PurchasePrePostingRevisionChange{}) {
+		query = query.
+			Preload("Changes", func(changeQuery *gorm.DB) *gorm.DB {
+				return changeQuery.Order("created_at ASC, id ASC")
+			}).
+			Preload("Changes.ChangedByUser")
+	}
+
+	return query
+}
+
+// purchasePrePostingRevisionUpdateScope maps sparse PUT payload fields to the
+// business approval selected when Finance Manager opened the revision. Vendor
+// and Project are deliberately separate; VENDOR_OR_PROJECT remains a legacy
+// compatibility grant for revisions created before the split.
+type purchasePrePostingRevisionUpdateScope struct {
+	TransactionDate      bool
+	Vendor               bool
+	Project              bool
+	ItemsAndAmount       bool
+	TaxAndCost           bool
+	PaymentConfiguration bool
+	Other                bool
+}
+
+func purchasePrePostingRevisionScopeFromRequest(request models.PurchaseUpdateRequest) purchasePrePostingRevisionUpdateScope {
+	return purchasePrePostingRevisionUpdateScope{
+		TransactionDate: request.Date != nil || request.DueDate != nil,
+		Vendor:          request.VendorID != nil,
+		Project:         request.ProjectID != nil || request.ClearProject,
+		ItemsAndAmount:  request.Discount != nil || len(request.Items) > 0,
+		TaxAndCost: request.Tax != nil ||
+			request.PPNRate != nil ||
+			request.OtherTaxAdditions != nil ||
+			request.PPh21Rate != nil ||
+			request.PPh23Rate != nil ||
+			request.OtherTaxDeductions != nil ||
+			request.FreightCost != nil ||
+			request.OtherCostAmount != nil ||
+			request.OtherCostDescription != nil ||
+			request.OtherCostAccountID != nil,
+		PaymentConfiguration: request.PaymentMethod != nil ||
+			request.BankAccountID != nil ||
+			request.CreditAccountID != nil ||
+			request.PaymentReference != nil ||
+			request.PaymentTerms != nil,
+		Other: request.Notes != nil,
+	}
+}
+
+func parsePurchasePrePostingRevisionTypes(serialized string) (map[string]struct{}, error) {
+	var values []string
+	if err := json.Unmarshal([]byte(serialized), &values); err != nil {
+		return nil, fmt.Errorf("jenis revisi purchase tidak dapat dibaca: %w", err)
+	}
+	normalized, err := normalizePurchasePrePostingRevisionTypes(values)
+	if err != nil {
+		return nil, err
+	}
+
+	types := make(map[string]struct{}, len(normalized))
+	for _, value := range normalized {
+		types[value] = struct{}{}
+	}
+	return types, nil
+}
+
+func purchasePrePostingRevisionAllowsType(types map[string]struct{}, revisionType string) bool {
+	if _, ok := types[revisionType]; ok {
+		return true
+	}
+
+	// Older records intentionally use one combined selection. Keep them fully
+	// compatible, while new VENDOR and PROJECT selections stay independent.
+	if revisionType == "VENDOR" || revisionType == "PROJECT" {
+		_, legacyAllowed := types["VENDOR_OR_PROJECT"]
+		return legacyAllowed
+	}
+	return false
+}
+
+func requirePurchasePrePostingRevisionType(types map[string]struct{}, revisionType string, label string) error {
+	if purchasePrePostingRevisionAllowsType(types, revisionType) {
+		return nil
+	}
+	return fmt.Errorf("perubahan %s tidak diizinkan karena tidak dipilih pada jenis revisi yang disetujui Finance Manager", label)
+}
+
+func validatePurchasePrePostingRevisionUpdateScope(
+	revision *models.PurchasePrePostingRevision,
+	request models.PurchaseUpdateRequest,
+) ([]string, error) {
+	if revision == nil {
+		return nil, fmt.Errorf("revisi Finance Staff aktif tidak ditemukan")
+	}
+	types, err := parsePurchasePrePostingRevisionTypes(revision.RevisionTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	scope := purchasePrePostingRevisionScopeFromRequest(request)
+	changedFields := make([]string, 0, 7)
+	if scope.TransactionDate {
+		if err := requirePurchasePrePostingRevisionType(types, "TRANSACTION_DATE", "tanggal transaksi atau jatuh tempo"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "transaction_date")
+	}
+	if scope.Vendor {
+		if err := requirePurchasePrePostingRevisionType(types, "VENDOR", "vendor"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "vendor")
+	}
+	if scope.Project {
+		if err := requirePurchasePrePostingRevisionType(types, "PROJECT", "proyek"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "project")
+	}
+	if scope.ItemsAndAmount {
+		if err := requirePurchasePrePostingRevisionType(types, "ITEMS_AND_AMOUNT", "item, kuantitas, harga, atau diskon"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "items_and_amount")
+	}
+	if scope.TaxAndCost {
+		if err := requirePurchasePrePostingRevisionType(types, "TAX_AND_COST", "pajak atau biaya"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "tax_and_cost")
+	}
+	if scope.PaymentConfiguration {
+		if err := requirePurchasePrePostingRevisionType(types, "PAYMENT_CONFIGURATION", "konfigurasi pembayaran"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "payment_configuration")
+	}
+	if scope.Other {
+		if err := requirePurchasePrePostingRevisionType(types, "OTHER", "catatan lain"); err != nil {
+			return nil, err
+		}
+		changedFields = append(changedFields, "other")
+	}
+
+	return changedFields, nil
+}
+
+func (s *PurchaseService) preparePurchasePrePostingRevisionUpdate(
+	purchaseID uint,
+	request models.PurchaseUpdateRequest,
+) (*models.PurchasePrePostingRevision, []string, error) {
+	var revision models.PurchasePrePostingRevision
+	if err := s.db.
+		Where("purchase_id = ? AND status = ?", purchaseID, models.PurchasePrePostingRevisionStatusOpenForFinance).
+		Order("id DESC").
+		First(&revision).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, fmt.Errorf("purchase tidak memiliki revisi Finance Staff aktif")
+		}
+		return nil, nil, err
+	}
+
+	changedFields, err := validatePurchasePrePostingRevisionUpdateScope(&revision, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &revision, changedFields, nil
+}
+
+func buildPurchasePrePostingRevisionBusinessSnapshot(db *gorm.DB, purchase *models.Purchase) (string, error) {
+	if purchase == nil {
+		return "", fmt.Errorf("purchase tidak ditemukan untuk snapshot revisi")
+	}
+
+	snapshot := purchasePrePostingRevisionBusinessSnapshot{
+		PurchaseCode:      purchase.Code,
+		PurchaseRequestID: purchase.PurchaseRequestID,
+		Vendor: purchasePrePostingRevisionVendorSnapshot{
+			ID: purchase.VendorID,
+		},
+		TransactionDate: purchase.Date,
+		DueDate:         purchase.DueDate,
+		Discount:        purchase.Discount,
+		TaxAndCost: purchasePrePostingRevisionTaxAndCostSnapshot{
+			PPNRate:              purchase.PPNRate,
+			OtherTaxAdditions:    purchase.OtherTaxAdditions,
+			PPh21Rate:            purchase.PPh21Rate,
+			PPh23Rate:            purchase.PPh23Rate,
+			OtherTaxDeductions:   purchase.OtherTaxDeductions,
+			FreightCost:          purchase.FreightCost,
+			OtherCostAmount:      purchase.OtherCostAmount,
+			OtherCostDescription: purchase.OtherCostDescription,
+			OtherCostAccountID:   purchase.OtherCostAccountID,
+		},
+		Payment: purchasePrePostingRevisionPaymentSnapshot{
+			Method:           purchase.PaymentMethod,
+			BankAccountID:    purchase.BankAccountID,
+			CreditAccountID:  purchase.CreditAccountID,
+			PaymentReference: purchase.PaymentReference,
+		},
+		Notes: purchase.Notes,
+	}
+
+	var vendor models.Contact
+	if err := db.Select("id", "code", "name").First(&vendor, purchase.VendorID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", fmt.Errorf("gagal memuat vendor untuk snapshot revisi: %w", err)
+	} else if err == nil {
+		snapshot.Vendor.Code = vendor.Code
+		snapshot.Vendor.Name = vendor.Name
+	}
+
+	if purchase.ProjectID != nil {
+		projectSnapshot := &purchasePrePostingRevisionProjectSnapshot{ID: *purchase.ProjectID}
+		var project models.Project
+		if err := db.Select("id", "code", "name", "status").First(&project, *purchase.ProjectID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", fmt.Errorf("gagal memuat proyek untuk snapshot revisi: %w", err)
+		} else if err == nil {
+			projectSnapshot.Code = project.Code
+			projectSnapshot.Name = project.Name
+			projectSnapshot.Status = project.Status
+		}
+		snapshot.Project = projectSnapshot
+	}
+
+	var items []models.PurchaseItem
+	if err := db.Where("purchase_id = ?", purchase.ID).
+		Order("id ASC").
+		Find(&items).Error; err != nil {
+		return "", fmt.Errorf("gagal memuat item untuk snapshot revisi: %w", err)
+	}
+	snapshot.Items = make([]purchasePrePostingRevisionItemSnapshot, 0, len(items))
+	for _, item := range items {
+		snapshot.Items = append(snapshot.Items, purchasePrePostingRevisionItemSnapshot{
+			ID:                    item.ID,
+			ProductID:             item.ProductID,
+			PurchaseRequestItemID: item.PurchaseRequestItemID,
+			ItemType:              item.ItemType,
+			Description:           item.Description,
+			Quantity:              item.Quantity,
+			UnitPrice:             item.UnitPrice,
+			Discount:              item.Discount,
+			Tax:                   item.Tax,
+			ExpenseAccountID:      item.ExpenseAccountID,
+		})
+	}
+
+	if db.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		var paymentTerms []models.PurchasePaymentTerm
+		if err := db.Where("purchase_id = ?", purchase.ID).
+			Order("sequence ASC, due_date ASC, id ASC").
+			Find(&paymentTerms).Error; err != nil {
+			return "", fmt.Errorf("gagal memuat termin pembayaran untuk snapshot revisi: %w", err)
+		}
+		snapshot.PaymentTerms = make([]purchasePrePostingRevisionPaymentTermSnapshot, 0, len(paymentTerms))
+		for _, term := range paymentTerms {
+			snapshot.PaymentTerms = append(snapshot.PaymentTerms, purchasePrePostingRevisionPaymentTermSnapshot{
+				Sequence:    term.Sequence,
+				Percentage:  term.Percentage,
+				Amount:      term.Amount,
+				DueDate:     term.DueDate,
+				Description: term.Description,
+			})
+		}
+	}
+
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("gagal menyusun snapshot revisi purchase: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func recordPurchasePrePostingRevisionChange(
+	db *gorm.DB,
+	revision *models.PurchasePrePostingRevision,
+	purchaseID uint,
+	changedBy uint,
+	changedFields []string,
+	beforeSnapshot string,
+	afterSnapshot string,
+) error {
+	if revision == nil || len(changedFields) == 0 || beforeSnapshot == afterSnapshot {
+		return nil
+	}
+
+	encodedFields, err := json.Marshal(changedFields)
+	if err != nil {
+		return fmt.Errorf("gagal menyimpan daftar perubahan revisi purchase: %w", err)
+	}
+
+	return db.Create(&models.PurchasePrePostingRevisionChange{
+		PurchasePrePostingRevisionID: revision.ID,
+		PurchaseID:                   purchaseID,
+		ChangedBy:                    changedBy,
+		ChangedFields:                string(encodedFields),
+		BeforeSnapshot:               beforeSnapshot,
+		AfterSnapshot:                afterSnapshot,
+	}).Error
+}
+
+func (s *PurchaseService) validateActivePurchaseVendor(vendorID uint) error {
+	if vendorID == 0 {
+		return fmt.Errorf("vendor wajib dipilih")
+	}
+
+	var vendor models.Contact
+	if err := s.db.Select("id", "type", "is_active").First(&vendor, vendorID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("vendor tidak ditemukan")
+		}
+		return err
+	}
+	if strings.ToUpper(strings.TrimSpace(vendor.Type)) != models.ContactTypeVendor {
+		return fmt.Errorf("kontak yang dipilih bukan vendor")
+	}
+	if !vendor.IsActive {
+		return fmt.Errorf("vendor yang dipilih tidak aktif")
+	}
+	return nil
+}
+
+func (s *PurchaseService) validateActivePurchaseProject(projectID uint) error {
+	if projectID == 0 {
+		return fmt.Errorf("proyek wajib dipilih")
+	}
+
+	var project models.Project
+	if err := s.db.Select("id", "status").First(&project, projectID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("proyek tidak ditemukan")
+		}
+		return err
+	}
+	if strings.ToUpper(strings.TrimSpace(project.Status)) != models.ProjectStatusActive {
+		return fmt.Errorf("proyek yang dipilih tidak aktif")
+	}
+	return nil
+}
+
+// validateVendorChangeHasConfirmedProvisionalProof prevents a vendor switch
+// from silently reinterpreting a proof that was uploaded before a payment was
+// linked. It is only called for an actual vendor change during an open
+// pre-posting revision; posted/linked payments are already blocked earlier in
+// the revision workflow.
+func validateVendorChangeHasConfirmedProvisionalProof(
+	db *gorm.DB,
+	purchaseID uint,
+	confirmed bool,
+) error {
+	if confirmed || !db.Migrator().HasTable(&models.PurchasePayment{}) {
+		return nil
+	}
+
+	var provisionalProofCount int64
+	if err := db.Model(&models.PurchasePayment{}).
+		Where("purchase_id = ? AND payment_id IS NULL AND deleted_at IS NULL", purchaseID).
+		Where("(COALESCE(payment_proof_file_name, '') <> '' OR COALESCE(payment_proof_file_path, '') <> '' OR payment_proof_uploaded_at IS NOT NULL)").
+		Count(&provisionalProofCount).Error; err != nil {
+		return err
+	}
+	if provisionalProofCount > 0 {
+		return fmt.Errorf("vendor tidak dapat diubah karena masih ada bukti pembayaran provisional; periksa bukti tersebut lalu kirim confirm_provisional_payment_proof=true untuk melanjutkan")
+	}
+	return nil
 }
 
 func loadPurchaseForPrePostingRevision(tx *gorm.DB, purchaseID uint) (*models.Purchase, error) {

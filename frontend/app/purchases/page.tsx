@@ -41,6 +41,7 @@ import {
   InputLeftElement,
   FormControl,
   FormLabel,
+  Checkbox,
   Grid,
   GridItem,
   Card,
@@ -105,6 +106,8 @@ import purchaseService, {
   PurchaseFilterParams,
   PurchaseItem,
   PurchasePayment,
+  PurchasePrePostingRevision,
+  PurchasePrePostingRevisionType,
   PurchaseRequestDocumentSummary,
   PurchaseSummary,
 } from "@/services/purchaseService";
@@ -240,6 +243,75 @@ interface PurchaseItemFormData {
   asset_category_id: string; // Asset category ID
   amortization_month: string; // Durasi bulan amortisasi untuk PREPAID
 }
+
+type PurchasePrePostingRevisionEditScope =
+  | "TRANSACTION_DATE"
+  | "VENDOR"
+  | "PROJECT"
+  | "ITEMS_AND_AMOUNT"
+  | "TAX_AND_COST"
+  | "PAYMENT_CONFIGURATION"
+  | "OTHER";
+
+const purchasePrePostingRevisionScopeLabels: Record<
+  PurchasePrePostingRevisionEditScope,
+  string
+> = {
+  TRANSACTION_DATE: "Tanggal transaksi",
+  VENDOR: "Vendor",
+  PROJECT: "Proyek",
+  ITEMS_AND_AMOUNT: "Item atau nominal",
+  TAX_AND_COST: "Pajak atau biaya",
+  PAYMENT_CONFIGURATION: "Metode atau rekening pembayaran",
+  OTHER: "Lainnya",
+};
+
+const parsePurchasePrePostingRevisionTypes = (
+  value?: string | null,
+): PurchasePrePostingRevisionType[] => {
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (type): type is PurchasePrePostingRevisionType =>
+        [
+          "TRANSACTION_DATE",
+          "VENDOR",
+          "PROJECT",
+          "VENDOR_OR_PROJECT",
+          "ITEMS_AND_AMOUNT",
+          "TAX_AND_COST",
+          "PAYMENT_CONFIGURATION",
+          "OTHER",
+        ].includes(type),
+    );
+  } catch {
+    return [];
+  }
+};
+
+const getPurchasePrePostingRevisionEditScopes = (
+  revision?: PurchasePrePostingRevision | null,
+): Set<PurchasePrePostingRevisionEditScope> => {
+  const scopes = new Set<PurchasePrePostingRevisionEditScope>();
+
+  for (const type of parsePurchasePrePostingRevisionTypes(
+    revision?.revision_types,
+  )) {
+    if (type === "VENDOR_OR_PROJECT") {
+      // Keep existing revisions usable after the UI split Vendor and Project.
+      scopes.add("VENDOR");
+      scopes.add("PROJECT");
+      continue;
+    }
+    scopes.add(type);
+  }
+
+  return scopes;
+};
 
 interface Vendor {
   id: number;
@@ -1125,6 +1197,10 @@ const PurchasesPage: React.FC = () => {
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(
     null,
   );
+  const [activePrePostingRevision, setActivePrePostingRevision] =
+    useState<PurchasePrePostingRevision | null>(null);
+  const [confirmProvisionalPaymentProof, setConfirmProvisionalPaymentProof] =
+    useState(false);
   const [selectedPurchaseForPayment, setSelectedPurchaseForPayment] =
     useState<Purchase | null>(null);
   const {
@@ -4223,13 +4299,121 @@ const PurchasesPage: React.FC = () => {
     );
   };
 
+  const isScopedPrePostingRevisionEdit =
+    (selectedPurchase?.status || "").toUpperCase() ===
+      "PENDING_FINANCE_REVISION" &&
+    activePrePostingRevision?.status === "OPEN_FOR_FINANCE";
+  const prePostingRevisionScopes = getPurchasePrePostingRevisionEditScopes(
+    activePrePostingRevision,
+  );
+  const revisionScopeAllows = (
+    scope: PurchasePrePostingRevisionEditScope,
+  ) => !isScopedPrePostingRevisionEdit || prePostingRevisionScopes.has(scope);
+  const activePrePostingRevisionScopeLabels = Array.from(
+    prePostingRevisionScopes,
+  ).map((scope) => purchasePrePostingRevisionScopeLabels[scope]);
+  const isLinkedPurchaseRequest = Boolean(selectedPurchase?.purchase_request_id);
+  const selectedPurchaseRequestVendorId =
+    selectedPurchase?.purchase_request?.vendor_id ??
+    selectedPurchase?.purchase_request?.vendor?.id ??
+    null;
+  const selectedPurchaseRequestVendor =
+    selectedPurchase?.purchase_request?.vendor ??
+    vendors.find((vendor) => vendor.id === selectedPurchaseRequestVendorId) ??
+    null;
+  const isVendorDifferentFromLinkedPurchaseRequest =
+    isLinkedPurchaseRequest &&
+    selectedPurchaseRequestVendorId != null &&
+    Number(formData.vendor_id || 0) !== Number(selectedPurchaseRequestVendorId);
+  const hasEditableScopedPrePostingRevisionScope =
+    !isScopedPrePostingRevisionEdit ||
+    revisionScopeAllows("TRANSACTION_DATE") ||
+    revisionScopeAllows("VENDOR") ||
+    revisionScopeAllows("ITEMS_AND_AMOUNT") ||
+    revisionScopeAllows("TAX_AND_COST") ||
+    revisionScopeAllows("PAYMENT_CONFIGURATION") ||
+    revisionScopeAllows("OTHER") ||
+    (revisionScopeAllows("PROJECT") && !isLinkedPurchaseRequest);
+  const currentScopedStandaloneProjectId =
+    selectedPurchase?.project_id?.toString() || "";
+  const isScopedStandaloneProjectChanged =
+    isScopedPrePostingRevisionEdit &&
+    revisionScopeAllows("PROJECT") &&
+    !isLinkedPurchaseRequest &&
+    formData.project_id !== currentScopedStandaloneProjectId;
+  const scopedStandaloneProjectOptions = (() => {
+    const currentProjectId = formData.project_id;
+    const activeOrCurrentProjects = projects.filter((project) => {
+      const isCurrentProject =
+        Boolean(currentProjectId) &&
+        project.id?.toString() === currentProjectId;
+      return (
+        isCurrentProject ||
+        (project.status || "").toString().toUpperCase() === "ACTIVE"
+      );
+    });
+    const currentPurchaseProject = selectedPurchase?.project;
+    const currentProjectIsMissingFromOptions =
+      Boolean(currentProjectId) &&
+      currentPurchaseProject?.id?.toString() === currentProjectId &&
+      !activeOrCurrentProjects.some(
+        (project) => project.id?.toString() === currentProjectId,
+      );
+
+    return currentProjectIsMissingFromOptions
+      ? [currentPurchaseProject, ...activeOrCurrentProjects]
+      : activeOrCurrentProjects;
+  })();
+  const existingEditPaymentProof = getPurchasePaymentProofRecord(selectedPurchase);
+  const hasPreliminaryEditPaymentProof = Boolean(
+    existingEditPaymentProof && !getLinkedPaymentId(existingEditPaymentProof),
+  );
+  const isScopedVendorChanged =
+    isScopedPrePostingRevisionEdit &&
+    revisionScopeAllows("VENDOR") &&
+    Number(formData.vendor_id || 0) !== Number(selectedPurchase?.vendor_id || 0);
+  const requiresPaymentProofVendorChangeConfirmation = Boolean(
+    isScopedVendorChanged && existingEditPaymentProof,
+  );
+
+  const closeEditPurchase = () => {
+    setActivePrePostingRevision(null);
+    setConfirmProvisionalPaymentProof(false);
+    onEditClose();
+  };
+
   // Handle edit purchase
   const handleEdit = async (purchase: Purchase) => {
     try {
       // Fetch detailed purchase data for editing
       const detailResponse = await purchaseService.getById(purchase.id);
+      let activeRevision: PurchasePrePostingRevision | null = null;
+      if (
+        (detailResponse.status || "").toUpperCase() ===
+        "PENDING_FINANCE_REVISION"
+      ) {
+        const revisions = await purchaseService.listPrePostingRevisions(
+          detailResponse.id,
+        );
+        activeRevision =
+          revisions.find((revision) => revision.status === "OPEN_FOR_FINANCE") ||
+          null;
+        if (!activeRevision) {
+          throw new Error(
+            "Ruang lingkup revisi aktif tidak ditemukan. Muat ulang purchase atau minta Finance Manager membuka revisi kembali.",
+          );
+        }
+        if (getPurchasePrePostingRevisionEditScopes(activeRevision).size === 0) {
+          throw new Error(
+            "Ruang lingkup revisi aktif tidak valid. Minta Finance Manager membuka revisi dengan bagian yang jelas.",
+          );
+        }
+      }
+
       setSelectedPurchase(detailResponse);
+      setActivePrePostingRevision(activeRevision);
       setPaymentProofFile(null);
+      setConfirmProvisionalPaymentProof(false);
 
       // Set form data for editing
       setFormData({
@@ -4276,18 +4460,24 @@ const PurchasesPage: React.FC = () => {
         ],
       });
 
-      await fetchVendors(); // Load vendors for dropdown
-      await fetchPurchaseRequests(detailResponse.id); // Load Purchase Requests
-      await fetchProjects(); // Load Projects
-      await fetchProductsList(); // Load products for dropdown
-      await fetchExpenseAccounts(); // Load expense accounts for dropdown
-      await fetchBankAccounts(); // Load bank accounts for dropdown
-      await fetchCreditAccounts(); // Load credit accounts (liability) for dropdown
+      await Promise.all([
+        fetchVendors(),
+        fetchPurchaseRequests(detailResponse.id),
+        fetchProjects(),
+        fetchProductsList(),
+        fetchExpenseAccounts(),
+        fetchBankAccounts(),
+        fetchCreditAccounts(),
+      ]);
       onEditOpen();
     } catch (err: any) {
+      setActivePrePostingRevision(null);
       toast({
         title: "Error",
-        description: "Failed to fetch purchase details for editing",
+        description:
+          err?.response?.data?.error ||
+          err?.message ||
+          "Failed to fetch purchase details for editing",
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -5246,7 +5436,33 @@ const PurchasesPage: React.FC = () => {
 
   // Handle save for both create and edit
   const handleSave = async () => {
-    if (!formData.vendor_id) {
+    if (
+      isScopedPrePostingRevisionEdit &&
+      !hasEditableScopedPrePostingRevisionScope
+    ) {
+      toast({
+        title: "Tidak ada field yang dapat diubah",
+        description:
+          "Proyek pada purchase yang terhubung ke PR mengikuti PR dan tidak dapat diubah dari revisi purchase.",
+        status: "info",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    const shouldUpdateVendor = revisionScopeAllows("VENDOR");
+    const shouldUpdateTransactionDate = revisionScopeAllows("TRANSACTION_DATE");
+    const shouldUpdateItems = revisionScopeAllows("ITEMS_AND_AMOUNT");
+    const shouldUpdateTaxAndCost = revisionScopeAllows("TAX_AND_COST");
+    const shouldUpdatePaymentConfiguration = revisionScopeAllows(
+      "PAYMENT_CONFIGURATION",
+    );
+    const shouldUpdateOther = revisionScopeAllows("OTHER");
+    const shouldUpdateStandaloneProject =
+      revisionScopeAllows("PROJECT") && !isLinkedPurchaseRequest;
+
+    if (shouldUpdateVendor && !formData.vendor_id) {
       toast({
         title: "Error",
         description: "Please select a vendor",
@@ -5257,7 +5473,7 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
-    if (formData.items.length === 0) {
+    if (shouldUpdateItems && formData.items.length === 0) {
       toast({
         title: "Error",
         description: "Please add at least one item",
@@ -5280,7 +5496,8 @@ const PurchasesPage: React.FC = () => {
       !isEditingDraftPurchase;
 
     // Validate all items based on item_type
-    const invalidItems = formData.items.filter((item) => {
+    const invalidItems = shouldUpdateItems
+      ? formData.items.filter((item) => {
       const quantity = parseFloat(item.quantity);
       const unitPrice = parseFloat(item.unit_price);
       const amortizationMonth = parseInt(item.amortization_month || "0", 10);
@@ -5317,7 +5534,8 @@ const PurchasesPage: React.FC = () => {
         !item.product_id ||
         (shouldRequireItemAccount && !resolvePurchaseItemExpenseAccountId(item))
       );
-    });
+        })
+      : [];
 
     if (invalidItems.length > 0) {
       const assetInvalid = invalidItems.some((i) => i.item_type === "ASSET");
@@ -5351,6 +5569,7 @@ const PurchasesPage: React.FC = () => {
     }
 
     if (
+      shouldUpdatePaymentConfiguration &&
       canSelectAccountFromCOA &&
       isFinanceOrAdmin &&
       formData.payment_method === "CREDIT" &&
@@ -5367,6 +5586,7 @@ const PurchasesPage: React.FC = () => {
     }
 
     if (
+      shouldUpdatePaymentConfiguration &&
       isFinanceOrAdmin &&
       formData.payment_method !== "CREDIT" &&
       !formData.bank_account_id
@@ -5381,15 +5601,30 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
-    const normalizedPaymentPreview = normalizePurchasePaymentFields(
-      formData,
-      formData.payment_method,
-    );
+    if (
+      requiresPaymentProofVendorChangeConfirmation &&
+      !confirmProvisionalPaymentProof
+    ) {
+      toast({
+        title: "Konfirmasi bukti pembayaran diperlukan",
+        description:
+          "Centang konfirmasi bahwa bukti pembayaran yang tersimpan akan diverifikasi kembali untuk vendor baru.",
+        status: "warning",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    const normalizedPaymentPreview = shouldUpdatePaymentConfiguration
+      ? normalizePurchasePaymentFields(formData, formData.payment_method)
+      : null;
     const normalizedPaymentMethodPreview =
-      normalizedPaymentPreview.payment_method;
+      normalizedPaymentPreview?.payment_method;
     const existingPaymentProof = getPurchasePaymentProofRecord(selectedPurchase);
     if (
-      requiresPaymentProofFile(normalizedPaymentMethodPreview) &&
+      shouldUpdatePaymentConfiguration &&
+      requiresPaymentProofFile(normalizedPaymentMethodPreview || "") &&
       !paymentProofFile &&
       !existingPaymentProof
     ) {
@@ -5413,9 +5648,11 @@ const PurchasesPage: React.FC = () => {
         }>
       | undefined;
     try {
-      paymentTermsPayload = buildPaymentTermsPayload(
-        normalizedPaymentMethodPreview,
-      );
+      if (shouldUpdatePaymentConfiguration && normalizedPaymentMethodPreview) {
+        paymentTermsPayload = buildPaymentTermsPayload(
+          normalizedPaymentMethodPreview,
+        );
+      }
     } catch (termError: any) {
       toast({
         title: "Termin pembayaran belum valid",
@@ -5432,86 +5669,138 @@ const PurchasesPage: React.FC = () => {
     try {
       setLoading(true);
 
-      const normalizedPayment = normalizePurchasePaymentFields(
-        formData,
-        formData.payment_method,
-      );
-      const normalizedPaymentMethod = normalizedPayment.payment_method;
+      // An OPEN_FOR_FINANCE revision must send only its FM-approved fields.
+      // In particular, omitting `items` prevents a vendor-only correction from
+      // replacing purchase items or recalculating an unrelated configuration.
+      const payload: any = {};
+      const normalizedPayment = shouldUpdatePaymentConfiguration
+        ? normalizePurchasePaymentFields(formData, formData.payment_method)
+        : null;
+      const normalizedPaymentMethod = normalizedPayment?.payment_method;
 
-      // Format the payload with proper tax rates
-      const payload: any = {
-        vendor_id: parseInt(formData.vendor_id),
-        date: formData.date
+      if (shouldUpdateVendor) {
+        payload.vendor_id = parseInt(formData.vendor_id, 10);
+      }
+
+      if (shouldUpdateTransactionDate) {
+        payload.date = formData.date
           ? `${formData.date}T00:00:00Z`
-          : new Date().toISOString(),
-        due_date: formData.due_date
+          : new Date().toISOString();
+        payload.due_date = formData.due_date
           ? `${formData.due_date}T00:00:00Z`
-          : undefined,
-        notes: formData.notes,
-        discount: parseFloat(formData.discount) || 0,
-        // Send proper tax rates (not legacy tax field)
-        ppn_rate: !isNaN(parseFloat(formData.ppn_rate))
-          ? parseFloat(formData.ppn_rate)
-          : defaultTaxRate,
-        other_tax_additions: parseFloat(formData.other_tax_additions) || 0,
-        freight_cost: parseFloat(formData.freight_cost) || 0,
-        other_cost_amount: parseFloat(formData.other_cost_amount) || 0,
-        other_cost_description:
-          formData.other_cost_description.trim() || undefined,
-        other_cost_account_id:
-          canSelectAccountFromCOA && formData.other_cost_account_id
-            ? parseInt(formData.other_cost_account_id, 10)
-            : undefined,
-        pph21_rate: parseFloat(formData.pph21_rate) || 0,
-        pph23_rate: parseFloat(formData.pph23_rate) || 0,
-        other_tax_deductions: parseFloat(formData.other_tax_deductions) || 0,
-        // Payment method fields
-        payment_method: normalizedPaymentMethod,
-        bank_account_id:
-          normalizedPaymentMethod === "CREDIT" ||
-          !normalizedPayment.bank_account_id
-            ? undefined
-            : parseInt(normalizedPayment.bank_account_id),
-        credit_account_id:
-          normalizedPaymentMethod === "CREDIT" &&
-          canSelectAccountFromCOA &&
-          normalizedPayment.credit_account_id
-            ? parseInt(normalizedPayment.credit_account_id)
-            : undefined,
-        payment_reference:
-          normalizedPaymentMethod === "BANK_TRANSFER" ||
-          normalizedPaymentMethod === "CHECK"
-            ? normalizedPayment.payment_reference.trim()
-            : "",
-        payment_terms: paymentTermsPayload,
-        items: formData.items.map((item) => ({
+          : undefined;
+      }
+
+      if (shouldUpdateOther) {
+        payload.notes = formData.notes;
+      }
+
+      if (shouldUpdateItems) {
+        payload.discount = parseFloat(formData.discount) || 0;
+        payload.items = formData.items.map((item) => ({
           item_type: item.item_type || "INVENTORY",
           is_fixed_asset: item.item_type === "ASSET",
           description: item.description || "",
           asset_category_id: item.asset_category_id
-            ? parseInt(item.asset_category_id)
+            ? parseInt(item.asset_category_id, 10)
             : undefined,
-          product_id: item.product_id ? parseInt(item.product_id) : undefined,
+          product_id: item.product_id
+            ? parseInt(item.product_id, 10)
+            : undefined,
           purchase_request_item_id: item.purchase_request_item_id
-            ? parseInt(item.purchase_request_item_id)
+            ? parseInt(item.purchase_request_item_id, 10)
             : undefined,
           amortization_month:
             item.item_type === "PREPAID"
-              ? parseInt(item.amortization_month) || 0
+              ? parseInt(item.amortization_month, 10) || 0
               : 0,
           quantity: parseFloat(item.quantity),
           unit_price: parseFloat(item.unit_price),
           discount: parseFloat(item.discount) || 0,
           tax: parseFloat(item.tax) || 0,
           expense_account_id: resolvePurchaseItemExpenseAccountId(item),
-        })),
-      };
-
-      if (formData.purchase_request_id) {
-        payload.purchase_request_id = parseInt(formData.purchase_request_id);
+        }));
       }
-      if (formData.project_id) {
-        payload.project_id = parseInt(formData.project_id);
+
+      if (shouldUpdateTaxAndCost) {
+        // Send proper tax rates (not the legacy `tax` field).
+        payload.ppn_rate = !isNaN(parseFloat(formData.ppn_rate))
+          ? parseFloat(formData.ppn_rate)
+          : defaultTaxRate;
+        payload.other_tax_additions =
+          parseFloat(formData.other_tax_additions) || 0;
+        payload.freight_cost = parseFloat(formData.freight_cost) || 0;
+        payload.other_cost_amount =
+          parseFloat(formData.other_cost_amount) || 0;
+        payload.other_cost_description =
+          formData.other_cost_description.trim() || undefined;
+        payload.other_cost_account_id =
+          canSelectAccountFromCOA && formData.other_cost_account_id
+            ? parseInt(formData.other_cost_account_id, 10)
+            : undefined;
+        payload.pph21_rate = parseFloat(formData.pph21_rate) || 0;
+        payload.pph23_rate = parseFloat(formData.pph23_rate) || 0;
+        payload.other_tax_deductions =
+          parseFloat(formData.other_tax_deductions) || 0;
+      }
+
+      if (
+        shouldUpdatePaymentConfiguration &&
+        normalizedPayment &&
+        normalizedPaymentMethod
+      ) {
+        payload.payment_method = normalizedPaymentMethod;
+        payload.bank_account_id =
+          normalizedPaymentMethod === "CREDIT" ||
+          !normalizedPayment.bank_account_id
+            ? undefined
+            : parseInt(normalizedPayment.bank_account_id, 10);
+        payload.credit_account_id =
+          normalizedPaymentMethod === "CREDIT" &&
+          canSelectAccountFromCOA &&
+          normalizedPayment.credit_account_id
+            ? parseInt(normalizedPayment.credit_account_id, 10)
+            : undefined;
+        payload.payment_reference =
+          normalizedPaymentMethod === "BANK_TRANSFER" ||
+          normalizedPaymentMethod === "CHECK"
+            ? normalizedPayment.payment_reference.trim()
+            : "";
+        payload.payment_terms = paymentTermsPayload;
+      }
+
+      if (isScopedPrePostingRevisionEdit) {
+        // A linked PR remains the source of truth for its project. Only a
+        // standalone PO can change or clear its project during this revision.
+        if (
+          shouldUpdateStandaloneProject &&
+          isScopedStandaloneProjectChanged
+        ) {
+          if (formData.project_id) {
+            payload.project_id = parseInt(formData.project_id, 10);
+          } else {
+            payload.clear_project = true;
+          }
+        }
+
+        if (
+          requiresPaymentProofVendorChangeConfirmation &&
+          confirmProvisionalPaymentProof
+        ) {
+          payload.confirm_provisional_payment_proof = true;
+        }
+      } else {
+        // Preserve existing draft edit/create behavior outside the controlled
+        // Finance revision workflow.
+        if (formData.purchase_request_id) {
+          payload.purchase_request_id = parseInt(
+            formData.purchase_request_id,
+            10,
+          );
+        }
+        if (formData.project_id) {
+          payload.project_id = parseInt(formData.project_id, 10);
+        }
       }
 
       let response;
@@ -5519,7 +5808,7 @@ const PurchasesPage: React.FC = () => {
       if (selectedPurchase) {
         // Update existing purchase
         response = await purchaseService.update(selectedPurchase.id, payload);
-        if (paymentProofFile) {
+        if (paymentProofFile && shouldUpdatePaymentConfiguration) {
           await purchaseService.uploadPaymentProof(response.id, paymentProofFile);
         }
         toast({
@@ -5532,7 +5821,7 @@ const PurchasesPage: React.FC = () => {
           isClosable: true,
         });
         setPaymentProofFile(null);
-        onEditClose();
+        closeEditPurchase();
       } else {
         // Create new purchase
         response = await purchaseService.create(payload);
@@ -8345,7 +8634,7 @@ const PurchasesPage: React.FC = () => {
               {/* Edit Purchase Modal */}
               <Modal
                 isOpen={isEditOpen}
-                onClose={onEditClose}
+                onClose={closeEditPurchase}
                 size="2xl"
                 scrollBehavior="inside"
               >
@@ -8361,7 +8650,24 @@ const PurchasesPage: React.FC = () => {
                   <ModalCloseButton />
                   <ModalBody overflowY="auto" px={{ base: 4, md: 6 }} pb={2}>
                     <VStack spacing={4} align="stretch">
-                      <Card>
+                      {isScopedPrePostingRevisionEdit && (
+                        <Alert status="info" variant="left-accent" borderRadius="md">
+                          <AlertIcon />
+                          <Box>
+                            <AlertTitle fontSize="sm">
+                              Revisi terbatas sesuai persetujuan Finance Manager
+                            </AlertTitle>
+                            <AlertDescription fontSize="sm">
+                              Hanya bagian berikut yang dapat diubah: {" "}
+                              {activePrePostingRevisionScopeLabels.join(", ") ||
+                                "tidak ada"}.
+                            </AlertDescription>
+                          </Box>
+                        </Alert>
+                      )}
+
+                      {revisionScopeAllows("TRANSACTION_DATE") && (
+                        <Card>
                         <CardHeader pb={3}>
                           <Text
                             fontSize="md"
@@ -8418,10 +8724,440 @@ const PurchasesPage: React.FC = () => {
                             </FormControl>
                           </SimpleGrid>
                         </CardBody>
-                      </Card>
+                        </Card>
+                      )}
+
+                      {isScopedPrePostingRevisionEdit &&
+                        (revisionScopeAllows("VENDOR") ||
+                          revisionScopeAllows("PROJECT")) && (
+                          <Card>
+                            <CardHeader pb={3}>
+                              <Text
+                                fontSize="md"
+                                fontWeight="semibold"
+                                color={textPrimary}
+                              >
+                                Identitas Purchase
+                              </Text>
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <VStack spacing={4} align="stretch">
+                                {revisionScopeAllows("VENDOR") && (
+                                  <FormControl isRequired>
+                                    <FormLabel
+                                      fontSize="sm"
+                                      fontWeight="medium"
+                                    >
+                                      Vendor
+                                    </FormLabel>
+                                    <SearchableSelect
+                                      options={vendors.map((vendor) => ({
+                                        id: vendor.id,
+                                        code: vendor.code,
+                                        name: vendor.name,
+                                        active: true,
+                                      }))}
+                                      placeholder="Cari / pilih vendor"
+                                      value={formData.vendor_id}
+                                      onChange={(value) =>
+                                        setFormData((previous) => ({
+                                          ...previous,
+                                          vendor_id: value
+                                            ? value.toString()
+                                            : "",
+                                        }))
+                                      }
+                                      isLoading={loadingVendors}
+                                      displayFormat={(vendor) =>
+                                        vendor.code
+                                          ? `${vendor.name} (${vendor.code})`
+                                          : vendor.name
+                                      }
+                                      size="sm"
+                                    />
+                                    <FormHelperText fontSize="xs">
+                                      Perubahan vendor hanya berlaku pada
+                                      purchase ini dan tercatat dalam riwayat
+                                      revisi.
+                                    </FormHelperText>
+                                  </FormControl>
+                                )}
+
+                                {isVendorDifferentFromLinkedPurchaseRequest && (
+                                  <Alert
+                                    status="warning"
+                                    variant="left-accent"
+                                    borderRadius="md"
+                                  >
+                                    <AlertIcon />
+                                    <AlertDescription fontSize="sm">
+                                      Vendor purchase berbeda dengan vendor PR
+                                      {selectedPurchaseRequestVendor
+                                        ? ` (${selectedPurchaseRequestVendor.name})`
+                                        : ""}
+                                      . PR tidak diubah; pastikan perubahan
+                                      vendor ini memang sudah disetujui Finance
+                                      Manager.
+                                    </AlertDescription>
+                                  </Alert>
+                                )}
+
+                                {requiresPaymentProofVendorChangeConfirmation && (
+                                  <Alert
+                                    status="warning"
+                                    variant="left-accent"
+                                    borderRadius="md"
+                                  >
+                                    <AlertIcon />
+                                    <Box>
+                                      <AlertTitle fontSize="sm">
+                                        Verifikasi bukti pembayaran diperlukan
+                                      </AlertTitle>
+                                      <AlertDescription fontSize="sm">
+                                        {hasPreliminaryEditPaymentProof
+                                          ? "Ada bukti pembayaran sementara yang belum tertaut ke pembayaran."
+                                          : "Ada bukti pembayaran yang sudah tersimpan."}{" "}
+                                        Pastikan bukti tersebut masih sesuai
+                                        dengan vendor baru sebelum menyimpan.
+                                      </AlertDescription>
+                                      <Checkbox
+                                        mt={2}
+                                        isChecked={
+                                          confirmProvisionalPaymentProof
+                                        }
+                                        onChange={(event) =>
+                                          setConfirmProvisionalPaymentProof(
+                                            event.target.checked,
+                                          )
+                                        }
+                                      >
+                                        <Text fontSize="sm">
+                                          Saya sudah memverifikasi bukti
+                                          pembayaran untuk perubahan vendor ini.
+                                        </Text>
+                                      </Checkbox>
+                                    </Box>
+                                  </Alert>
+                                )}
+
+                                {revisionScopeAllows("PROJECT") && (
+                                  <FormControl>
+                                    <FormLabel
+                                      fontSize="sm"
+                                      fontWeight="medium"
+                                    >
+                                      Proyek
+                                    </FormLabel>
+                                    {isLinkedPurchaseRequest ? (
+                                      <Box
+                                        p={3}
+                                        borderWidth="1px"
+                                        borderColor={inputBorderColor}
+                                        borderRadius="md"
+                                        bg={inputBg}
+                                      >
+                                        <Text fontSize="sm" fontWeight="medium">
+                                          {selectedPurchase?.purchase_request
+                                            ?.project
+                                            ? `${selectedPurchase.purchase_request.project.name} (${selectedPurchase.purchase_request.project.code})`
+                                            : "Tidak ada proyek pada Purchase Request"}
+                                        </Text>
+                                        <Text
+                                          mt={1}
+                                          fontSize="xs"
+                                          color={textSecondary}
+                                        >
+                                          Purchase ini terhubung ke PR. Proyek
+                                          diwariskan dari PR dan tidak dapat
+                                          diubah dari revisi purchase.
+                                        </Text>
+                                      </Box>
+                                    ) : loadingProjects ? (
+                                      <Spinner size="sm" />
+                                    ) : (
+                                      <Select
+                                        placeholder="Tanpa proyek"
+                                        value={formData.project_id}
+                                        onChange={(event) =>
+                                          setFormData((previous) => ({
+                                            ...previous,
+                                            project_id: event.target.value,
+                                          }))
+                                        }
+                                        size="sm"
+                                        bg={inputBg}
+                                        color={inputTextColor}
+                                        borderColor={inputBorderColor}
+                                        _hover={{
+                                          borderColor: inputHoverBorder,
+                                        }}
+                                        _focusVisible={fieldFocusStyles}
+                                      >
+                                        {scopedStandaloneProjectOptions.map(
+                                          (project) => {
+                                            const isCurrentInactiveProject =
+                                              project.id?.toString() ===
+                                                formData.project_id &&
+                                              (project.status || "")
+                                                .toString()
+                                                .toUpperCase() !== "ACTIVE";
+
+                                            return (
+                                              <option
+                                                key={project.id}
+                                                value={project.id}
+                                              >
+                                                {project.name} ({project.code})
+                                                {isCurrentInactiveProject
+                                                  ? " — status nonaktif (proyek saat ini)"
+                                                  : ""}
+                                              </option>
+                                            );
+                                          },
+                                        )}
+                                      </Select>
+                                    )}
+                                    {!isLinkedPurchaseRequest && (
+                                      <FormHelperText fontSize="xs">
+                                        Kosongkan untuk melepas proyek dari
+                                        purchase standalone ini.
+                                      </FormHelperText>
+                                    )}
+                                  </FormControl>
+                                )}
+                              </VStack>
+                            </CardBody>
+                          </Card>
+                        )}
+
+                      {isScopedPrePostingRevisionEdit &&
+                        revisionScopeAllows("ITEMS_AND_AMOUNT") && (
+                          <Card>
+                            <CardHeader pb={3}>
+                              <Flex justify="space-between" align="center">
+                                <Text
+                                  fontSize="md"
+                                  fontWeight="semibold"
+                                  color={textPrimary}
+                                >
+                                  Item dan Nominal
+                                </Text>
+                                <Badge colorScheme="blue">
+                                  Revisi disetujui
+                                </Badge>
+                              </Flex>
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <VStack spacing={4} align="stretch">
+                                <Alert
+                                  status="info"
+                                  variant="left-accent"
+                                  borderRadius="md"
+                                >
+                                  <AlertIcon />
+                                  <AlertDescription fontSize="sm">
+                                    Jenis item serta produk/deskripsi dikunci
+                                    untuk menjaga keterlacakan purchase. Anda
+                                    dapat menyesuaikan qty, harga satuan,
+                                    diskon baris, dan diskon purchase.
+                                  </AlertDescription>
+                                </Alert>
+                                <FormControl>
+                                  <FormLabel fontSize="sm">
+                                    Diskon Purchase (%)
+                                  </FormLabel>
+                                  <NumberInput
+                                    value={formData.discount}
+                                    onChange={(value) =>
+                                      setFormData((previous) => ({
+                                        ...previous,
+                                        discount: value,
+                                      }))
+                                    }
+                                    size="sm"
+                                    min={0}
+                                    max={100}
+                                    step={0.1}
+                                  >
+                                    <NumberInputField />
+                                    <NumberInputStepper>
+                                      <NumberIncrementStepper />
+                                      <NumberDecrementStepper />
+                                    </NumberInputStepper>
+                                  </NumberInput>
+                                </FormControl>
+                                <TableContainer>
+                                  <Table size="sm">
+                                    <Thead bg={tableHeaderBg}>
+                                      <Tr>
+                                        <Th>Item</Th>
+                                        <Th isNumeric>Qty</Th>
+                                        <Th isNumeric>Harga Satuan</Th>
+                                        <Th isNumeric>Diskon</Th>
+                                        <Th isNumeric>Total Baris</Th>
+                                      </Tr>
+                                    </Thead>
+                                    <Tbody>
+                                      {formData.items.map((item, index) => {
+                                        const product = products.find(
+                                          (candidate) =>
+                                            candidate.id?.toString() ===
+                                            item.product_id,
+                                        );
+                                        const itemLabel =
+                                          item.item_type === "INVENTORY"
+                                            ? product?.name ||
+                                              (item.product_id
+                                                ? `Produk #${item.product_id}`
+                                                : "Produk tidak ditemukan")
+                                            : item.description ||
+                                              "Item tanpa deskripsi";
+                                        const quantity =
+                                          parseFloat(item.quantity) || 0;
+                                        const unitPrice =
+                                          parseFloat(item.unit_price) || 0;
+                                        const lineDiscount =
+                                          parseFloat(item.discount) || 0;
+                                        const lineTotal = Math.max(
+                                          quantity * unitPrice - lineDiscount,
+                                          0,
+                                        );
+
+                                        return (
+                                          <Tr key={`${item.product_id}-${index}`}>
+                                            <Td>
+                                              <Text fontSize="sm">
+                                                {itemLabel}
+                                              </Text>
+                                              <Text
+                                                fontSize="xs"
+                                                color={textSecondary}
+                                              >
+                                                {item.item_type || "INVENTORY"}
+                                              </Text>
+                                            </Td>
+                                            <Td isNumeric minW="112px">
+                                              <NumberInput
+                                                value={item.quantity}
+                                                onChange={(value) => {
+                                                  const items = [
+                                                    ...formData.items,
+                                                  ];
+                                                  items[index] = {
+                                                    ...items[index],
+                                                    quantity: value,
+                                                  };
+                                                  setFormData((previous) => ({
+                                                    ...previous,
+                                                    items,
+                                                  }));
+                                                }}
+                                                min={1}
+                                                precision={0}
+                                                size="sm"
+                                              >
+                                                <NumberInputField textAlign="right" />
+                                              </NumberInput>
+                                            </Td>
+                                            <Td isNumeric minW="160px">
+                                              <CurrencyInput
+                                                value={unitPrice}
+                                                onChange={(value) => {
+                                                  const items = [
+                                                    ...formData.items,
+                                                  ];
+                                                  items[index] = {
+                                                    ...items[index],
+                                                    unit_price:
+                                                      value.toString(),
+                                                  };
+                                                  setFormData((previous) => ({
+                                                    ...previous,
+                                                    items,
+                                                  }));
+                                                }}
+                                                min={0}
+                                                size="sm"
+                                              />
+                                            </Td>
+                                            <Td isNumeric minW="140px">
+                                              <CurrencyInput
+                                                value={lineDiscount}
+                                                onChange={(value) => {
+                                                  const items = [
+                                                    ...formData.items,
+                                                  ];
+                                                  items[index] = {
+                                                    ...items[index],
+                                                    discount:
+                                                      value.toString(),
+                                                  };
+                                                  setFormData((previous) => ({
+                                                    ...previous,
+                                                    items,
+                                                  }));
+                                                }}
+                                                min={0}
+                                                size="sm"
+                                              />
+                                            </Td>
+                                            <Td isNumeric>
+                                              <Text fontSize="sm" fontWeight="medium">
+                                                {formatCurrency(lineTotal)}
+                                              </Text>
+                                            </Td>
+                                          </Tr>
+                                        );
+                                      })}
+                                    </Tbody>
+                                  </Table>
+                                </TableContainer>
+                              </VStack>
+                            </CardBody>
+                          </Card>
+                        )}
+
+                      {isScopedPrePostingRevisionEdit &&
+                        revisionScopeAllows("OTHER") && (
+                          <Card>
+                            <CardHeader pb={3}>
+                              <Text
+                                fontSize="md"
+                                fontWeight="semibold"
+                                color={textPrimary}
+                              >
+                                Catatan Purchase
+                              </Text>
+                            </CardHeader>
+                            <CardBody pt={0}>
+                              <FormControl>
+                                <FormLabel fontSize="sm">
+                                  Catatan
+                                </FormLabel>
+                                <Textarea
+                                  value={formData.notes}
+                                  onChange={(event) =>
+                                    setFormData((previous) => ({
+                                      ...previous,
+                                      notes: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="Tambahkan atau perbarui catatan purchase"
+                                  size="sm"
+                                  bg={inputBg}
+                                  color={inputTextColor}
+                                  borderColor={inputBorderColor}
+                                  _hover={{ borderColor: inputHoverBorder }}
+                                  _focusVisible={fieldFocusStyles}
+                                />
+                              </FormControl>
+                            </CardBody>
+                          </Card>
+                        )}
 
                       {/* Tax Configuration Section */}
-                      <Card>
+                      {revisionScopeAllows("TAX_AND_COST") && (
+                        <Card>
                         <CardHeader pb={3}>
                           <Text
                             fontSize="md"
@@ -8902,10 +9638,12 @@ const PurchasesPage: React.FC = () => {
                             )}
                           </VStack>
                         </CardBody>
-                      </Card>
+                        </Card>
+                      )}
 
                       {/* Payment Method Section */}
-                      <Card>
+                      {revisionScopeAllows("PAYMENT_CONFIGURATION") && (
+                        <Card>
                         <CardHeader pb={3}>
                           <Text
                             fontSize="md"
@@ -9101,16 +9839,27 @@ const PurchasesPage: React.FC = () => {
                             )}
                           {renderPaymentProofUpload(selectedPurchase)}
                         </CardBody>
-                      </Card>
+                        </Card>
+                      )}
                     </VStack>
                   </ModalBody>
                   <ModalFooter>
                     <HStack spacing={3}>
-                      <Button variant="ghost" onClick={onEditClose}>
+                      <Button variant="ghost" onClick={closeEditPurchase}>
                         Cancel
                       </Button>
-                      <Button colorScheme="blue" onClick={handleSave}>
-                        Update Purchase
+                      <Button
+                        colorScheme="blue"
+                        onClick={handleSave}
+                        isDisabled={
+                          isScopedPrePostingRevisionEdit &&
+                          !hasEditableScopedPrePostingRevisionScope
+                        }
+                      >
+                        {isScopedPrePostingRevisionEdit &&
+                        !hasEditableScopedPrePostingRevisionScope
+                          ? "Tidak ada perubahan yang dapat disimpan"
+                          : "Update Purchase"}
                       </Button>
                     </HStack>
                   </ModalFooter>

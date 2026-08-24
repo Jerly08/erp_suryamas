@@ -98,6 +98,8 @@ export type PurchasePrePostingRevisionStatus =
 
 export type PurchasePrePostingRevisionType =
   | "TRANSACTION_DATE"
+  | "VENDOR"
+  | "PROJECT"
   | "VENDOR_OR_PROJECT"
   | "ITEMS_AND_AMOUNT"
   | "TAX_AND_COST"
@@ -207,6 +209,11 @@ export interface PurchaseRequestSummary {
   request_number?: string;
   title?: string;
   department?: string;
+  // A PR vendor is optional and represents the preferred/target vendor for
+  // the request. The actual vendor on a purchase can differ after a controlled
+  // pre-posting revision, so the UI needs both values to warn the user.
+  vendor_id?: number | null;
+  vendor?: Vendor | null;
   vendor_invoice_received_date?: string | null;
   payment_terms_days?: number | null;
   due_date?: string | null;

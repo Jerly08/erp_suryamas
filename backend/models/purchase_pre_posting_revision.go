@@ -44,11 +44,29 @@ type PurchasePrePostingRevision struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
-	Purchase          *Purchase `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
-	Requester         *User     `json:"requester,omitempty" gorm:"foreignKey:RequestedBy"`
-	FinanceManager    *User     `json:"finance_manager,omitempty" gorm:"foreignKey:FinanceManagerDecisionBy"`
-	OpenedBy          *User     `json:"opened_by,omitempty" gorm:"foreignKey:OpenedForRevisionBy"`
-	ResubmittedByUser *User     `json:"resubmitted_by_user,omitempty" gorm:"foreignKey:ResubmittedBy"`
+	Purchase          *Purchase                          `json:"purchase,omitempty" gorm:"foreignKey:PurchaseID"`
+	Requester         *User                              `json:"requester,omitempty" gorm:"foreignKey:RequestedBy"`
+	FinanceManager    *User                              `json:"finance_manager,omitempty" gorm:"foreignKey:FinanceManagerDecisionBy"`
+	OpenedBy          *User                              `json:"opened_by,omitempty" gorm:"foreignKey:OpenedForRevisionBy"`
+	ResubmittedByUser *User                              `json:"resubmitted_by_user,omitempty" gorm:"foreignKey:ResubmittedBy"`
+	Changes           []PurchasePrePostingRevisionChange `json:"changes,omitempty" gorm:"foreignKey:PurchasePrePostingRevisionID"`
+}
+
+// PurchasePrePostingRevisionChange is an append-only business audit event for
+// every save made while a pre-posting revision is open. Keeping this separate
+// from the revision header prevents a later save from overwriting the evidence
+// of an earlier vendor, project, tax, item, or payment-configuration change.
+type PurchasePrePostingRevisionChange struct {
+	ID                           uint      `json:"id" gorm:"primaryKey"`
+	PurchasePrePostingRevisionID uint      `json:"purchase_pre_posting_revision_id" gorm:"not null;index"`
+	PurchaseID                   uint      `json:"purchase_id" gorm:"not null;index"`
+	ChangedBy                    uint      `json:"changed_by" gorm:"not null;index"`
+	ChangedFields                string    `json:"changed_fields" gorm:"not null;type:text"`
+	BeforeSnapshot               string    `json:"before_snapshot" gorm:"not null;type:text"`
+	AfterSnapshot                string    `json:"after_snapshot" gorm:"not null;type:text"`
+	CreatedAt                    time.Time `json:"created_at"`
+
+	ChangedByUser *User `json:"changed_by_user,omitempty" gorm:"foreignKey:ChangedBy"`
 }
 
 type PurchasePrePostingRevisionCreateRequest struct {

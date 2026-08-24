@@ -309,10 +309,19 @@ type PurchaseCreateRequest struct {
 }
 
 type PurchaseUpdateRequest struct {
-	VendorID *uint      `json:"vendor_id"`
-	Date     *time.Time `json:"date"`
-	DueDate  *time.Time `json:"due_date"`
-	Discount *float64   `json:"discount"`
+	VendorID *uint `json:"vendor_id"`
+	// ProjectID is intentionally sparse: omit it to retain the current project.
+	// A project can only be changed on a standalone purchase (one that is not
+	// linked to a Purchase Request). Use ClearProject to explicitly remove it.
+	ProjectID *uint `json:"project_id"`
+	// ClearProject is explicit because a nil project_id means "do not change".
+	ClearProject bool `json:"clear_project"`
+	// ConfirmProvisionalPaymentProof is required only when an OPEN_FOR_FINANCE
+	// vendor revision changes the vendor while an unlinked payment proof exists.
+	ConfirmProvisionalPaymentProof bool       `json:"confirm_provisional_payment_proof"`
+	Date                           *time.Time `json:"date"`
+	DueDate                        *time.Time `json:"due_date"`
+	Discount                       *float64   `json:"discount"`
 
 	// Payment method fields
 	PaymentMethod    *string                      `json:"payment_method"`

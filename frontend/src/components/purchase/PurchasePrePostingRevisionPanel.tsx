@@ -66,21 +66,63 @@ type DecisionState = {
   approve: boolean;
 } | null;
 
+// Vendor and project used to be one persisted revision type. New requests use
+// the precise API scopes, while legacy VENDOR_OR_PROJECT records remain
+// displayable in the history.
+type PurchasePrePostingRevisionSelectionType = Exclude<
+  PurchasePrePostingRevisionType,
+  "VENDOR_OR_PROJECT"
+>;
+
 const revisionTypeOptions: Array<{
-  value: PurchasePrePostingRevisionType;
+  value: PurchasePrePostingRevisionSelectionType;
   label: string;
 }> = [
-  { value: "TRANSACTION_DATE", label: "Tanggal transaksi" },
-  { value: "VENDOR_OR_PROJECT", label: "Vendor atau proyek" },
-  { value: "ITEMS_AND_AMOUNT", label: "Item atau nominal" },
-  { value: "TAX_AND_COST", label: "Pajak atau biaya" },
-  { value: "PAYMENT_CONFIGURATION", label: "Metode atau rekening pembayaran" },
+  {
+    value: "TRANSACTION_DATE",
+    label: "Tanggal transaksi",
+  },
+  {
+    value: "VENDOR",
+    label: "Vendor",
+  },
+  {
+    value: "PROJECT",
+    label: "Proyek",
+  },
+  {
+    value: "ITEMS_AND_AMOUNT",
+    label: "Item atau nominal",
+  },
+  {
+    value: "TAX_AND_COST",
+    label: "Pajak atau biaya",
+  },
+  {
+    value: "PAYMENT_CONFIGURATION",
+    label: "Metode atau rekening pembayaran",
+  },
   { value: "OTHER", label: "Lainnya" },
 ];
 
 const revisionTypeLabels = new Map(
-  revisionTypeOptions.map((option) => [option.value, option.label]),
+  [
+    ["TRANSACTION_DATE", "Tanggal transaksi"],
+    ["VENDOR", "Vendor"],
+    ["PROJECT", "Proyek"],
+    ["VENDOR_OR_PROJECT", "Vendor atau proyek"],
+    ["ITEMS_AND_AMOUNT", "Item atau nominal"],
+    ["TAX_AND_COST", "Pajak atau biaya"],
+    ["PAYMENT_CONFIGURATION", "Metode atau rekening pembayaran"],
+    ["OTHER", "Lainnya"],
+  ] as Array<[PurchasePrePostingRevisionType, string]>,
 );
+
+const normalizeSelectedRevisionTypes = (
+  values: PurchasePrePostingRevisionSelectionType[],
+): PurchasePrePostingRevisionType[] => {
+  return Array.from(new Set(values));
+};
 
 const statusPresentation: Record<
   PurchasePrePostingRevisionStatus,
@@ -160,7 +202,7 @@ const PurchasePrePostingRevisionPanel: React.FC<
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<
-    PurchasePrePostingRevisionType[]
+    PurchasePrePostingRevisionSelectionType[]
   >([]);
   const [reason, setReason] = useState("");
   const [decisionNotes, setDecisionNotes] = useState("");
@@ -213,7 +255,7 @@ const PurchasePrePostingRevisionPanel: React.FC<
     }
   };
 
-  const toggleRevisionType = (type: PurchasePrePostingRevisionType) => {
+  const toggleRevisionType = (type: PurchasePrePostingRevisionSelectionType) => {
     setSelectedTypes((current) =>
       current.includes(type)
         ? current.filter((value) => value !== type)
@@ -241,11 +283,19 @@ const PurchasePrePostingRevisionPanel: React.FC<
 
     setSaving(true);
     try {
+      const selectedTypeLabels = selectedTypes
+        .map(
+          (type) =>
+            revisionTypeOptions.find((option) => option.value === type)?.label,
+        )
+        .filter((label): label is string => Boolean(label));
       const revision = await purchaseService.requestPrePostingRevision(
         purchase.id,
         {
-          revision_types: selectedTypes,
-          reason: reason.trim(),
+          revision_types: normalizeSelectedRevisionTypes(selectedTypes),
+          // Retain the user-facing scope in the audit reason as well as the
+          // typed API data, making the review trail easy to read.
+          reason: `Area revisi: ${selectedTypeLabels.join(", ")}\n\n${reason.trim()}`,
         },
       );
       const openedForFinance = revision.status === "OPEN_FOR_FINANCE";
@@ -545,6 +595,11 @@ const PurchasePrePostingRevisionPanel: React.FC<
                     </Checkbox>
                   ))}
                 </VStack>
+                <Text mt={2} fontSize="xs" color={mutedText}>
+                  Vendor dan proyek dipilih terpisah. Riwayat lama dengan
+                  kategori gabungan tetap ditampilkan sebagai “Vendor atau
+                  proyek”.
+                </Text>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Alasan dan kronologi</FormLabel>

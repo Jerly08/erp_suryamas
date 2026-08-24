@@ -274,24 +274,35 @@ func (s *PurchaseService) syncPurchasePaymentTerms(purchase *models.Purchase, re
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if !models.IsCreditPurchaseMethod(purchase.PaymentMethod) {
-			return tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchasePaymentTerm{}).Error
-		}
-
-		terms, err := buildPurchasePaymentTerms(purchase, requests)
-		if err != nil {
-			return err
-		}
-		if err := tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchasePaymentTerm{}).Error; err != nil {
-			return err
-		}
-		for index := range terms {
-			if err := tx.Create(&terms[index]).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.syncPurchasePaymentTermsInTransaction(tx, purchase, requests)
 	})
+}
+
+func (s *PurchaseService) syncPurchasePaymentTermsInTransaction(
+	tx *gorm.DB,
+	purchase *models.Purchase,
+	requests []models.PurchasePaymentTermRequest,
+) error {
+	if purchase == nil || !tx.Migrator().HasTable(&models.PurchasePaymentTerm{}) {
+		return nil
+	}
+	if !models.IsCreditPurchaseMethod(purchase.PaymentMethod) {
+		return tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchasePaymentTerm{}).Error
+	}
+
+	terms, err := buildPurchasePaymentTerms(purchase, requests)
+	if err != nil {
+		return err
+	}
+	if err := tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchasePaymentTerm{}).Error; err != nil {
+		return err
+	}
+	for index := range terms {
+		if err := tx.Create(&terms[index]).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *PurchaseService) ensurePurchasePaymentTermsForCredit(purchase *models.Purchase) error {
@@ -671,9 +682,26 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 	fmt.Printf("? Purchase %d status validation passed for update\n", id)
 
+	var activePrePostingRevision *models.PurchasePrePostingRevision
+	var revisionAuditFields []string
+	if purchase.Status == models.PurchaseStatusPendingFinanceRevision {
+		activePrePostingRevision, revisionAuditFields, err = s.preparePurchasePrePostingRevisionUpdate(id, request)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Update fields if provided
 	if request.VendorID != nil {
-		purchase.VendorID = *request.VendorID
+		if purchase.VendorID != *request.VendorID {
+			if err := s.validateActivePurchaseVendor(*request.VendorID); err != nil {
+				return nil, err
+			}
+			purchase.VendorID = *request.VendorID
+		}
+	}
+	if err := s.applySparsePurchaseProjectUpdate(purchase, request); err != nil {
+		return nil, err
 	}
 	if request.Date != nil {
 		purchase.Date = *request.Date
@@ -765,8 +793,10 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 		return nil, err
 	}
 
-	// Update items if provided
-	replacePurchaseItems := len(request.Items) > 0
+	// Items are replaced only when a non-empty item collection is explicitly
+	// submitted. A sparse vendor/project/tax update therefore cannot erase or
+	// duplicate the existing purchase lines.
+	replacePurchaseItems := request.Items != nil && len(request.Items) > 0
 	if replacePurchaseItems {
 		err = s.updatePurchaseItems(purchase, request.Items)
 		if err != nil {
@@ -799,13 +829,29 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	// Re-evaluate approval base
 	s.setApprovalBasisAndBase(purchase)
 
-	// Save updated purchase
+	// Save updated purchase. An OPEN_FOR_FINANCE revision uses one database
+	// transaction for the PO, its items/terms/PR reservation, and the append-only
+	// before/after audit record.
 	fmt.Printf("? Saving updated purchase %d to database\n", id)
 	var updatedPurchase *models.Purchase
-	if replacePurchaseItems {
-		updatedPurchase, err = s.purchaseRepo.UpdateWithItemReplacement(purchase)
+	shouldSyncPaymentTerms := request.PaymentTerms != nil || request.PaymentMethod != nil
+	if activePrePostingRevision != nil {
+		updatedPurchase, err = s.persistPurchasePrePostingRevisionUpdate(
+			purchase,
+			replacePurchaseItems,
+			shouldSyncPaymentTerms,
+			request.PaymentTerms,
+			activePrePostingRevision,
+			revisionAuditFields,
+			request.ConfirmProvisionalPaymentProof,
+			userID,
+		)
 	} else {
-		updatedPurchase, err = s.purchaseRepo.Update(purchase)
+		if replacePurchaseItems {
+			updatedPurchase, err = s.purchaseRepo.UpdateWithItemReplacement(purchase)
+		} else {
+			updatedPurchase, err = s.purchaseRepo.Update(purchase)
+		}
 	}
 	if err != nil {
 		fmt.Printf("? Failed to save updated purchase %d: %v\n", id, err)
@@ -813,19 +859,184 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 	fmt.Printf("? Purchase %d updated successfully\n", id)
 
-	if request.PaymentTerms != nil || request.PaymentMethod != nil {
+	if activePrePostingRevision == nil && shouldSyncPaymentTerms {
 		if err := s.syncPurchasePaymentTerms(updatedPurchase, request.PaymentTerms); err != nil {
 			fmt.Printf("? Failed to sync payment terms for updated purchase %d: %v\n", id, err)
 			return nil, fmt.Errorf("failed to sync payment terms: %v", err)
 		}
 	}
 
-	if err := s.syncLinkedPurchaseRequestItems(updatedPurchase); err != nil {
-		fmt.Printf("? Failed to sync linked purchase request items for updated purchase %d: %v\n", id, err)
-		return nil, fmt.Errorf("failed to sync linked purchase request items: %v", err)
+	if activePrePostingRevision == nil {
+		if err := s.syncLinkedPurchaseRequestItems(updatedPurchase); err != nil {
+			fmt.Printf("? Failed to sync linked purchase request items for updated purchase %d: %v\n", id, err)
+			return nil, fmt.Errorf("failed to sync linked purchase request items: %v", err)
+		}
 	}
 
 	return s.GetPurchaseByID(updatedPurchase.ID)
+}
+
+// applySparsePurchaseProjectUpdate keeps project_id safe for PATCH-like
+// purchase updates. Linked PO projects are inherited from the Purchase Request
+// and therefore cannot be changed or cleared through the PO API.
+func (s *PurchaseService) applySparsePurchaseProjectUpdate(
+	purchase *models.Purchase,
+	request models.PurchaseUpdateRequest,
+) error {
+	if request.ProjectID == nil && !request.ClearProject {
+		return nil
+	}
+	if purchase == nil {
+		return fmt.Errorf("purchase tidak ditemukan")
+	}
+	if request.ProjectID != nil && request.ClearProject {
+		return fmt.Errorf("project_id dan clear_project tidak dapat digunakan bersamaan")
+	}
+
+	desiredProjectID := request.ProjectID
+	if request.ClearProject {
+		desiredProjectID = nil
+	}
+	projectChanged := false
+	switch {
+	case purchase.ProjectID == nil && desiredProjectID != nil:
+		projectChanged = true
+	case purchase.ProjectID != nil && desiredProjectID == nil:
+		projectChanged = true
+	case purchase.ProjectID != nil && desiredProjectID != nil && *purchase.ProjectID != *desiredProjectID:
+		projectChanged = true
+	}
+
+	if purchase.PurchaseRequestID != nil {
+		if projectChanged {
+			return fmt.Errorf("proyek purchase yang terhubung ke PR mengikuti Purchase Request dan tidak dapat diubah dari Purchase Order")
+		}
+		return nil
+	}
+	if !projectChanged {
+		return nil
+	}
+
+	if desiredProjectID == nil {
+		purchase.ProjectID = nil
+		purchase.Project = nil
+		return nil
+	}
+	if err := s.validateActivePurchaseProject(*desiredProjectID); err != nil {
+		return err
+	}
+
+	projectID := *desiredProjectID
+	purchase.ProjectID = &projectID
+	purchase.Project = nil
+	return nil
+}
+
+// persistPurchasePrePostingRevisionUpdate persists only an active Finance
+// Staff revision. Header, item replacement, payment terms, linked PR item
+// reservation, and the append-only business audit are committed together.
+func (s *PurchaseService) persistPurchasePrePostingRevisionUpdate(
+	purchase *models.Purchase,
+	replacePurchaseItems bool,
+	syncPaymentTerms bool,
+	paymentTerms []models.PurchasePaymentTermRequest,
+	revision *models.PurchasePrePostingRevision,
+	changedFields []string,
+	confirmProvisionalPaymentProof bool,
+	changedBy uint,
+) (*models.Purchase, error) {
+	if purchase == nil || revision == nil {
+		return nil, fmt.Errorf("purchase atau revisi Finance Staff tidak ditemukan")
+	}
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var activeRevision models.PurchasePrePostingRevision
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND purchase_id = ? AND status = ?", revision.ID, purchase.ID, models.PurchasePrePostingRevisionStatusOpenForFinance).
+			First(&activeRevision).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("revisi Finance Staff sudah tidak aktif")
+			}
+			return err
+		}
+
+		var persistedPurchase models.Purchase
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&persistedPurchase, purchase.ID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("purchase tidak ditemukan")
+			}
+			return err
+		}
+		if persistedPurchase.Status != models.PurchaseStatusPendingFinanceRevision {
+			return fmt.Errorf("purchase tidak lagi berada pada tahap revisi Finance Staff")
+		}
+		if purchase.VendorID != persistedPurchase.VendorID {
+			if err := validateVendorChangeHasConfirmedProvisionalProof(
+				tx,
+				purchase.ID,
+				confirmProvisionalPaymentProof,
+			); err != nil {
+				return err
+			}
+		}
+
+		beforeSnapshot, err := buildPurchasePrePostingRevisionBusinessSnapshot(tx, &persistedPurchase)
+		if err != nil {
+			return err
+		}
+
+		if err := tx.Omit(clause.Associations).Save(purchase).Error; err != nil {
+			return err
+		}
+		if replacePurchaseItems {
+			if err := tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchaseItem{}).Error; err != nil {
+				return err
+			}
+
+			items := make([]models.PurchaseItem, len(purchase.PurchaseItems))
+			copy(items, purchase.PurchaseItems)
+			for index := range items {
+				items[index].ID = 0
+				items[index].PurchaseID = purchase.ID
+				items[index].CreatedAt = time.Time{}
+				items[index].UpdatedAt = time.Time{}
+				items[index].DeletedAt = gorm.DeletedAt{}
+			}
+			if len(items) > 0 {
+				if err := tx.Omit(clause.Associations).Create(&items).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		if syncPaymentTerms {
+			if err := s.syncPurchasePaymentTermsInTransaction(tx, purchase, paymentTerms); err != nil {
+				return err
+			}
+		}
+		if err := s.syncLinkedPurchaseRequestItemsInTransaction(tx, purchase); err != nil {
+			return err
+		}
+
+		afterSnapshot, err := buildPurchasePrePostingRevisionBusinessSnapshot(tx, purchase)
+		if err != nil {
+			return err
+		}
+		return recordPurchasePrePostingRevisionChange(
+			tx,
+			&activeRevision,
+			purchase.ID,
+			changedBy,
+			changedFields,
+			beforeSnapshot,
+			afterSnapshot,
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.purchaseRepo.FindByID(purchase.ID)
 }
 
 func (s *PurchaseService) DeletePurchase(id uint) error {
