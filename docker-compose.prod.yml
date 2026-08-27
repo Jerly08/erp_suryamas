@@ -111,6 +111,7 @@ services:
       COOKIE_HTTP_ONLY: "true"
       COOKIE_SAME_SITE: lax
       SKIP_BALANCE_RESET: "false"
+      SKIP_CASHBANK_STARTUP_SYNC: ${SKIP_CASHBANK_STARTUP_SYNC:-false}
       ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
       LOG_LEVEL: ${LOG_LEVEL:-warn}
     volumes:
