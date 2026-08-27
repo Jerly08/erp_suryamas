@@ -227,6 +227,9 @@ func (s *PurchaseService) calculatePurchaseTotals(purchase *models.Purchase, ite
 		purchase.PPNAmount = 0
 		fmt.Printf("ℹ PPN rate is 0%%, no VAT applied\n")
 	}
+	if err := applyPurchaseVATTreatment(purchase); err != nil {
+		return err
+	}
 
 	// 2. Other tax additions (absolute amounts)
 	purchase.OtherTaxAdditions = sanitizeFloat(clampNonNegative(purchase.OtherTaxAdditions))
@@ -350,6 +353,9 @@ func (s *PurchaseService) recalculatePurchaseTotals(purchase *models.Purchase) e
 	} else {
 		// If PPNRate is 0, respect it (no VAT case)
 		purchase.PPNAmount = 0
+	}
+	if err := applyPurchaseVATTreatment(purchase); err != nil {
+		return err
 	}
 
 	// 2. Other tax additions
@@ -1248,6 +1254,9 @@ func (s *PurchaseService) createPurchaseJournalLines(purchase *models.Purchase, 
 
 // createAndPostPurchaseJournalEntries creates journal entries for approved purchase and posts them to GL
 func (s *PurchaseService) createAndPostPurchaseJournalEntries(purchase *models.Purchase, userID uint) error {
+	if isComponentPurchaseVAT(purchase) {
+		return fmt.Errorf("jalur jurnal legacy tidak mendukung PPN per komponen; gunakan PurchaseJournalServiceSSOT")
+	}
 	// First, check if journal entries already exist for this purchase
 	existingEntry, err := s.journalRepo.FindByReferenceID(
 		context.Background(),

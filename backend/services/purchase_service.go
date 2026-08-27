@@ -537,6 +537,20 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		return nil, err
 	}
 
+	vatTreatment := models.PurchaseVATTreatmentStandard
+	if request.VATTreatment != nil {
+		vatTreatment, err = normalizePurchaseVATTreatment(*request.VATTreatment)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if vatTreatment != models.PurchaseVATTreatmentComponentDPPNilaiLain && len(request.TaxAllocations) > 0 {
+		return nil, fmt.Errorf("detail PPN berdasarkan komponen hanya dapat digunakan pada perlakuan PPN khusus")
+	}
+	if vatTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain && len(request.TaxAllocations) == 0 {
+		return nil, fmt.Errorf("minimal satu detail PPN berdasarkan komponen wajib diisi")
+	}
+
 	// Generate purchase code
 	code, err := s.generatePurchaseCode()
 	if err != nil {
@@ -558,7 +572,15 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		BankAccountID:    request.BankAccountID,
 		CreditAccountID:  request.CreditAccountID,
 		PaymentReference: request.PaymentReference,
-		// Tax rates from request - use pointers to distinguish null vs zero
+		// Tax rates from request - use pointers to distinguish null vs zero.
+		// Component VAT is calculated after the line items exist, so it starts as
+		// STANDARD for the preliminary item-total pass below.
+		VATTreatment: func() string {
+			if vatTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain {
+				return models.PurchaseVATTreatmentStandard
+			}
+			return vatTreatment
+		}(),
 		PPNRate: func() float64 {
 			if request.PPNRate == nil {
 				return 11.0
@@ -593,6 +615,16 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 	if err != nil {
 		fmt.Printf("? Failed to calculate purchase totals: %v\n", err)
 		return nil, fmt.Errorf("failed to calculate purchase totals: %v", err)
+	}
+	if vatTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain {
+		purchase.VATTreatment = vatTreatment
+		purchase.TaxAllocations, err = buildPurchaseTaxAllocations(purchase, request.TaxAllocations)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.recalculatePurchaseTotals(purchase); err != nil {
+			return nil, fmt.Errorf("failed to calculate component VAT purchase totals: %w", err)
+		}
 	}
 	fmt.Printf("? Purchase totals calculated: Subtotal=%.2f, Tax=%.2f, Total=%.2f\n", purchase.SubtotalBeforeDiscount, purchase.TaxAmount, purchase.TotalAmount)
 
@@ -634,9 +666,10 @@ func (s *PurchaseService) CreatePurchase(request models.PurchaseCreateRequest, u
 		purchase.ApprovalStatus = models.PurchaseApprovalNotRequired
 	}
 
-	// Save purchase, status will remain DRAFT
+	// Save the header, line items, and component VAT rows in one transaction.
+	// An invoice-driven PPN header must never outlive a failed allocation save.
 	fmt.Printf("? Saving purchase to database with status DRAFT\n")
-	createdPurchase, err := s.purchaseRepo.Create(purchase)
+	createdPurchase, err := s.createPurchaseWithTaxAllocations(purchase, purchase.TaxAllocations)
 	if err != nil {
 		fmt.Printf("? Failed to save purchase to database: %v\n", err)
 		return nil, fmt.Errorf("failed to save purchase to database: %v", err)
@@ -723,6 +756,31 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	if request.OtherTaxAdditions != nil {
 		purchase.OtherTaxAdditions = *request.OtherTaxAdditions
 	}
+
+	currentVATTreatment, err := normalizePurchaseVATTreatment(purchase.VATTreatment)
+	if err != nil {
+		return nil, err
+	}
+	targetVATTreatment := currentVATTreatment
+	if request.VATTreatment != nil {
+		targetVATTreatment, err = normalizePurchaseVATTreatment(*request.VATTreatment)
+		if err != nil {
+			return nil, err
+		}
+	}
+	taxAllocationChangeRequested := request.TaxAllocations != nil
+	if targetVATTreatment != models.PurchaseVATTreatmentComponentDPPNilaiLain &&
+		len(request.TaxAllocations) > 0 {
+		return nil, fmt.Errorf("detail PPN berdasarkan komponen hanya dapat digunakan pada perlakuan PPN khusus")
+	}
+	if targetVATTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain &&
+		!taxAllocationChangeRequested && len(purchase.TaxAllocations) == 0 {
+		return nil, fmt.Errorf("minimal satu detail PPN berdasarkan komponen wajib diisi")
+	}
+	if targetVATTreatment != models.PurchaseVATTreatmentComponentDPPNilaiLain {
+		purchase.TaxAllocations = nil
+	}
+	purchase.VATTreatment = targetVATTreatment
 	if request.PPh21Rate != nil {
 		purchase.PPh21Rate = getPPhRateFromDoublePointer(request.PPh21Rate)
 	}
@@ -803,6 +861,25 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 			return nil, err
 		}
 	}
+	if targetVATTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain &&
+		replacePurchaseItems && !taxAllocationChangeRequested {
+		return nil, fmt.Errorf("perubahan item pada purchase dengan PPN berdasarkan komponen wajib menyertakan detail PPN yang diperbarui")
+	}
+
+	// A component allocation needs current line totals before its source amount
+	// can be derived. Run one preliminary calculation only while constructing a
+	// newly submitted allocation, then let the final pass use the invoice PPN.
+	if targetVATTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain && taxAllocationChangeRequested {
+		purchase.VATTreatment = models.PurchaseVATTreatmentStandard
+		if err := s.recalculatePurchaseTotals(purchase); err != nil {
+			return nil, fmt.Errorf("failed to calculate item basis for component VAT: %w", err)
+		}
+		purchase.VATTreatment = targetVATTreatment
+		purchase.TaxAllocations, err = buildPurchaseTaxAllocations(purchase, request.TaxAllocations)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Recalculate totals
 	fmt.Printf("? Recalculating totals for updated purchase %d\n", id)
@@ -835,30 +912,36 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	fmt.Printf("? Saving updated purchase %d to database\n", id)
 	var updatedPurchase *models.Purchase
 	shouldSyncPaymentTerms := request.PaymentTerms != nil || request.PaymentMethod != nil
+	shouldSyncTaxAllocations := taxAllocationChangeRequested ||
+		(currentVATTreatment == models.PurchaseVATTreatmentComponentDPPNilaiLain &&
+			targetVATTreatment != models.PurchaseVATTreatmentComponentDPPNilaiLain)
+	pendingTaxAllocations := purchase.TaxAllocations
 	if activePrePostingRevision != nil {
 		updatedPurchase, err = s.persistPurchasePrePostingRevisionUpdate(
 			purchase,
 			replacePurchaseItems,
 			shouldSyncPaymentTerms,
 			request.PaymentTerms,
+			shouldSyncTaxAllocations,
+			pendingTaxAllocations,
 			activePrePostingRevision,
 			revisionAuditFields,
 			request.ConfirmProvisionalPaymentProof,
 			userID,
 		)
 	} else {
-		if replacePurchaseItems {
-			updatedPurchase, err = s.purchaseRepo.UpdateWithItemReplacement(purchase)
-		} else {
-			updatedPurchase, err = s.purchaseRepo.Update(purchase)
-		}
+		updatedPurchase, err = s.updatePurchaseWithTaxAllocations(
+			purchase,
+			replacePurchaseItems,
+			shouldSyncTaxAllocations,
+			pendingTaxAllocations,
+		)
 	}
 	if err != nil {
 		fmt.Printf("? Failed to save updated purchase %d: %v\n", id, err)
 		return nil, fmt.Errorf("failed to save updated purchase: %v", err)
 	}
 	fmt.Printf("? Purchase %d updated successfully\n", id)
-
 	if activePrePostingRevision == nil && shouldSyncPaymentTerms {
 		if err := s.syncPurchasePaymentTerms(updatedPurchase, request.PaymentTerms); err != nil {
 			fmt.Printf("? Failed to sync payment terms for updated purchase %d: %v\n", id, err)
@@ -874,6 +957,126 @@ func (s *PurchaseService) UpdatePurchase(id uint, request models.PurchaseUpdateR
 	}
 
 	return s.GetPurchaseByID(updatedPurchase.ID)
+}
+
+// createPurchaseWithTaxAllocations writes a new Purchase header, its items,
+// and its component VAT allocations atomically. We intentionally persist items
+// explicitly instead of depending on GORM association ordering, because an
+// allocation can reference an incoming line index before item IDs exist.
+func (s *PurchaseService) createPurchaseWithTaxAllocations(
+	purchase *models.Purchase,
+	taxAllocations []models.PurchaseTaxAllocation,
+) (*models.Purchase, error) {
+	if purchase == nil {
+		return nil, fmt.Errorf("purchase wajib diisi")
+	}
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		header := *purchase
+		header.PurchaseItems = nil
+		header.TaxAllocations = nil
+		if err := tx.Omit(clause.Associations).Create(&header).Error; err != nil {
+			return err
+		}
+
+		items := make([]models.PurchaseItem, len(purchase.PurchaseItems))
+		copy(items, purchase.PurchaseItems)
+		for index := range items {
+			items[index].ID = 0
+			items[index].PurchaseID = header.ID
+			items[index].CreatedAt = time.Time{}
+			items[index].UpdatedAt = time.Time{}
+			items[index].DeletedAt = gorm.DeletedAt{}
+		}
+		if len(items) > 0 {
+			if err := tx.Omit(clause.Associations).Create(&items).Error; err != nil {
+				return err
+			}
+		}
+
+		var persistedItems []models.PurchaseItem
+		if err := tx.Where("purchase_id = ?", header.ID).
+			Order("id ASC").
+			Find(&persistedItems).Error; err != nil {
+			return fmt.Errorf("gagal memuat item purchase yang baru dibuat: %w", err)
+		}
+		header.PurchaseItems = persistedItems
+		if err := s.syncPurchaseTaxAllocationsInTransaction(tx, &header, taxAllocations); err != nil {
+			return err
+		}
+
+		*purchase = header
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.purchaseRepo.FindByID(purchase.ID)
+}
+
+// updatePurchaseWithTaxAllocations is the normal-draft counterpart to the
+// Finance-revision transaction. Replacing items and allocations together keeps
+// every PPN source row attached to a current PurchaseItem, even if a database
+// write fails midway through the request.
+func (s *PurchaseService) updatePurchaseWithTaxAllocations(
+	purchase *models.Purchase,
+	replacePurchaseItems bool,
+	syncTaxAllocations bool,
+	taxAllocations []models.PurchaseTaxAllocation,
+) (*models.Purchase, error) {
+	if purchase == nil || purchase.ID == 0 {
+		return nil, fmt.Errorf("purchase wajib diisi untuk diperbarui")
+	}
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		header := *purchase
+		header.PurchaseItems = nil
+		header.TaxAllocations = nil
+		if err := tx.Omit(clause.Associations).Save(&header).Error; err != nil {
+			return err
+		}
+
+		if replacePurchaseItems {
+			if err := tx.Where("purchase_id = ?", purchase.ID).Delete(&models.PurchaseItem{}).Error; err != nil {
+				return err
+			}
+
+			items := make([]models.PurchaseItem, len(purchase.PurchaseItems))
+			copy(items, purchase.PurchaseItems)
+			for index := range items {
+				items[index].ID = 0
+				items[index].PurchaseID = purchase.ID
+				items[index].CreatedAt = time.Time{}
+				items[index].UpdatedAt = time.Time{}
+				items[index].DeletedAt = gorm.DeletedAt{}
+			}
+			if len(items) > 0 {
+				if err := tx.Omit(clause.Associations).Create(&items).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		var persistedItems []models.PurchaseItem
+		if err := tx.Where("purchase_id = ?", purchase.ID).
+			Order("id ASC").
+			Find(&persistedItems).Error; err != nil {
+			return fmt.Errorf("gagal memuat item purchase yang diperbarui: %w", err)
+		}
+		header.PurchaseItems = persistedItems
+		if syncTaxAllocations {
+			if err := s.syncPurchaseTaxAllocationsInTransaction(tx, &header, taxAllocations); err != nil {
+				return err
+			}
+		}
+
+		*purchase = header
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.purchaseRepo.FindByID(purchase.ID)
 }
 
 // applySparsePurchaseProjectUpdate keeps project_id safe for PATCH-like
@@ -940,6 +1143,8 @@ func (s *PurchaseService) persistPurchasePrePostingRevisionUpdate(
 	replacePurchaseItems bool,
 	syncPaymentTerms bool,
 	paymentTerms []models.PurchasePaymentTermRequest,
+	syncTaxAllocations bool,
+	taxAllocations []models.PurchaseTaxAllocation,
 	revision *models.PurchasePrePostingRevision,
 	changedFields []string,
 	confirmProvisionalPaymentProof bool,
@@ -1006,6 +1211,24 @@ func (s *PurchaseService) persistPurchasePrePostingRevisionUpdate(
 				if err := tx.Omit(clause.Associations).Create(&items).Error; err != nil {
 					return err
 				}
+			}
+		}
+
+		if syncTaxAllocations {
+			// Re-read the current item rows so index-based input is resolved only
+			// against the newly persisted replacements, never soft-deleted rows.
+			purchaseForTaxAllocations := *purchase
+			if replacePurchaseItems {
+				var currentItems []models.PurchaseItem
+				if err := tx.Where("purchase_id = ?", purchase.ID).
+					Order("id ASC").
+					Find(&currentItems).Error; err != nil {
+					return fmt.Errorf("gagal membaca item purchase setelah revisi: %w", err)
+				}
+				purchaseForTaxAllocations.PurchaseItems = currentItems
+			}
+			if err := s.syncPurchaseTaxAllocationsInTransaction(tx, &purchaseForTaxAllocations, taxAllocations); err != nil {
+				return err
 			}
 		}
 
@@ -1109,7 +1332,13 @@ func (s *PurchaseService) updateProjectCostForPurchase(purchase *models.Purchase
 		return nil
 	}
 
+	// Creditable PPN is excluded from a project cost, while non-creditable PPN
+	// is part of the actual economic cost of the selected purchase component.
 	cost := purchase.NetBeforeTax
+	for _, amount := range purchaseNonCreditableVATByItem(purchase) {
+		cost += amount
+	}
+	cost = roundPurchaseMoney(cost)
 	if !increase {
 		cost = -cost
 	}
@@ -1142,6 +1371,9 @@ func (s *PurchaseService) SubmitForApproval(id uint, userID uint) error {
 		if !hasActiveRevision {
 			return errors.New("purchase tidak memiliki revisi Finance Staff aktif")
 		}
+	}
+	if err := s.validatePurchaseComponentVATDocuments(purchase); err != nil {
+		return err
 	}
 
 	// Ensure approval base up-to-date
@@ -1907,20 +2139,29 @@ func (s *PurchaseService) CreatePurchaseReceipt(request models.PurchaseReceiptRe
 
 // Document Management
 
-func (s *PurchaseService) UploadDocument(purchaseID uint, documentType, fileName, filePath string, fileSize int64, mimeType string, userID uint) error {
+func (s *PurchaseService) UploadDocument(purchaseID uint, documentType, referenceNumber, fileName, filePath string, fileSize int64, mimeType string, userID uint) error {
 	_, err := s.purchaseRepo.FindByID(purchaseID)
 	if err != nil {
 		return err
 	}
+	documentType = strings.ToUpper(strings.TrimSpace(documentType))
+	referenceNumber = strings.TrimSpace(referenceNumber)
+	if documentType == models.PurchaseDocumentTaxInvoice {
+		referenceNumber = normalizePurchaseTaxInvoiceReference(referenceNumber)
+		if referenceNumber == "" {
+			return fmt.Errorf("nomor faktur pajak wajib diisi untuk dokumen TAX_INVOICE")
+		}
+	}
 
 	document := &models.PurchaseDocument{
-		PurchaseID:   purchaseID,
-		DocumentType: documentType,
-		FileName:     fileName,
-		FilePath:     filePath,
-		FileSize:     fileSize,
-		MimeType:     mimeType,
-		UploadedBy:   userID,
+		PurchaseID:      purchaseID,
+		DocumentType:    documentType,
+		ReferenceNumber: referenceNumber,
+		FileName:        fileName,
+		FilePath:        filePath,
+		FileSize:        fileSize,
+		MimeType:        mimeType,
+		UploadedBy:      userID,
 	}
 
 	return s.purchaseRepo.CreateDocument(document)
@@ -1931,6 +2172,52 @@ func (s *PurchaseService) GetPurchaseDocuments(purchaseID uint) ([]models.Purcha
 }
 
 func (s *PurchaseService) DeleteDocument(documentID uint) error {
+	document, err := s.purchaseRepo.FindDocumentByID(documentID)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(document.DocumentType), models.PurchaseDocumentTaxInvoice) {
+		return s.purchaseRepo.DeleteDocument(documentID)
+	}
+
+	// TAX_INVOICE evidence is immutable once Accounting has verified the linked
+	// allocation or the Purchase has passed its editable draft stages. A draft
+	// may still replace an attachment, but approval will refuse to proceed until
+	// the exact invoice reference is uploaded again.
+	if !s.db.Migrator().HasTable(&models.PurchaseTaxAllocation{}) {
+		return s.purchaseRepo.DeleteDocument(documentID)
+	}
+	referenceNumber := normalizePurchaseTaxInvoiceReference(document.ReferenceNumber)
+	if referenceNumber == "" {
+		return s.purchaseRepo.DeleteDocument(documentID)
+	}
+
+	var linkedAllocations int64
+	if err := s.db.Model(&models.PurchaseTaxAllocation{}).
+		Where("purchase_id = ? AND UPPER(TRIM(tax_invoice_number)) = ?", document.PurchaseID, referenceNumber).
+		Count(&linkedAllocations).Error; err != nil {
+		return fmt.Errorf("gagal memeriksa keterkaitan faktur pajak: %w", err)
+	}
+	if linkedAllocations == 0 {
+		return s.purchaseRepo.DeleteDocument(documentID)
+	}
+
+	var verifiedAllocations int64
+	if err := s.db.Model(&models.PurchaseTaxAllocation{}).
+		Where("purchase_id = ? AND UPPER(TRIM(tax_invoice_number)) = ? AND verified_at IS NOT NULL", document.PurchaseID, referenceNumber).
+		Count(&verifiedAllocations).Error; err != nil {
+		return fmt.Errorf("gagal memeriksa verifikasi faktur pajak: %w", err)
+	}
+	var purchase models.Purchase
+	if err := s.db.Select("id", "status").First(&purchase, document.PurchaseID).Error; err != nil {
+		return err
+	}
+	editableStatus := purchase.Status == models.PurchaseStatusDraft ||
+		purchase.Status == models.PurchaseStatusPending ||
+		purchase.Status == models.PurchaseStatusPendingFinanceRevision
+	if verifiedAllocations > 0 || !editableStatus {
+		return fmt.Errorf("faktur pajak %s sudah terverifikasi atau purchase tidak lagi dapat diedit; gunakan alur revisi/penyesuaian yang berlaku", referenceNumber)
+	}
 	return s.purchaseRepo.DeleteDocument(documentID)
 }
 
@@ -2387,6 +2674,9 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 	if len(request.Items) == 0 {
 		return nil, errors.New("minimal satu item COA wajib dikirim")
 	}
+	if err := s.validatePurchaseComponentVATDocuments(purchase); err != nil {
+		return nil, err
+	}
 
 	itemAccountByID := make(map[uint]uint, len(request.Items))
 	for _, item := range request.Items {
@@ -2447,6 +2737,9 @@ func (s *PurchaseService) CompleteAccountingCOA(purchaseID uint, request models.
 				return fmt.Errorf("failed to update COA for purchase item %d: %w", purchaseItemID, err)
 			}
 		}
+		if err := s.verifyPurchaseTaxAllocations(tx, purchase, userID); err != nil {
+			return fmt.Errorf("verifikasi PPN purchase gagal: %w", err)
+		}
 
 		if purchase.ApprovalRequestID != nil {
 			historyComments := "Accounting completed GL/COA input; waiting for Finance Manager final approval"
@@ -2499,6 +2792,20 @@ func (s *PurchaseService) FinalApprovePurchaseAfterAccounting(purchaseID uint, u
 	}
 	if s.purchaseNeedsAccountingCOA(purchase) {
 		return nil, errors.New("GL/COA belum lengkap, Accounting harus melengkapi COA terlebih dahulu")
+	}
+	if err := s.validatePurchaseComponentVATDocuments(purchase); err != nil {
+		return nil, err
+	}
+	if isComponentPurchaseVAT(purchase) && s.db.Migrator().HasTable(&models.PurchaseTaxAllocation{}) {
+		var unverifiedCount int64
+		if err := s.db.Model(&models.PurchaseTaxAllocation{}).
+			Where("purchase_id = ? AND deleted_at IS NULL AND verified_at IS NULL", purchase.ID).
+			Count(&unverifiedCount).Error; err != nil {
+			return nil, fmt.Errorf("gagal memeriksa verifikasi PPN purchase: %w", err)
+		}
+		if unverifiedCount > 0 {
+			return nil, errors.New("Accounting harus memverifikasi detail PPN dan faktur pajak sebelum final approval")
+		}
 	}
 	if err := CheckClosedPeriod(s.db, purchase.Date); err != nil {
 		return nil, err
@@ -2761,7 +3068,8 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 			}
 
 			// Hitung Biaya Per Bulan flat
-			monthlyAmt := item.TotalPrice / float64(months)
+			valuationTotal := purchaseItemValuationTotal(purchase, &item)
+			monthlyAmt := valuationTotal / float64(months)
 
 			endDate := baseDate.AddDate(0, months, 0)
 
@@ -2777,7 +3085,7 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 				PurchaseItemID:    &item.ID,
 				Name:              prepaidName,
 				Description:       fmt.Sprintf("Prepaid Expense auto-generated dari PO %s", purchase.Code),
-				TotalAmount:       item.TotalPrice,
+				TotalAmount:       valuationTotal,
 				AmortizationMonth: months,
 				MonthlyAmount:     monthlyAmt,
 				StartDate:         baseDate,
@@ -2807,7 +3115,7 @@ func (s *PurchaseService) processPrepaidExpensesInPurchase(purchase *models.Purc
 					fmt.Printf("?? Gagal membuat schedule ke-%d untuk prepaid ID %d\n", i, prepaid.ID)
 				}
 			}
-			fmt.Printf("? Sukses membuat Prepaid Expense '%s' (%d Bulan) sebesar Rp %.2f\n", prepaidName, months, item.TotalPrice)
+			fmt.Printf("? Sukses membuat Prepaid Expense '%s' (%d Bulan) sebesar Rp %.2f\n", prepaidName, months, valuationTotal)
 		}
 	}
 	return nil
@@ -2901,7 +3209,8 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 		}
 
 		// Set default useful life and depreciation method based on category
-		usefulLife, depMethod, salvageValue := deriveAutoCreatedAssetDefaults(category, categoryCode, item.TotalPrice)
+		valuationTotal := purchaseItemValuationTotal(purchase, &item)
+		usefulLife, depMethod, salvageValue := deriveAutoCreatedAssetDefaults(category, categoryCode, valuationTotal)
 
 		// Ensure Quantity is at least 1 (Prevents zero-loop bug & division by zero panic)
 		qty := item.Quantity
@@ -2918,9 +3227,9 @@ func (s *PurchaseService) autoCreateAssetsFromPurchase(purchase *models.Purchase
 			}
 
 			// Ensure per-unit price is calculated properly
-			perUnitPrice := item.UnitPrice
-			if perUnitPrice <= 0 && item.TotalPrice > 0 {
-				perUnitPrice = item.TotalPrice / float64(qty)
+			perUnitPrice := valuationTotal / float64(qty)
+			if perUnitPrice <= 0 {
+				perUnitPrice = item.UnitPrice
 			}
 
 			asset := &models.Asset{
@@ -4663,6 +4972,9 @@ func (s *PurchaseService) UpdatePurchasePaymentAmounts(purchaseID uint, paidAmou
 
 // createSSOTPurchaseJournalEntries creates journal entries using SSOT Journal System
 func (s *PurchaseService) createSSOTPurchaseJournalEntries(purchase *models.Purchase, userID uint) error {
+	if isComponentPurchaseVAT(purchase) {
+		return fmt.Errorf("purchase dengan PPN per komponen harus diposting melalui jurnal SSOT utama agar PPN tidak kredit tidak salah dicatat")
+	}
 	if s.ssotJournalAdapter == nil {
 		fmt.Printf("?? SSOT Journal Adapter not initialized, falling back to legacy journal system\n")
 		return s.createAndPostPurchaseJournalEntries(purchase, userID)
@@ -4799,11 +5111,14 @@ func (s *PurchaseService) PayPurchasePPh(purchaseID uint, request models.Purchas
 	var updatedPurchase models.Purchase
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var purchase models.Purchase
-		if err := tx.
+		purchaseQuery := tx.
 			Clauses(clause.Locking{Strength: "UPDATE"}).
 			Preload("Vendor").
-			Preload("PurchaseItems.Product").
-			First(&purchase, purchaseID).Error; err != nil {
+			Preload("PurchaseItems.Product")
+		if tx.Migrator().HasTable(&models.PurchaseTaxAllocation{}) {
+			purchaseQuery = purchaseQuery.Preload("TaxAllocations")
+		}
+		if err := purchaseQuery.First(&purchase, purchaseID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("purchase not found")
 			}

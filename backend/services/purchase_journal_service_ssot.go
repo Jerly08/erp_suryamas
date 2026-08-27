@@ -42,6 +42,70 @@ func (s *PurchaseJournalServiceSSOT) ShouldPostToJournal(status string) bool {
 	return false
 }
 
+// splitPurchaseVATForJournal separates the VAT amount that may be posted to
+// PPN Masukan from the VAT that must be capitalized into its purchase item.
+//
+// Historical purchases do not have tax allocations. For those records the
+// existing behaviour is retained: the whole header PPNAmount is creditable.
+// Component-based purchases are deliberately validated here as a final
+// posting safeguard; a missing preload or a malformed allocation must not
+// silently post all VAT to PPN Masukan.
+func splitPurchaseVATForJournal(purchase *models.Purchase) (decimal.Decimal, map[uint]decimal.Decimal, error) {
+	if purchase == nil {
+		return decimal.Zero, nil, fmt.Errorf("purchase is required to split VAT for journal")
+	}
+
+	nonCreditableByItem := make(map[uint]decimal.Decimal)
+	headerPPN := decimal.NewFromFloat(purchase.PPNAmount).Round(2)
+
+	if len(purchase.TaxAllocations) == 0 {
+		if strings.EqualFold(strings.TrimSpace(purchase.VATTreatment), "COMPONENT_DPP_NILAI_LAIN") && !headerPPN.IsZero() {
+			return decimal.Zero, nil, fmt.Errorf("purchase %s menggunakan PPN berdasarkan komponen tetapi alokasi PPN tidak tersedia", purchase.Code)
+		}
+		// Legacy/global PPN remains fully creditable.
+		return headerPPN, nonCreditableByItem, nil
+	}
+
+	purchaseItemIDs := make(map[uint]struct{}, len(purchase.PurchaseItems))
+	for _, item := range purchase.PurchaseItems {
+		purchaseItemIDs[item.ID] = struct{}{}
+	}
+
+	creditablePPN := decimal.Zero
+	totalAllocatedPPN := decimal.Zero
+	for _, allocation := range purchase.TaxAllocations {
+		if allocation.PurchaseItemID == 0 {
+			return decimal.Zero, nil, fmt.Errorf("alokasi PPN pada purchase %s belum memiliki item sumber", purchase.Code)
+		}
+		if _, ok := purchaseItemIDs[allocation.PurchaseItemID]; !ok {
+			return decimal.Zero, nil, fmt.Errorf("alokasi PPN pada purchase %s merujuk item %d yang tidak dimiliki purchase", purchase.Code, allocation.PurchaseItemID)
+		}
+
+		allocationPPN := decimal.NewFromFloat(allocation.PPNAmount).Round(2)
+		if allocationPPN.IsNegative() {
+			return decimal.Zero, nil, fmt.Errorf("alokasi PPN pada purchase %s tidak boleh negatif", purchase.Code)
+		}
+		totalAllocatedPPN = totalAllocatedPPN.Add(allocationPPN)
+
+		if allocation.IsCreditable {
+			creditablePPN = creditablePPN.Add(allocationPPN)
+			continue
+		}
+		nonCreditableByItem[allocation.PurchaseItemID] = nonCreditableByItem[allocation.PurchaseItemID].Add(allocationPPN)
+	}
+
+	if !totalAllocatedPPN.Equal(headerPPN) {
+		return decimal.Zero, nil, fmt.Errorf(
+			"total alokasi PPN purchase %s (%s) tidak sama dengan PPN header (%s)",
+			purchase.Code,
+			totalAllocatedPPN.StringFixed(2),
+			headerPPN.StringFixed(2),
+		)
+	}
+
+	return creditablePPN, nonCreditableByItem, nil
+}
+
 // CreatePurchaseJournal creates journal entries in unified_journal_ledger for Balance Sheet integration
 func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purchase, tx *gorm.DB) error {
 	// VALIDASI STATUS
@@ -88,6 +152,10 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 
 	// Prepare journal lines
 	var lines []PurchaseJournalLineRequest
+	creditablePPN, nonCreditablePPNByItem, vatSplitErr := splitPurchaseVATForJournal(purchase)
+	if vatSplitErr != nil {
+		return vatSplitErr
+	}
 
 	// Calculate totals
 	var subtotal float64
@@ -224,24 +292,30 @@ func (s *PurchaseJournalServiceSSOT) CreatePurchaseJournal(purchase *models.Purc
 		if freightAllocation > 0 {
 			description = fmt.Sprintf("Pembelian + alokasi freight - %s", itemName)
 		}
+		itemDebit := decimal.NewFromFloat(landedTotal)
+		if nonCreditablePPN, ok := nonCreditablePPNByItem[item.ID]; ok && nonCreditablePPN.GreaterThan(decimal.Zero) {
+			itemDebit = itemDebit.Add(nonCreditablePPN)
+			description = fmt.Sprintf("%s + PPN tidak dapat dikreditkan", description)
+		}
 
 		lines = append(lines, PurchaseJournalLineRequest{
 			AccountID:    uint64(debitAccount.ID),
-			DebitAmount:  decimal.NewFromFloat(landedTotal),
+			DebitAmount:  itemDebit,
 			CreditAmount: decimal.Zero,
 			Description:  description,
 		})
 	}
 
-	// 2. DEBIT SIDE - PPN Masukan (Input VAT) if exists
-	if purchase.PPNAmount > 0 {
+	// 2. DEBIT SIDE - only creditable VAT goes to PPN Masukan. Non-creditable
+	// VAT has already been added to the selected item debit above.
+	if creditablePPN.GreaterThan(decimal.Zero) {
 		ppnMasukanAccount, err := s.taxAccountHelper.GetPurchaseInputVATAccount(dbToUse)
 		if err != nil {
 			log.Printf("⚠️ PPN Masukan account from tax settings not found, skipping PPN entry: %v", err)
 		} else {
 			lines = append(lines, PurchaseJournalLineRequest{
 				AccountID:    uint64(ppnMasukanAccount.ID),
-				DebitAmount:  decimal.NewFromFloat(purchase.PPNAmount),
+				DebitAmount:  creditablePPN,
 				CreditAmount: decimal.Zero,
 				Description:  fmt.Sprintf("PPN Masukan - %s", purchase.Code),
 			})

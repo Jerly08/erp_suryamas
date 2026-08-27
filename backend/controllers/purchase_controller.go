@@ -1097,9 +1097,14 @@ func (pc *PurchaseController) UploadDocument(c *gin.Context) {
 	}
 	defer file.Close()
 
-	documentType := c.PostForm("document_type")
+	documentType := strings.ToUpper(strings.TrimSpace(c.PostForm("document_type")))
 	if documentType == "" {
 		documentType = models.PurchaseDocumentInvoice
+	}
+	referenceNumber := strings.TrimSpace(c.PostForm("reference_number"))
+	if documentType == models.PurchaseDocumentTaxInvoice && referenceNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Nomor faktur pajak wajib diisi untuk dokumen TAX_INVOICE"})
+		return
 	}
 
 	userID := c.MustGet("user_id").(uint)
@@ -1118,6 +1123,7 @@ func (pc *PurchaseController) UploadDocument(c *gin.Context) {
 	err = pc.purchaseService.UploadDocument(
 		uint(id),
 		documentType,
+		referenceNumber,
 		header.Filename,
 		"/uploads/purchases/"+filename,
 		header.Size,

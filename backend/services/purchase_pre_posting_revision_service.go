@@ -57,15 +57,40 @@ type purchasePrePostingRevisionProjectSnapshot struct {
 }
 
 type purchasePrePostingRevisionTaxAndCostSnapshot struct {
-	PPNRate              float64 `json:"ppn_rate"`
-	OtherTaxAdditions    float64 `json:"other_tax_additions"`
-	PPh21Rate            float64 `json:"pph21_rate"`
-	PPh23Rate            float64 `json:"pph23_rate"`
-	OtherTaxDeductions   float64 `json:"other_tax_deductions"`
-	FreightCost          float64 `json:"freight_cost"`
-	OtherCostAmount      float64 `json:"other_cost_amount"`
-	OtherCostDescription string  `json:"other_cost_description"`
-	OtherCostAccountID   *uint   `json:"other_cost_account_id,omitempty"`
+	VATTreatment         string                                            `json:"vat_treatment"`
+	PPNRate              float64                                           `json:"ppn_rate"`
+	PPNAmount            float64                                           `json:"ppn_amount"`
+	TaxAllocations       []purchasePrePostingRevisionTaxAllocationSnapshot `json:"tax_allocations,omitempty"`
+	OtherTaxAdditions    float64                                           `json:"other_tax_additions"`
+	PPh21Rate            float64                                           `json:"pph21_rate"`
+	PPh23Rate            float64                                           `json:"pph23_rate"`
+	OtherTaxDeductions   float64                                           `json:"other_tax_deductions"`
+	FreightCost          float64                                           `json:"freight_cost"`
+	OtherCostAmount      float64                                           `json:"other_cost_amount"`
+	OtherCostDescription string                                            `json:"other_cost_description"`
+	OtherCostAccountID   *uint                                             `json:"other_cost_account_id,omitempty"`
+}
+
+// purchasePrePostingRevisionTaxAllocationSnapshot preserves the complete tax
+// treatment selected for a component-based PPN purchase.  It deliberately
+// keeps the source item identity and its business description together so an
+// approver can review a later item replacement without having to infer which
+// component was used as the DPP basis.
+type purchasePrePostingRevisionTaxAllocationSnapshot struct {
+	ID                      uint       `json:"id"`
+	PurchaseItemID          uint       `json:"purchase_item_id"`
+	PurchaseItemDescription string     `json:"purchase_item_description,omitempty"`
+	TaxTreatment            string     `json:"tax_treatment"`
+	SourceAmount            float64    `json:"source_amount"`
+	DPPAmount               float64    `json:"dpp_amount"`
+	PPNRate                 float64    `json:"ppn_rate"`
+	PPNAmount               float64    `json:"ppn_amount"`
+	IsCreditable            bool       `json:"is_creditable"`
+	TaxInvoiceNumber        string     `json:"tax_invoice_number,omitempty"`
+	TaxInvoiceDate          *time.Time `json:"tax_invoice_date,omitempty"`
+	Notes                   string     `json:"notes,omitempty"`
+	VerifiedBy              *uint      `json:"verified_by,omitempty"`
+	VerifiedAt              *time.Time `json:"verified_at,omitempty"`
 }
 
 type purchasePrePostingRevisionPaymentSnapshot struct {
@@ -407,13 +432,15 @@ type purchasePrePostingRevisionUpdateScope struct {
 }
 
 func purchasePrePostingRevisionScopeFromRequest(request models.PurchaseUpdateRequest) purchasePrePostingRevisionUpdateScope {
-	return purchasePrePostingRevisionUpdateScope{
-		TransactionDate: request.Date != nil || request.DueDate != nil,
-		Vendor:          request.VendorID != nil,
-		Project:         request.ProjectID != nil || request.ClearProject,
-		ItemsAndAmount:  request.Discount != nil || len(request.Items) > 0,
-		TaxAndCost: request.Tax != nil ||
+	// A recalculated credit-payment schedule is a consequence of changing tax
+	// or cost totals, not a request to change payment method, bank/credit COA,
+	// or payment reference. Treat it as TAX_AND_COST only when it accompanies
+	// such a change; a standalone payment_terms edit remains PAYMENT_CONFIGURATION.
+	paymentTermsFollowTaxAndCost := request.PaymentTerms != nil &&
+		(request.Tax != nil ||
 			request.PPNRate != nil ||
+			request.VATTreatment != nil ||
+			request.TaxAllocations != nil ||
 			request.OtherTaxAdditions != nil ||
 			request.PPh21Rate != nil ||
 			request.PPh23Rate != nil ||
@@ -421,12 +448,35 @@ func purchasePrePostingRevisionScopeFromRequest(request models.PurchaseUpdateReq
 			request.FreightCost != nil ||
 			request.OtherCostAmount != nil ||
 			request.OtherCostDescription != nil ||
-			request.OtherCostAccountID != nil,
+			request.OtherCostAccountID != nil) &&
+		request.PaymentMethod == nil &&
+		request.BankAccountID == nil &&
+		request.CreditAccountID == nil &&
+		request.PaymentReference == nil
+
+	return purchasePrePostingRevisionUpdateScope{
+		TransactionDate: request.Date != nil || request.DueDate != nil,
+		Vendor:          request.VendorID != nil,
+		Project:         request.ProjectID != nil || request.ClearProject,
+		ItemsAndAmount:  request.Discount != nil || len(request.Items) > 0,
+		TaxAndCost: request.Tax != nil ||
+			request.PPNRate != nil ||
+			request.VATTreatment != nil ||
+			request.TaxAllocations != nil ||
+			request.OtherTaxAdditions != nil ||
+			request.PPh21Rate != nil ||
+			request.PPh23Rate != nil ||
+			request.OtherTaxDeductions != nil ||
+			request.FreightCost != nil ||
+			request.OtherCostAmount != nil ||
+			request.OtherCostDescription != nil ||
+			request.OtherCostAccountID != nil ||
+			paymentTermsFollowTaxAndCost,
 		PaymentConfiguration: request.PaymentMethod != nil ||
 			request.BankAccountID != nil ||
 			request.CreditAccountID != nil ||
 			request.PaymentReference != nil ||
-			request.PaymentTerms != nil,
+			(request.PaymentTerms != nil && !paymentTermsFollowTaxAndCost),
 		Other: request.Notes != nil,
 	}
 }
@@ -566,7 +616,9 @@ func buildPurchasePrePostingRevisionBusinessSnapshot(db *gorm.DB, purchase *mode
 		DueDate:         purchase.DueDate,
 		Discount:        purchase.Discount,
 		TaxAndCost: purchasePrePostingRevisionTaxAndCostSnapshot{
+			VATTreatment:         purchase.VATTreatment,
 			PPNRate:              purchase.PPNRate,
+			PPNAmount:            purchase.PPNAmount,
 			OtherTaxAdditions:    purchase.OtherTaxAdditions,
 			PPh21Rate:            purchase.PPh21Rate,
 			PPh23Rate:            purchase.PPh23Rate,
@@ -626,6 +678,49 @@ func buildPurchasePrePostingRevisionBusinessSnapshot(db *gorm.DB, purchase *mode
 			Tax:                   item.Tax,
 			ExpenseAccountID:      item.ExpenseAccountID,
 		})
+	}
+
+	// Tax allocations were added after the original revision feature.  The
+	// table can be absent temporarily on a rolling deployment, so never query
+	// it until the database confirms it exists.  This keeps historical
+	// revisions readable while still recording component-level PPN evidence as
+	// soon as migration 089 is available.
+	if db.Migrator().HasTable(&models.PurchaseTaxAllocation{}) {
+		var allocations []models.PurchaseTaxAllocation
+		if err := db.Where("purchase_id = ?", purchase.ID).
+			Order("purchase_item_id ASC, id ASC").
+			Find(&allocations).Error; err != nil {
+			return "", fmt.Errorf("gagal memuat detail PPN per komponen untuk snapshot revisi: %w", err)
+		}
+
+		itemDescriptions := make(map[uint]string, len(items))
+		for _, item := range items {
+			description := strings.TrimSpace(item.Description)
+			if description == "" && item.ProductID != nil {
+				description = fmt.Sprintf("Product #%d", *item.ProductID)
+			}
+			itemDescriptions[item.ID] = description
+		}
+
+		snapshot.TaxAndCost.TaxAllocations = make([]purchasePrePostingRevisionTaxAllocationSnapshot, 0, len(allocations))
+		for _, allocation := range allocations {
+			snapshot.TaxAndCost.TaxAllocations = append(snapshot.TaxAndCost.TaxAllocations, purchasePrePostingRevisionTaxAllocationSnapshot{
+				ID:                      allocation.ID,
+				PurchaseItemID:          allocation.PurchaseItemID,
+				PurchaseItemDescription: itemDescriptions[allocation.PurchaseItemID],
+				TaxTreatment:            allocation.TaxTreatment,
+				SourceAmount:            allocation.SourceAmount,
+				DPPAmount:               allocation.DPPAmount,
+				PPNRate:                 allocation.PPNRate,
+				PPNAmount:               allocation.PPNAmount,
+				IsCreditable:            allocation.IsCreditable,
+				TaxInvoiceNumber:        allocation.TaxInvoiceNumber,
+				TaxInvoiceDate:          allocation.TaxInvoiceDate,
+				Notes:                   allocation.Notes,
+				VerifiedBy:              allocation.VerifiedBy,
+				VerifiedAt:              allocation.VerifiedAt,
+			})
+		}
 	}
 
 	if db.Migrator().HasTable(&models.PurchasePaymentTerm{}) {

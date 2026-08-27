@@ -110,6 +110,8 @@ import purchaseService, {
   PurchasePrePostingRevisionType,
   PurchaseRequestDocumentSummary,
   PurchaseSummary,
+  PurchaseTaxAllocation,
+  PurchaseVATTreatment,
 } from "@/services/purchaseService";
 import {
   PurchaseRequest,
@@ -154,6 +156,9 @@ import { API_ENDPOINTS } from "@/config/api";
 const PAYMENT_PROOF_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp";
 const MAX_PAYMENT_PROOF_SIZE = 20 * 1024 * 1024;
 const PAYMENT_PROOF_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "webp"];
+const TAX_INVOICE_DOCUMENT_TYPE = "TAX_INVOICE";
+const TAX_INVOICE_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp";
+const MAX_TAX_INVOICE_SIZE = 20 * 1024 * 1024;
 const PR_REALIZATION_DOCUMENT_TYPE = "REALIZATION_DOCUMENT";
 const PURCHASE_SEARCH_DEBOUNCE_MS = 400;
 
@@ -187,6 +192,26 @@ const getUploaderDisplayName = (
 };
 
 // Types for form data
+interface PurchaseTaxAllocationFormData {
+  id?: number;
+  /** Zero-based row index used while a purchase item's ID does not exist yet. */
+  purchase_item_index: string;
+  purchase_item_id?: number;
+  dpp_amount: string;
+  ppn_rate: string;
+  ppn_amount: string;
+  is_creditable: boolean;
+  tax_invoice_number: string;
+  tax_invoice_date: string;
+  notes: string;
+}
+
+interface QueuedTaxInvoiceFile {
+  file: File;
+  /** Matches the normalized tax_invoice_number sent with its allocation. */
+  referenceNumber: string;
+}
+
 interface PurchaseFormData {
   vendor_id: string;
   purchase_request_id: string;
@@ -205,6 +230,8 @@ interface PurchaseFormData {
 
   // Tax additions (Penambahan)
   ppn_rate: string;
+  vat_treatment: PurchaseVATTreatment;
+  tax_allocations: PurchaseTaxAllocationFormData[];
   other_tax_additions: string;
 
   // Tax deductions (Pemotongan)
@@ -456,6 +483,46 @@ const roundPurchaseAmount = (value: number): number => {
   return Math.round(value * 100) / 100;
 };
 
+const normalizeTaxInvoiceReference = (value?: string | null): string =>
+  value?.trim().toUpperCase() || "";
+
+const getPurchaseItemFormAmount = (item?: PurchaseItemFormData): number => {
+  if (!item) return 0;
+  const quantity = parsePurchaseNumericInput(item.quantity);
+  const unitPrice = parsePurchaseNumericInput(item.unit_price);
+  const discount = parsePurchaseNumericInput(item.discount);
+  return Math.max(quantity * unitPrice - discount, 0);
+};
+
+const getPurchaseFormItemTaxSourceAmount = (
+  data: PurchaseFormData,
+  item?: PurchaseItemFormData,
+): number => {
+  const orderDiscountRate = parsePurchaseNumericInput(data.discount) / 100;
+  return roundPurchaseAmount(
+    getPurchaseItemFormAmount(item) * (1 - orderDiscountRate),
+  );
+};
+
+const calculatePurchaseFormPPNAmount = (
+  data: PurchaseFormData,
+  netBeforeTax: number,
+): number => {
+  if (data.vat_treatment === "NONE") return 0;
+  if (data.vat_treatment === "COMPONENT_DPP_NILAI_LAIN") {
+    return roundPurchaseAmount(
+      data.tax_allocations.reduce(
+        (total, allocation) =>
+          total + parsePurchaseNumericInput(allocation.ppn_amount),
+        0,
+      ),
+    );
+  }
+  return roundPurchaseAmount(
+    netBeforeTax * (parsePurchaseNumericInput(data.ppn_rate) / 100),
+  );
+};
+
 const calculatePurchaseFormGrandTotal = (data: PurchaseFormData): number => {
   const subtotal = data.items.reduce((total, item) => {
     const qty = parsePurchaseNumericInput(item.quantity);
@@ -465,8 +532,10 @@ const calculatePurchaseFormGrandTotal = (data: PurchaseFormData): number => {
   }, 0);
   const orderDiscountRate = parsePurchaseNumericInput(data.discount) / 100;
   const discountedSubtotal = subtotal * (1 - orderDiscountRate);
-  const ppnAmount =
-    discountedSubtotal * (parsePurchaseNumericInput(data.ppn_rate) / 100);
+  const ppnAmount = calculatePurchaseFormPPNAmount(
+    data,
+    discountedSubtotal,
+  );
   const otherAdditions =
     discountedSubtotal *
     (parsePurchaseNumericInput(data.other_tax_additions) / 100);
@@ -773,6 +842,51 @@ const mapPurchaseItemToFormData = (
         ? amortizationMonth.toString()
         : "",
   });
+};
+
+const createPurchaseTaxAllocationFormData = (
+  overrides: Partial<PurchaseTaxAllocationFormData> = {},
+): PurchaseTaxAllocationFormData => ({
+  purchase_item_index: "",
+  dpp_amount: "0",
+  ppn_rate: "12",
+  ppn_amount: "0",
+  is_creditable: true,
+  tax_invoice_number: "",
+  tax_invoice_date: "",
+  notes: "",
+  ...overrides,
+});
+
+const mapPurchaseTaxAllocationToFormData = (
+  allocation: PurchaseTaxAllocation,
+  purchaseItems?: PurchaseItem[],
+): PurchaseTaxAllocationFormData => {
+  const purchaseItemIndex = (purchaseItems || []).findIndex(
+    (item) => item.id === allocation.purchase_item_id,
+  );
+
+  return createPurchaseTaxAllocationFormData({
+    id: allocation.id,
+    purchase_item_id: allocation.purchase_item_id,
+    purchase_item_index:
+      purchaseItemIndex >= 0 ? purchaseItemIndex.toString() : "",
+    dpp_amount: (allocation.dpp_amount || 0).toString(),
+    ppn_rate: (allocation.ppn_rate || 0).toString(),
+    ppn_amount: (allocation.ppn_amount || 0).toString(),
+    is_creditable: allocation.is_creditable !== false,
+    tax_invoice_number: allocation.tax_invoice_number || "",
+    tax_invoice_date: getDateInputValue(allocation.tax_invoice_date),
+    notes: allocation.notes || "",
+  });
+};
+
+const getPurchaseVATTreatment = (purchase?: Purchase | null): PurchaseVATTreatment => {
+  if (purchase?.vat_treatment) return purchase.vat_treatment;
+  if ((purchase?.tax_allocations || []).length > 0) {
+    return "COMPONENT_DPP_NILAI_LAIN";
+  }
+  return Number(purchase?.ppn_rate || 0) > 0 ? "STANDARD" : "NONE";
 };
 
 const getSelectablePurchaseRequestItems = (
@@ -1255,6 +1369,8 @@ const PurchasesPage: React.FC = () => {
 
     // Tax additions (Penambahan)
     ppn_rate: "0",
+    vat_treatment: "STANDARD",
+    tax_allocations: [],
     other_tax_additions: "0",
     freight_cost: "0",
     other_cost_amount: "0",
@@ -1420,6 +1536,9 @@ const PurchasesPage: React.FC = () => {
   const [selectedPurchaseForReceipts, setSelectedPurchaseForReceipts] =
     useState<Purchase | null>(null);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const [taxInvoiceFiles, setTaxInvoiceFiles] = useState<
+    QueuedTaxInvoiceFile[]
+  >([]);
   const [uploadingPaymentProof, setUploadingPaymentProof] = useState(false);
   const [creditPaymentProofFiles, setCreditPaymentProofFiles] = useState<
     Record<number, File | null>
@@ -4379,7 +4498,618 @@ const PurchasesPage: React.FC = () => {
   const closeEditPurchase = () => {
     setActivePrePostingRevision(null);
     setConfirmProvisionalPaymentProof(false);
+    setTaxInvoiceFiles([]);
     onEditClose();
+  };
+
+  const getPurchaseItemFormLabel = (
+    item: PurchaseItemFormData,
+    index: number,
+  ) => {
+    const itemType = (item.item_type || "INVENTORY").toUpperCase();
+    const product = products.find(
+      (candidate) => candidate.id?.toString() === item.product_id,
+    );
+    const label =
+      item.description?.trim() ||
+      product?.name ||
+      (itemType === "EXPENSE" ? "Beban/Jasa tanpa deskripsi" : "Item tanpa nama");
+    return `${index + 1}. ${label}`;
+  };
+
+  const savedTaxInvoiceReferences = new Set(
+    (selectedPurchase?.documents || [])
+      .filter(
+        (document) =>
+          (document.document_type || "").toUpperCase() ===
+          TAX_INVOICE_DOCUMENT_TYPE,
+      )
+      .map((document) =>
+        normalizeTaxInvoiceReference(document.reference_number),
+      )
+      .filter(Boolean),
+  );
+
+  const pruneQueuedTaxInvoiceFiles = (
+    allocations: PurchaseTaxAllocationFormData[],
+  ) => {
+    const referencedNumbers = new Set(
+      allocations
+        .map((allocation) =>
+          normalizeTaxInvoiceReference(allocation.tax_invoice_number),
+        )
+        .filter(Boolean),
+    );
+    setTaxInvoiceFiles((previous) =>
+      previous.filter((entry) => referencedNumbers.has(entry.referenceNumber)),
+    );
+  };
+
+  const handleTaxInvoiceFilesChange = (
+    allocationIndex: number,
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const referenceNumber = normalizeTaxInvoiceReference(
+      formData.tax_allocations[allocationIndex]?.tax_invoice_number,
+    );
+    if (!referenceNumber) {
+      toast({
+        title: "Nomor faktur pajak wajib diisi",
+        description:
+          "Isi nomor faktur pajak pada baris ini sebelum memilih file lampiran.",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      event.target.value = "";
+      return;
+    }
+
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    const invalidFile = files.find((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "";
+      return (
+        file.size > MAX_TAX_INVOICE_SIZE ||
+        !PAYMENT_PROOF_EXTENSIONS.includes(extension)
+      );
+    });
+    if (invalidFile) {
+      toast({
+        title: "Faktur pajak tidak valid",
+        description:
+          "Gunakan PDF/JPG/PNG/WebP dengan ukuran maksimal 20 MB per file.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      event.target.value = "";
+      return;
+    }
+
+    setTaxInvoiceFiles((previous) => {
+      const existing = new Set(
+        previous.map(
+          (entry) =>
+            `${entry.referenceNumber}:${entry.file.name}:${entry.file.size}:${entry.file.lastModified}`,
+        ),
+      );
+      return [
+        ...previous,
+        ...files.flatMap((file) => {
+          const key = `${referenceNumber}:${file.name}:${file.size}:${file.lastModified}`;
+          if (existing.has(key)) return [];
+          existing.add(key);
+          return [{ file, referenceNumber }];
+        }),
+      ];
+    });
+    event.target.value = "";
+  };
+
+  const validateComponentVAT = (): string | null => {
+    if (formData.vat_treatment !== "COMPONENT_DPP_NILAI_LAIN") {
+      return null;
+    }
+    if (formData.tax_allocations.length === 0) {
+      return "Tambahkan minimal satu komponen dasar PPN.";
+    }
+
+    const dppByItemIndex = new Map<number, number>();
+    const taxInvoiceNumbers = new Set<string>();
+    for (let index = 0; index < formData.tax_allocations.length; index += 1) {
+      const allocation = formData.tax_allocations[index];
+      const itemIndex = Number(allocation.purchase_item_index);
+      const dppAmount = parsePurchaseNumericInput(allocation.dpp_amount);
+      const ppnRate = parsePurchaseNumericInput(allocation.ppn_rate);
+      const ppnAmount = parsePurchaseNumericInput(allocation.ppn_amount);
+
+      if (
+        !allocation.purchase_item_index ||
+        !Number.isInteger(itemIndex) ||
+        itemIndex < 0 ||
+        !formData.items[itemIndex]
+      ) {
+        return `Pilih item sumber untuk baris PPN ${index + 1}.`;
+      }
+      if (dppAmount <= 0 || ppnRate <= 0 || ppnRate > 100 || ppnAmount < 0) {
+        return `Nominal atau tarif PPN pada baris ${index + 1} tidak valid.`;
+      }
+      if (!allocation.tax_invoice_number.trim() || !allocation.tax_invoice_date) {
+        return `Nomor dan tanggal faktur pajak wajib diisi pada baris ${index + 1}.`;
+      }
+      taxInvoiceNumbers.add(
+        normalizeTaxInvoiceReference(allocation.tax_invoice_number),
+      );
+
+      const sourceAmount = getPurchaseFormItemTaxSourceAmount(
+        formData,
+        formData.items[itemIndex],
+      );
+      const expectedDPP = Math.round((sourceAmount * 11) / 12);
+      const expectedPPN = dppAmount * (ppnRate / 100);
+      if (
+        (Math.abs(dppAmount - expectedDPP) > 1 ||
+          Math.abs(ppnAmount - expectedPPN) > 1) &&
+        !allocation.notes.trim()
+      ) {
+        return `DPP atau PPN pada baris ${index + 1} berbeda dari perhitungan sistem. Isi catatan alasan selisih.`;
+      }
+      dppByItemIndex.set(
+        itemIndex,
+        (dppByItemIndex.get(itemIndex) || 0) + dppAmount,
+      );
+    }
+
+    const queuedTaxInvoiceReferences = new Set(
+      taxInvoiceFiles.map((entry) => entry.referenceNumber),
+    );
+    const missingTaxInvoiceReferences = Array.from(taxInvoiceNumbers).filter(
+      (referenceNumber) =>
+        !savedTaxInvoiceReferences.has(referenceNumber) &&
+        !queuedTaxInvoiceReferences.has(referenceNumber),
+    );
+    if (missingTaxInvoiceReferences.length > 0) {
+      return `Upload faktur pajak untuk nomor: ${missingTaxInvoiceReferences.join(", ")}.`;
+    }
+
+    for (const [itemIndex, totalDPP] of dppByItemIndex.entries()) {
+      const sourceAmount = getPurchaseFormItemTaxSourceAmount(
+        formData,
+        formData.items[itemIndex],
+      );
+      if (totalDPP > sourceAmount + 1) {
+        return `Total DPP untuk ${getPurchaseItemFormLabel(formData.items[itemIndex], itemIndex)} tidak boleh melebihi nilai komponen ${formatCurrency(sourceAmount)}.`;
+      }
+    }
+    return null;
+  };
+
+  const buildTaxAllocationsPayload = (useItemIndex: boolean) =>
+    formData.tax_allocations.map((allocation) => {
+      const payload = {
+        ...(allocation.id ? { id: allocation.id } : {}),
+        tax_treatment: "DPP_NILAI_LAIN" as const,
+        dpp_amount: parsePurchaseNumericInput(allocation.dpp_amount),
+        ppn_rate: parsePurchaseNumericInput(allocation.ppn_rate),
+        ppn_amount: parsePurchaseNumericInput(allocation.ppn_amount),
+        is_creditable: allocation.is_creditable,
+        tax_invoice_number: normalizeTaxInvoiceReference(
+          allocation.tax_invoice_number,
+        ),
+        tax_invoice_date: `${allocation.tax_invoice_date}T00:00:00Z`,
+        notes: allocation.notes.trim() || undefined,
+      };
+
+      return useItemIndex || !allocation.purchase_item_id
+        ? {
+            ...payload,
+            purchase_item_index: Number(allocation.purchase_item_index),
+          }
+        : {
+            ...payload,
+            purchase_item_id: allocation.purchase_item_id,
+        };
+    });
+
+  const uploadQueuedTaxInvoices = async (purchaseId: number) => {
+    if (taxInvoiceFiles.length === 0) return 0;
+    for (const entry of taxInvoiceFiles) {
+      await purchaseService.uploadTaxInvoice(
+        purchaseId,
+        entry.file,
+        entry.referenceNumber,
+      );
+    }
+    const count = taxInvoiceFiles.length;
+    setTaxInvoiceFiles([]);
+    return count;
+  };
+
+  const renderComponentVATConfiguration = () => {
+    if (formData.vat_treatment !== "COMPONENT_DPP_NILAI_LAIN") {
+      return null;
+    }
+
+    const totalPPN = calculatePurchaseFormPPNAmount(formData, 0);
+    const totalDPP = formData.tax_allocations.reduce(
+      (total, allocation) =>
+        total + parsePurchaseNumericInput(allocation.dpp_amount),
+      0,
+    );
+
+    return (
+      <Box
+        mt={4}
+        p={4}
+        borderWidth="1px"
+        borderColor="blue.200"
+        borderRadius="md"
+        bg="blue.50"
+      >
+        <VStack align="stretch" spacing={4}>
+          <Box>
+            <Text fontWeight="semibold" fontSize="sm" color="blue.700">
+              PPN berdasarkan komponen / DPP Nilai Lain
+            </Text>
+            <Text fontSize="xs" color="blue.700" mt={1}>
+              Pilih komponen yang menjadi dasar PPN. DPP dan PPN mengikuti faktur pajak, bukan subtotal seluruh Purchase.
+            </Text>
+          </Box>
+
+          {formData.tax_allocations.map((allocation, allocationIndex) => {
+            const itemIndex = Number(allocation.purchase_item_index);
+            const hasSelectedSourceItem =
+              Boolean(allocation.purchase_item_index) &&
+              Number.isInteger(itemIndex) &&
+              Boolean(formData.items[itemIndex]);
+            const sourceAmount = hasSelectedSourceItem
+              ? getPurchaseFormItemTaxSourceAmount(
+                  formData,
+                  formData.items[itemIndex],
+                )
+              : 0;
+            const expectedPPN =
+              parsePurchaseNumericInput(allocation.dpp_amount) *
+              (parsePurchaseNumericInput(allocation.ppn_rate) / 100);
+            const ppnDifference =
+              parsePurchaseNumericInput(allocation.ppn_amount) - expectedPPN;
+            const taxInvoiceReference = normalizeTaxInvoiceReference(
+              allocation.tax_invoice_number,
+            );
+            const hasSavedTaxInvoiceForAllocation =
+              Boolean(taxInvoiceReference) &&
+              savedTaxInvoiceReferences.has(taxInvoiceReference);
+            const queuedTaxInvoiceFilesForAllocation = taxInvoiceFiles.filter(
+              (entry) => entry.referenceNumber === taxInvoiceReference,
+            );
+
+            return (
+              <Box
+                key={allocation.id || `new-${allocationIndex}`}
+                p={3}
+                borderWidth="1px"
+                borderColor="blue.200"
+                borderRadius="md"
+                bg="white"
+              >
+                <Flex justify="space-between" align="center" mb={3}>
+                  <Text fontSize="sm" fontWeight="semibold">
+                    Faktur Pajak {allocationIndex + 1}
+                  </Text>
+                  <IconButton
+                    aria-label={`Hapus faktur pajak ${allocationIndex + 1}`}
+                    size="xs"
+                    colorScheme="red"
+                    variant="ghost"
+                    icon={<FiTrash2 />}
+                    onClick={() => {
+                      const nextAllocations = formData.tax_allocations.filter(
+                        (_, index) => index !== allocationIndex,
+                      );
+                      pruneQueuedTaxInvoiceFiles(nextAllocations);
+                      setFormData((previous) => ({
+                        ...previous,
+                        tax_allocations: nextAllocations,
+                      }));
+                    }}
+                  />
+                </Flex>
+                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="xs">Komponen dasar PPN</FormLabel>
+                    <Select
+                      size="sm"
+                      placeholder="Pilih komponen"
+                      value={allocation.purchase_item_index}
+                      onChange={(event) =>
+                        setFormData((previous) => ({
+                          ...previous,
+                          tax_allocations: previous.tax_allocations.map(
+                            (row, index) =>
+                              index === allocationIndex
+                                ? {
+                                  ...row,
+                                    purchase_item_index: event.target.value,
+                                    purchase_item_id:
+                                      selectedPurchase?.purchase_items?.[
+                                        Number(event.target.value)
+                                      ]?.id,
+                                  }
+                                : row,
+                          ),
+                        }))
+                      }
+                    >
+                      {formData.items.map((item, itemIndex) => (
+                        <option key={itemIndex} value={itemIndex}>
+                          {getPurchaseItemFormLabel(item, itemIndex)} — {formatCurrency(getPurchaseFormItemTaxSourceAmount(formData, item))}
+                        </option>
+                      ))}
+                    </Select>
+                    {hasSelectedSourceItem && (
+                      <FormHelperText fontSize="xs">
+                        Nilai komponen: {formatCurrency(sourceAmount)}
+                      </FormHelperText>
+                    )}
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="xs">DPP pada faktur (Rp)</FormLabel>
+                    <CurrencyInput
+                      value={parsePurchaseNumericInput(allocation.dpp_amount)}
+                      onChange={(value) =>
+                        setFormData((previous) => ({
+                          ...previous,
+                          tax_allocations: previous.tax_allocations.map(
+                            (row, index) =>
+                              index === allocationIndex
+                                ? { ...row, dpp_amount: value.toString() }
+                                : row,
+                          ),
+                        }))
+                      }
+                      min={0}
+                      size="sm"
+                    />
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="xs">Tarif PPN (%)</FormLabel>
+                    <NumberInput
+                      value={allocation.ppn_rate}
+                      onChange={(value) =>
+                        setFormData((previous) => ({
+                          ...previous,
+                          tax_allocations: previous.tax_allocations.map(
+                            (row, index) =>
+                              index === allocationIndex
+                                ? { ...row, ppn_rate: value }
+                                : row,
+                          ),
+                        }))
+                      }
+                      min={0}
+                      max={100}
+                      step={0.01}
+                      size="sm"
+                    >
+                      <NumberInputField />
+                      <NumberInputStepper>
+                        <NumberIncrementStepper />
+                        <NumberDecrementStepper />
+                      </NumberInputStepper>
+                    </NumberInput>
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="xs">PPN pada faktur (Rp)</FormLabel>
+                    <CurrencyInput
+                      value={parsePurchaseNumericInput(allocation.ppn_amount)}
+                      onChange={(value) =>
+                        setFormData((previous) => ({
+                          ...previous,
+                          tax_allocations: previous.tax_allocations.map(
+                            (row, index) =>
+                              index === allocationIndex
+                                ? { ...row, ppn_amount: value.toString() }
+                                : row,
+                          ),
+                        }))
+                      }
+                      min={0}
+                      size="sm"
+                    />
+                    {Math.abs(ppnDifference) > 1 && (
+                      <FormHelperText fontSize="xs" color="orange.600">
+                        Selisih dengan DPP × tarif: {formatCurrency(ppnDifference)}. Isi catatan alasan.
+                      </FormHelperText>
+                    )}
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="xs">Nomor faktur pajak</FormLabel>
+                    <Input
+                      size="sm"
+                      value={allocation.tax_invoice_number}
+                      onChange={(event) => {
+                        const nextAllocations = formData.tax_allocations.map(
+                          (row, index) =>
+                            index === allocationIndex
+                              ? {
+                                  ...row,
+                                  tax_invoice_number: event.target.value,
+                                }
+                              : row,
+                        );
+                        // A queued file is tied to the old invoice number.
+                        // Remove it when that number is no longer referenced,
+                        // so it cannot be uploaded against the wrong invoice.
+                        pruneQueuedTaxInvoiceFiles(nextAllocations);
+                        setFormData((previous) => ({
+                          ...previous,
+                          tax_allocations: nextAllocations,
+                        }));
+                      }}
+                    />
+                  </FormControl>
+                  <FormControl isRequired>
+                    <FormLabel fontSize="xs">Tanggal faktur pajak</FormLabel>
+                    <Input
+                      type="date"
+                      size="sm"
+                      value={allocation.tax_invoice_date}
+                      onChange={(event) =>
+                        setFormData((previous) => ({
+                          ...previous,
+                          tax_allocations: previous.tax_allocations.map(
+                            (row, index) =>
+                              index === allocationIndex
+                                ? {
+                                    ...row,
+                                    tax_invoice_date: event.target.value,
+                                  }
+                                : row,
+                          ),
+                        }))
+                      }
+                    />
+                  </FormControl>
+                </SimpleGrid>
+                <Checkbox
+                  mt={3}
+                  isChecked={allocation.is_creditable}
+                  onChange={(event) =>
+                    setFormData((previous) => ({
+                      ...previous,
+                      tax_allocations: previous.tax_allocations.map(
+                        (row, index) =>
+                          index === allocationIndex
+                            ? {
+                                ...row,
+                                is_creditable: event.target.checked,
+                              }
+                            : row,
+                      ),
+                    }))
+                  }
+                >
+                  <Text fontSize="sm">PPN dapat dikreditkan (masuk PPN Masukan)</Text>
+                </Checkbox>
+                {!allocation.is_creditable && (
+                  <Text fontSize="xs" color="orange.700" mt={1}>
+                    PPN tidak dapat dikreditkan akan ditambahkan ke biaya atau nilai item sumber oleh sistem.
+                  </Text>
+                )}
+                <FormControl mt={3} isRequired={Math.abs(ppnDifference) > 1}>
+                  <FormLabel fontSize="xs">Catatan / alasan selisih</FormLabel>
+                  <Textarea
+                    size="sm"
+                    rows={2}
+                    placeholder="Wajib jika nominal faktur berbeda dari perhitungan DPP × tarif"
+                    value={allocation.notes}
+                    onChange={(event) =>
+                      setFormData((previous) => ({
+                        ...previous,
+                        tax_allocations: previous.tax_allocations.map(
+                          (row, index) =>
+                            index === allocationIndex
+                              ? { ...row, notes: event.target.value }
+                              : row,
+                        ),
+                      }))
+                    }
+                  />
+                </FormControl>
+                <FormControl
+                  mt={3}
+                  isRequired={
+                    !hasSavedTaxInvoiceForAllocation &&
+                    queuedTaxInvoiceFilesForAllocation.length === 0
+                  }
+                >
+                  <FormLabel fontSize="xs">Lampiran faktur pajak</FormLabel>
+                  <Input
+                    type="file"
+                    accept={TAX_INVOICE_ACCEPT}
+                    multiple
+                    onChange={(event) =>
+                      handleTaxInvoiceFilesChange(allocationIndex, event)
+                    }
+                    isDisabled={!taxInvoiceReference}
+                    size="sm"
+                  />
+                  <FormHelperText fontSize="xs">
+                    {taxInvoiceReference
+                      ? `File ini akan diikat ke nomor faktur ${taxInvoiceReference}. PDF/JPG/PNG/WebP, maksimal 20 MB per file.`
+                      : "Isi nomor faktur pajak terlebih dahulu sebelum memilih file."}
+                  </FormHelperText>
+                  {hasSavedTaxInvoiceForAllocation && (
+                    <Badge colorScheme="green" mt={2}>
+                      Faktur pajak tersimpan untuk {taxInvoiceReference}
+                    </Badge>
+                  )}
+                  {queuedTaxInvoiceFilesForAllocation.length > 0 && (
+                    <VStack align="start" spacing={1} mt={2}>
+                      {queuedTaxInvoiceFilesForAllocation.map((entry) => (
+                        <HStack
+                          key={`${entry.referenceNumber}-${entry.file.name}-${entry.file.size}-${entry.file.lastModified}`}
+                          spacing={2}
+                        >
+                          <Badge
+                            colorScheme="blue"
+                            maxW="420px"
+                            whiteSpace="normal"
+                          >
+                            {entry.file.name} ({formatFileSize(entry.file.size)})
+                          </Badge>
+                          <IconButton
+                            aria-label={`Hapus ${entry.file.name}`}
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="red"
+                            icon={<FiTrash2 />}
+                            onClick={() =>
+                              setTaxInvoiceFiles((previous) =>
+                                previous.filter(
+                                  (candidate) => candidate !== entry,
+                                ),
+                              )
+                            }
+                          />
+                        </HStack>
+                      ))}
+                    </VStack>
+                  )}
+                </FormControl>
+              </Box>
+            );
+          })}
+
+          <Button
+            size="sm"
+            variant="outline"
+            colorScheme="blue"
+            alignSelf="start"
+            leftIcon={<FiPlus />}
+            onClick={() =>
+              setFormData((previous) => ({
+                ...previous,
+                tax_allocations: [
+                  ...previous.tax_allocations,
+                  createPurchaseTaxAllocationFormData(),
+                ],
+              }))
+            }
+          >
+            Tambah faktur / komponen PPN
+          </Button>
+
+          <Flex justify="flex-end">
+            <Text fontSize="sm" fontWeight="semibold" color="blue.700">
+              Total DPP: {formatCurrency(totalDPP)} · Total PPN: {formatCurrency(totalPPN)}
+            </Text>
+          </Flex>
+        </VStack>
+      </Box>
+    );
   };
 
   // Handle edit purchase
@@ -4387,6 +5117,12 @@ const PurchasesPage: React.FC = () => {
     try {
       // Fetch detailed purchase data for editing
       const detailResponse = await purchaseService.getById(purchase.id);
+      // Tax invoices are stored as purchase documents rather than embedded in
+      // the normal detail preload. Load them so an existing special-VAT draft
+      // is not forced to upload the same document again on every edit.
+      detailResponse.documents = await purchaseService
+        .listDocuments(purchase.id)
+        .catch(() => detailResponse.documents || []);
       let activeRevision: PurchasePrePostingRevision | null = null;
       if (
         (detailResponse.status || "").toUpperCase() ===
@@ -4413,6 +5149,7 @@ const PurchasesPage: React.FC = () => {
       setSelectedPurchase(detailResponse);
       setActivePrePostingRevision(activeRevision);
       setPaymentProofFile(null);
+      setTaxInvoiceFiles([]);
       setConfirmProvisionalPaymentProof(false);
 
       // Set form data for editing
@@ -4431,6 +5168,14 @@ const PurchasesPage: React.FC = () => {
         // Tax additions (Penambahan)
         ppn_rate:
           detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
+        vat_treatment: getPurchaseVATTreatment(detailResponse),
+        tax_allocations: (detailResponse.tax_allocations || []).map(
+          (allocation) =>
+            mapPurchaseTaxAllocationToFormData(
+              allocation,
+              detailResponse.purchase_items,
+            ),
+        ),
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
         freight_cost: detailResponse.freight_cost?.toString() || "0",
@@ -4538,7 +5283,12 @@ const PurchasesPage: React.FC = () => {
     const otherTaxDeductions =
       parseFloat(financeTaxForm.other_tax_deductions) || 0;
 
-    const ppnAmount = netBeforeTax * (ppnRate / 100);
+    const ppnAmount =
+      financeTaxPurchase.vat_treatment === "COMPONENT_DPP_NILAI_LAIN"
+        ? financeTaxPurchase.ppn_amount || 0
+        : financeTaxPurchase.vat_treatment === "NONE"
+          ? 0
+          : netBeforeTax * (ppnRate / 100);
     const pph21Amount = netBeforeTax * (pph21Rate / 100);
     const pph23Amount = netBeforeTax * (pph23Rate / 100);
 
@@ -4624,7 +5374,11 @@ const PurchasesPage: React.FC = () => {
       netBeforeTax +
       freightCost +
       otherCostAmount +
-      netBeforeTax * (ppnRate / 100) +
+      (accountingCOAPurchase.vat_treatment === "COMPONENT_DPP_NILAI_LAIN"
+        ? accountingCOAPurchase.ppn_amount || 0
+        : accountingCOAPurchase.vat_treatment === "NONE"
+          ? 0
+          : netBeforeTax * (ppnRate / 100)) +
       otherTaxAdditions -
       netBeforeTax * (pph21Rate / 100) -
       netBeforeTax * (pph23Rate / 100) -
@@ -4828,9 +5582,13 @@ const PurchasesPage: React.FC = () => {
     try {
       setSavingFinanceTax(true);
       const payload: any = {
-        ppn_rate: !isNaN(parseFloat(financeTaxForm.ppn_rate))
-          ? parseFloat(financeTaxForm.ppn_rate)
-          : defaultTaxRate,
+        ...(financeTaxPurchase.vat_treatment === "COMPONENT_DPP_NILAI_LAIN"
+          ? { vat_treatment: financeTaxPurchase.vat_treatment }
+          : {
+              ppn_rate: !isNaN(parseFloat(financeTaxForm.ppn_rate))
+                ? parseFloat(financeTaxForm.ppn_rate)
+                : defaultTaxRate,
+            }),
         other_tax_additions:
           parseFloat(financeTaxForm.other_tax_additions) || 0,
         freight_cost: parseFloat(financeTaxForm.freight_cost) || 0,
@@ -5007,9 +5765,14 @@ const PurchasesPage: React.FC = () => {
       setSavingAccountingCOA(true);
       if (isFinanceManagerFinalReview) {
         await purchaseService.updateFinalReviewConfig(accountingCOAPurchase.id, {
-          ppn_rate: !isNaN(parseFloat(accountingCOAForm.ppn_rate))
-            ? parseFloat(accountingCOAForm.ppn_rate)
-            : defaultTaxRate,
+          ...(accountingCOAPurchase.vat_treatment ===
+          "COMPONENT_DPP_NILAI_LAIN"
+            ? { vat_treatment: accountingCOAPurchase.vat_treatment }
+            : {
+                ppn_rate: !isNaN(parseFloat(accountingCOAForm.ppn_rate))
+                  ? parseFloat(accountingCOAForm.ppn_rate)
+                  : defaultTaxRate,
+              }),
           other_tax_additions:
             parseFloat(accountingCOAForm.other_tax_additions) || 0,
           freight_cost: parseFloat(accountingCOAForm.freight_cost) || 0,
@@ -5157,6 +5920,8 @@ const PurchasesPage: React.FC = () => {
 
       // Tax additions (Penambahan)
       ppn_rate: defaultTaxRate.toString(),
+      vat_treatment: "STANDARD",
+      tax_allocations: [],
       other_tax_additions: "0",
       freight_cost: "0",
       other_cost_amount: "0",
@@ -5179,6 +5944,7 @@ const PurchasesPage: React.FC = () => {
     });
     setSelectedPurchase(null);
     setPaymentProofFile(null);
+    setTaxInvoiceFiles([]);
     await fetchVendors(); // Load vendors for dropdown
     await fetchPurchaseRequests(); // Load Purchase Requests
     await fetchProjects(); // Load Projects
@@ -5458,9 +6224,36 @@ const PurchasesPage: React.FC = () => {
     const shouldUpdatePaymentConfiguration = revisionScopeAllows(
       "PAYMENT_CONFIGURATION",
     );
+    // A tax/cost correction can change the payable total of a credit purchase
+    // even when Finance Manager did not open the payment-method fields. Keep
+    // the existing term schedule intact by revalidating and resending it; do
+    // not send any payment-method/account/reference field in that case.
+    const shouldSyncPaymentTermsWithTaxAndCost =
+      !shouldUpdatePaymentConfiguration &&
+      shouldUpdateTaxAndCost &&
+      formData.payment_method === "CREDIT";
+    const shouldValidatePaymentTerms =
+      shouldUpdatePaymentConfiguration || shouldSyncPaymentTermsWithTaxAndCost;
     const shouldUpdateOther = revisionScopeAllows("OTHER");
     const shouldUpdateStandaloneProject =
       revisionScopeAllows("PROJECT") && !isLinkedPurchaseRequest;
+
+    if (
+      isScopedPrePostingRevisionEdit &&
+      shouldUpdateItems &&
+      formData.vat_treatment === "COMPONENT_DPP_NILAI_LAIN" &&
+      !shouldUpdateTaxAndCost
+    ) {
+      toast({
+        title: "Ruang lingkup revisi belum lengkap",
+        description:
+          "Perubahan item pada Purchase dengan PPN berdasarkan komponen harus sekaligus membuka ruang lingkup Pajak atau biaya.",
+        status: "warning",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
 
     if (shouldUpdateVendor && !formData.vendor_id) {
       toast({
@@ -5568,6 +6361,20 @@ const PurchasesPage: React.FC = () => {
       return;
     }
 
+    if (shouldUpdateTaxAndCost) {
+      const componentVATError = validateComponentVAT();
+      if (componentVATError) {
+        toast({
+          title: "Konfigurasi PPN belum lengkap",
+          description: componentVATError,
+          status: "warning",
+          duration: 5000,
+          isClosable: true,
+        });
+        return;
+      }
+    }
+
     if (
       shouldUpdatePaymentConfiguration &&
       canSelectAccountFromCOA &&
@@ -5648,9 +6455,20 @@ const PurchasesPage: React.FC = () => {
         }>
       | undefined;
     try {
-      if (shouldUpdatePaymentConfiguration && normalizedPaymentMethodPreview) {
+      const paymentMethodForTerms = shouldUpdatePaymentConfiguration
+        ? normalizedPaymentMethodPreview
+        : formData.payment_method;
+      if (
+        shouldSyncPaymentTermsWithTaxAndCost &&
+        formData.payment_terms.length === 0
+      ) {
+        throw new Error(
+          "Jadwal termin kredit belum termuat. Muat ulang Purchase sebelum mengubah pajak atau biaya agar jadwal yang ada tidak terganti.",
+        );
+      }
+      if (shouldValidatePaymentTerms && paymentMethodForTerms) {
         paymentTermsPayload = buildPaymentTermsPayload(
-          normalizedPaymentMethodPreview,
+          paymentMethodForTerms,
         );
       }
     } catch (termError: any) {
@@ -5723,10 +6541,23 @@ const PurchasesPage: React.FC = () => {
       }
 
       if (shouldUpdateTaxAndCost) {
-        // Send proper tax rates (not the legacy `tax` field).
-        payload.ppn_rate = !isNaN(parseFloat(formData.ppn_rate))
-          ? parseFloat(formData.ppn_rate)
-          : defaultTaxRate;
+        // Do not overload the legacy `tax` field. Special VAT is driven by
+        // server-validated component allocations, while normal VAT keeps the
+        // existing global-rate behaviour.
+        payload.vat_treatment = formData.vat_treatment;
+        if (formData.vat_treatment === "COMPONENT_DPP_NILAI_LAIN") {
+          payload.tax_allocations = buildTaxAllocationsPayload(
+            shouldUpdateItems || !selectedPurchase,
+          );
+        } else {
+          payload.tax_allocations = [];
+          payload.ppn_rate =
+            formData.vat_treatment === "NONE"
+              ? 0
+              : !isNaN(parseFloat(formData.ppn_rate))
+                ? parseFloat(formData.ppn_rate)
+                : defaultTaxRate;
+        }
         payload.other_tax_additions =
           parseFloat(formData.other_tax_additions) || 0;
         payload.freight_cost = parseFloat(formData.freight_cost) || 0;
@@ -5766,6 +6597,15 @@ const PurchasesPage: React.FC = () => {
           normalizedPaymentMethod === "CHECK"
             ? normalizedPayment.payment_reference.trim()
             : "";
+        payload.payment_terms = paymentTermsPayload;
+      }
+      if (
+        shouldSyncPaymentTermsWithTaxAndCost &&
+        paymentTermsPayload
+      ) {
+        // This is intentionally limited to the existing CREDIT schedule. The
+        // backend accepts it as a dependent TAX_AND_COST update, while the
+        // payment method, accounts, and reference remain outside this scope.
         payload.payment_terms = paymentTermsPayload;
       }
 
@@ -5811,11 +6651,19 @@ const PurchasesPage: React.FC = () => {
         if (paymentProofFile && shouldUpdatePaymentConfiguration) {
           await purchaseService.uploadPaymentProof(response.id, paymentProofFile);
         }
+        let taxInvoiceUploadError: unknown = null;
+        try {
+          await uploadQueuedTaxInvoices(response.id);
+        } catch (uploadError) {
+          taxInvoiceUploadError = uploadError;
+        }
         toast({
           title: "Success",
-          description: paymentProofFile
-            ? `Purchase ${response.code} updated dan bukti pembayaran bank tersimpan`
-            : `Purchase ${response.code} updated successfully`,
+          description: taxInvoiceUploadError
+            ? `Purchase ${response.code} tersimpan, tetapi upload faktur pajak gagal. Buka kembali draft ini dan upload faktur sebelum submit approval.`
+            : paymentProofFile
+              ? `Purchase ${response.code} updated dan bukti pembayaran bank tersimpan`
+              : `Purchase ${response.code} updated successfully`,
           status: "success",
           duration: 3000,
           isClosable: true,
@@ -5828,11 +6676,19 @@ const PurchasesPage: React.FC = () => {
         if (paymentProofFile) {
           await purchaseService.uploadPaymentProof(response.id, paymentProofFile);
         }
+        let taxInvoiceUploadError: unknown = null;
+        try {
+          await uploadQueuedTaxInvoices(response.id);
+        } catch (uploadError) {
+          taxInvoiceUploadError = uploadError;
+        }
         toast({
           title: "Success",
-          description: paymentProofFile
-            ? `Purchase ${response.code} created dan bukti pembayaran bank tersimpan. Use "Submit for Approval" button to submit when ready.`
-            : `Purchase ${response.code} created successfully. Use "Submit for Approval" button to submit when ready.`,
+          description: taxInvoiceUploadError
+            ? `Purchase ${response.code} berhasil dibuat sebagai draft, tetapi upload faktur pajak gagal. Upload kembali faktur sebelum submit approval.`
+            : paymentProofFile
+              ? `Purchase ${response.code} created dan bukti pembayaran bank tersimpan. Use "Submit for Approval" button to submit when ready.`
+              : `Purchase ${response.code} created successfully. Use "Submit for Approval" button to submit when ready.`,
           status: "success",
           duration: 5000,
           isClosable: true,
@@ -5885,6 +6741,23 @@ const PurchasesPage: React.FC = () => {
         // Tax additions
         ppn_rate:
           detailResponse.ppn_rate?.toString() || defaultTaxRate.toString(),
+        vat_treatment: getPurchaseVATTreatment(detailResponse),
+        tax_allocations: (detailResponse.tax_allocations || []).map(
+          (allocation) => {
+            const formAllocation = mapPurchaseTaxAllocationToFormData(
+              allocation,
+              detailResponse.purchase_items,
+            );
+            return {
+              ...formAllocation,
+              id: undefined,
+              purchase_item_id: undefined,
+              tax_invoice_number: "",
+              tax_invoice_date: "",
+              notes: "",
+            };
+          },
+        ),
         other_tax_additions:
           detailResponse.other_tax_additions?.toString() || "0",
         freight_cost: detailResponse.freight_cost?.toString() || "0",
@@ -5913,6 +6786,7 @@ const PurchasesPage: React.FC = () => {
       // Reset selected purchase so it treats it as NEW
       setSelectedPurchase(null);
       setPaymentProofFile(null);
+      setTaxInvoiceFiles([]);
 
       // We can run these in parallel to speed up
       await Promise.all([
@@ -9179,6 +10053,50 @@ const PurchasesPage: React.FC = () => {
                               >
                                 ➕ Tax Additions (Penambahan)
                               </Text>
+                              <FormControl mb={4}>
+                                <FormLabel fontSize="sm">
+                                  Perlakuan PPN
+                                </FormLabel>
+                                <Select
+                                  value={formData.vat_treatment}
+                                  onChange={(event) => {
+                                    const vatTreatment = event.target
+                                      .value as PurchaseVATTreatment;
+                                    if (
+                                      vatTreatment !==
+                                      "COMPONENT_DPP_NILAI_LAIN"
+                                    ) {
+                                      setTaxInvoiceFiles([]);
+                                    }
+                                    setFormData((previous) => ({
+                                      ...previous,
+                                      vat_treatment: vatTreatment,
+                                      ppn_rate:
+                                        vatTreatment === "NONE"
+                                          ? "0"
+                                          : vatTreatment === "STANDARD" &&
+                                              previous.vat_treatment === "NONE"
+                                            ? defaultTaxRate.toString()
+                                            : previous.ppn_rate ||
+                                              defaultTaxRate.toString(),
+                                      tax_allocations:
+                                        vatTreatment ===
+                                        "COMPONENT_DPP_NILAI_LAIN"
+                                          ? previous.tax_allocations
+                                          : [],
+                                    }));
+                                  }}
+                                  size="sm"
+                                >
+                                  <option value="STANDARD">
+                                    PPN standar dari seluruh subtotal
+                                  </option>
+                                  <option value="NONE">Tanpa PPN</option>
+                                  <option value="COMPONENT_DPP_NILAI_LAIN">
+                                    PPN berdasarkan komponen / DPP Nilai Lain
+                                  </option>
+                                </Select>
+                              </FormControl>
                               <SimpleGrid
                                 columns={{ base: 1, md: 3 }}
                                 spacing={4}
@@ -9189,6 +10107,9 @@ const PurchasesPage: React.FC = () => {
                                   </FormLabel>
                                   <NumberInput
                                     value={formData.ppn_rate}
+                                    isDisabled={
+                                      formData.vat_treatment !== "STANDARD"
+                                    }
                                     onChange={(value) =>
                                       setFormData({
                                         ...formData,
@@ -9338,6 +10259,7 @@ const PurchasesPage: React.FC = () => {
                                   </FormControl>
                                 )}
                               </SimpleGrid>
+                              {renderComponentVATConfiguration()}
                             </Box>
 
                             <Divider />
@@ -9487,9 +10409,10 @@ const PurchasesPage: React.FC = () => {
                                       subtotal * (1 - discount);
 
                                     const ppnAmount =
-                                      (discountedSubtotal *
-                                        (parseFloat(formData.ppn_rate) || 0)) /
-                                      100;
+                                      calculatePurchaseFormPPNAmount(
+                                        formData,
+                                        discountedSubtotal,
+                                      );
                                     const otherAdditions =
                                       (discountedSubtotal *
                                         (parseFloat(
@@ -9564,7 +10487,10 @@ const PurchasesPage: React.FC = () => {
 
                                         <VStack align="start" spacing={1}>
                                           <Text color={statColors.green}>
-                                            + PPN ({formData.ppn_rate}%):{" "}
+                                            {formData.vat_treatment ===
+                                            "COMPONENT_DPP_NILAI_LAIN"
+                                              ? "+ PPN berdasarkan komponen: "
+                                              : `+ PPN (${formData.ppn_rate}%): `}
                                             {formatCurrency(ppnAmount)}
                                           </Text>
                                           {parseFloat(
@@ -11218,10 +12144,59 @@ const PurchasesPage: React.FC = () => {
                                   fontWeight="medium"
                                   color={statColors.green}
                                   mb={3}
+                              >
+                                ➕ Tax Additions (Penambahan)
+                              </Text>
+                              <FormControl mb={4}>
+                                <FormLabel fontSize="sm">
+                                  Perlakuan PPN
+                                </FormLabel>
+                                <Select
+                                  value={formData.vat_treatment}
+                                  onChange={(event) => {
+                                    const vatTreatment = event.target
+                                      .value as PurchaseVATTreatment;
+                                    if (
+                                      vatTreatment !==
+                                      "COMPONENT_DPP_NILAI_LAIN"
+                                    ) {
+                                      setTaxInvoiceFiles([]);
+                                    }
+                                    setFormData((previous) => ({
+                                      ...previous,
+                                      vat_treatment: vatTreatment,
+                                      ppn_rate:
+                                        vatTreatment === "NONE"
+                                          ? "0"
+                                          : vatTreatment === "STANDARD" &&
+                                              previous.vat_treatment === "NONE"
+                                            ? defaultTaxRate.toString()
+                                            : previous.ppn_rate ||
+                                              defaultTaxRate.toString(),
+                                      tax_allocations:
+                                        vatTreatment ===
+                                        "COMPONENT_DPP_NILAI_LAIN"
+                                          ? previous.tax_allocations
+                                          : [],
+                                    }));
+                                  }}
+                                  size="sm"
+                                  bg={inputBg}
+                                  color={inputTextColor}
+                                  borderColor={inputBorderColor}
+                                  _hover={{ borderColor: inputHoverBorder }}
+                                  _focusVisible={fieldFocusStyles}
                                 >
-                                  ➕ Tax Additions (Penambahan)
-                                </Text>
-                                <SimpleGrid
+                                  <option value="STANDARD">
+                                    PPN standar dari seluruh subtotal
+                                  </option>
+                                  <option value="NONE">Tanpa PPN</option>
+                                  <option value="COMPONENT_DPP_NILAI_LAIN">
+                                    PPN berdasarkan komponen / DPP Nilai Lain
+                                  </option>
+                                </Select>
+                              </FormControl>
+                              <SimpleGrid
                                   columns={{ base: 1, md: 3 }}
                                   spacing={4}
                                 >
@@ -11231,6 +12206,9 @@ const PurchasesPage: React.FC = () => {
                                     </FormLabel>
                                     <NumberInput
                                       value={formData.ppn_rate}
+                                      isDisabled={
+                                        formData.vat_treatment !== "STANDARD"
+                                      }
                                       onChange={(value) =>
                                         setFormData({
                                           ...formData,
@@ -11437,6 +12415,7 @@ const PurchasesPage: React.FC = () => {
                                     </FormControl>
                                   )}
                                 </SimpleGrid>
+                                {renderComponentVATConfiguration()}
                               </Box>
 
                               <Divider />
@@ -11633,10 +12612,10 @@ const PurchasesPage: React.FC = () => {
                                         subtotal * (1 - discount);
 
                                       const ppnAmount =
-                                        (discountedSubtotal *
-                                          (parseFloat(formData.ppn_rate) ||
-                                            0)) /
-                                        100;
+                                        calculatePurchaseFormPPNAmount(
+                                          formData,
+                                          discountedSubtotal,
+                                        );
                                       const otherAdditions =
                                         (discountedSubtotal *
                                           (parseFloat(
@@ -11717,7 +12696,10 @@ const PurchasesPage: React.FC = () => {
 
                                           <VStack align="start" spacing={1}>
                                             <Text color={statColors.green}>
-                                              + PPN ({formData.ppn_rate}%):{" "}
+                                              {formData.vat_treatment ===
+                                              "COMPONENT_DPP_NILAI_LAIN"
+                                                ? "+ PPN berdasarkan komponen: "
+                                                : `+ PPN (${formData.ppn_rate}%): `}
                                               {formatCurrency(ppnAmount)}
                                             </Text>
                                             {parseFloat(

@@ -631,16 +631,64 @@ func (s *SSOTPurchaseReportService) getPaymentAnalysis(ctx context.Context, star
 
 // getTaxAnalysis analyzes tax information in purchases - using purchases table with tax fields
 func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDate, endDate time.Time, projectID *uint) (PurchaseTaxAnalysis, error) {
-	// FIX: Get tax from purchases table tax field, fallback to journal if needed
-	taxQuery := fmt.Sprintf(`
-		SELECT 
+	// Historical purchases retain the header-level PPN calculation. Component
+	// VAT purchases use the invoice allocations because their taxable DPP can be
+	// a subset of the purchase total and only some PPN may be creditable.
+	//
+	// Deployments can briefly run against a database before the additive
+	// allocation migration is present. Keep the legacy query in that case so the
+	// report stays available rather than referencing a missing table or column.
+	componentVATAvailable := s.db.Migrator().HasTable(&models.PurchaseTaxAllocation{}) &&
+		s.db.Migrator().HasColumn(&models.Purchase{}, "vat_treatment")
+
+	legacyTaxQuery := fmt.Sprintf(`
+		SELECT
 			COALESCE(SUM(p.net_before_tax), 0) as total_taxable_amount,
-			COALESCE(SUM(p.tax_amount), 0) as total_tax_amount
+			COALESCE(SUM(p.tax_amount), 0) as total_tax_amount,
+			COALESCE(SUM(p.tax_amount), 0) as tax_reclaimable_amount
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
 		  AND %s
 	`, models.PurchaseOperationalReportWhereClause("p"))
+
+	taxQuery := legacyTaxQuery
+	if componentVATAvailable {
+		taxQuery = fmt.Sprintf(`
+			SELECT
+				COALESCE(SUM(CASE
+					WHEN COALESCE(p.vat_treatment, 'STANDARD') = '%s' THEN COALESCE(component_tax.dpp_amount, 0)
+					ELSE COALESCE(p.net_before_tax, 0)
+				END), 0) as total_taxable_amount,
+				COALESCE(SUM(CASE
+					WHEN COALESCE(p.vat_treatment, 'STANDARD') = '%s' THEN COALESCE(component_tax.ppn_amount, 0)
+					ELSE COALESCE(p.tax_amount, 0)
+				END), 0) as total_tax_amount,
+				COALESCE(SUM(CASE
+					WHEN COALESCE(p.vat_treatment, 'STANDARD') = '%s' THEN COALESCE(component_tax.creditable_ppn_amount, 0)
+					ELSE COALESCE(p.tax_amount, 0)
+				END), 0) as tax_reclaimable_amount
+			FROM purchases p
+			LEFT JOIN (
+				SELECT
+					purchase_id,
+					COALESCE(SUM(dpp_amount), 0) as dpp_amount,
+					COALESCE(SUM(ppn_amount), 0) as ppn_amount,
+					COALESCE(SUM(CASE WHEN COALESCE(is_creditable, FALSE) THEN ppn_amount ELSE 0 END), 0) as creditable_ppn_amount
+				FROM purchase_tax_allocations
+				WHERE deleted_at IS NULL
+				GROUP BY purchase_id
+			) component_tax ON component_tax.purchase_id = p.id
+			WHERE p.date BETWEEN ? AND ?
+			  AND p.deleted_at IS NULL
+			  AND %s
+		`,
+			models.PurchaseVATTreatmentComponentDPPNilaiLain,
+			models.PurchaseVATTreatmentComponentDPPNilaiLain,
+			models.PurchaseVATTreatmentComponentDPPNilaiLain,
+			models.PurchaseOperationalReportWhereClause("p"),
+		)
+	}
 
 	taxArgs := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -649,8 +697,9 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 	}
 
 	var taxSummary struct {
-		TotalTaxableAmount float64 `json:"total_taxable_amount"`
-		TotalTaxAmount     float64 `json:"total_tax_amount"`
+		TotalTaxableAmount   float64 `json:"total_taxable_amount"`
+		TotalTaxAmount       float64 `json:"total_tax_amount"`
+		TaxReclaimableAmount float64 `json:"tax_reclaimable_amount"`
 	}
 
 	err := s.db.WithContext(ctx).Raw(taxQuery, taxArgs...).Scan(&taxSummary).Error
@@ -663,17 +712,55 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		averageTaxRate = (taxSummary.TotalTaxAmount / taxSummary.TotalTaxableAmount) * 100
 	}
 
-	// Get monthly tax breakdown
-	monthlyTaxQuery := fmt.Sprintf(`
-		SELECT 
-			EXTRACT(YEAR FROM p.date) as year,
-			EXTRACT(MONTH FROM p.date) as month,
+	// Get monthly tax breakdown. The production PostgreSQL expressions remain
+	// unchanged; SQLite support keeps this report testable in the local suite.
+	yearExpression := "EXTRACT(YEAR FROM p.date)"
+	monthExpression := "EXTRACT(MONTH FROM p.date)"
+	if s.db.Dialector.Name() == "sqlite" {
+		yearExpression = "CAST(strftime('%Y', p.date) AS INTEGER)"
+		monthExpression = "CAST(strftime('%m', p.date) AS INTEGER)"
+	}
+
+	legacyMonthlyTaxQuery := fmt.Sprintf(`
+		SELECT
+			%s as year,
+			%s as month,
 			COALESCE(SUM(p.tax_amount), 0) as tax_amount
 		FROM purchases p
 		WHERE p.date BETWEEN ? AND ?
 		  AND p.deleted_at IS NULL
 		  AND %s
-	`, models.PurchaseOperationalReportWhereClause("p"))
+	`, yearExpression, monthExpression, models.PurchaseOperationalReportWhereClause("p"))
+
+	monthlyTaxQuery := legacyMonthlyTaxQuery
+	if componentVATAvailable {
+		monthlyTaxQuery = fmt.Sprintf(`
+			SELECT
+				%s as year,
+				%s as month,
+				COALESCE(SUM(CASE
+					WHEN COALESCE(p.vat_treatment, 'STANDARD') = '%s' THEN COALESCE(component_tax.ppn_amount, 0)
+					ELSE COALESCE(p.tax_amount, 0)
+				END), 0) as tax_amount
+			FROM purchases p
+			LEFT JOIN (
+				SELECT
+					purchase_id,
+					COALESCE(SUM(ppn_amount), 0) as ppn_amount
+				FROM purchase_tax_allocations
+				WHERE deleted_at IS NULL
+				GROUP BY purchase_id
+			) component_tax ON component_tax.purchase_id = p.id
+			WHERE p.date BETWEEN ? AND ?
+			  AND p.deleted_at IS NULL
+			  AND %s
+		`,
+			yearExpression,
+			monthExpression,
+			models.PurchaseVATTreatmentComponentDPPNilaiLain,
+			models.PurchaseOperationalReportWhereClause("p"),
+		)
+	}
 
 	monthlyTaxArgs := []interface{}{startDate, endDate}
 	if projectID != nil {
@@ -681,7 +768,7 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		monthlyTaxArgs = append(monthlyTaxArgs, *projectID)
 	}
 	monthlyTaxQuery += `
-		GROUP BY EXTRACT(YEAR FROM p.date), EXTRACT(MONTH FROM p.date)
+		GROUP BY ` + yearExpression + `, ` + monthExpression + `
 		ORDER BY year, month
 	`
 
@@ -722,7 +809,7 @@ func (s *SSOTPurchaseReportService) getTaxAnalysis(ctx context.Context, startDat
 		TotalTaxableAmount:   taxSummary.TotalTaxableAmount,
 		TotalTaxAmount:       taxSummary.TotalTaxAmount,
 		AverageTaxRate:       averageTaxRate,
-		TaxReclaimableAmount: taxSummary.TotalTaxAmount, // Input tax is reclaimable
+		TaxReclaimableAmount: taxSummary.TaxReclaimableAmount,
 		TaxByMonth:           taxByMonth,
 	}, nil
 }

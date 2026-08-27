@@ -44,6 +44,9 @@ func (adapter *PurchaseSSOTJournalAdapter) CreatePurchaseJournalEntry(
 	purchase *models.Purchase,
 	userID uint64,
 ) (*models.SSOTJournalEntry, error) {
+	if isComponentPurchaseVAT(purchase) {
+		return nil, fmt.Errorf("adapter jurnal lama tidak mendukung PPN per komponen; gunakan PurchaseJournalServiceSSOT")
+	}
 	if adapter.unifiedJournalService == nil {
 		return nil, fmt.Errorf("unified journal service not available")
 	}

@@ -681,6 +681,7 @@ func AutoMigrate(db *gorm.DB) {
 		// Purchases
 		&models.Purchase{},
 		&models.PurchaseItem{},
+		&models.PurchaseTaxAllocation{},
 		&models.PurchasePaymentTerm{},
 		&models.PurchaseCOARevision{},
 		&models.PurchasePrePostingRevision{},

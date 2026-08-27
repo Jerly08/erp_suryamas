@@ -396,3 +396,193 @@ func TestDeletePurchaseJournalRemovesLinkedReversalEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestCreatePurchaseJournalSplitsCreditableAndNonCreditableVAT(t *testing.T) {
+	db := newPurchaseJournalSSOTTestDB(t)
+	service := NewPurchaseJournalServiceSSOT(db, nil, NewSettingsService(db))
+
+	nonCreditableExpense := createSSOTTestAccount(t, db, "6101-001", "BEBAN LISTRIK", models.AccountTypeExpense, models.CategoryAdministrativeExp)
+	creditableExpense := createSSOTTestAccount(t, db, "6101-002", "BEBAN SURCHARGE", models.AccountTypeExpense, models.CategoryAdministrativeExp)
+	ppnMasukan := createSSOTTestAccount(t, db, "1105-005", "PPN MASUKAN", models.AccountTypeAsset, models.CategoryCurrentAsset)
+	payable := createSSOTTestAccount(t, db, "2101-001", "HUTANG USAHA - LOKAL", models.AccountTypeLiability, models.CategoryCurrentLiability)
+
+	purchaseID := uint(90)
+	purchase := &models.Purchase{
+		ID:            purchaseID,
+		Code:          "PO/TEST/COMPONENT-VAT",
+		VendorID:      1,
+		UserID:        1,
+		Date:          time.Now(),
+		VATTreatment:  "COMPONENT_DPP_NILAI_LAIN",
+		NetBeforeTax:  100000,
+		PPNAmount:     12000,
+		TaxAmount:     12000,
+		TotalAmount:   112000,
+		PaymentMethod: models.PurchasePaymentCredit,
+		Status:        models.PurchaseStatusApproved,
+		Vendor:        models.Contact{Name: "PT PLN Test"},
+		PurchaseItems: []models.PurchaseItem{
+			{
+				ID:               11,
+				PurchaseID:       purchaseID,
+				ItemType:         models.PurchaseItemTypeExpense,
+				Description:      "Biaya listrik - PPN tidak dapat dikreditkan",
+				Quantity:         1,
+				UnitPrice:        70000,
+				TotalPrice:       70000,
+				ExpenseAccountID: nonCreditableExpense.ID,
+			},
+			{
+				ID:               12,
+				PurchaseID:       purchaseID,
+				ItemType:         models.PurchaseItemTypeExpense,
+				Description:      "Surcharge - PPN dapat dikreditkan",
+				Quantity:         1,
+				UnitPrice:        30000,
+				TotalPrice:       30000,
+				ExpenseAccountID: creditableExpense.ID,
+			},
+		},
+		TaxAllocations: []models.PurchaseTaxAllocation{
+			{
+				PurchaseID:     purchaseID,
+				PurchaseItemID: 11,
+				PPNAmount:      7000,
+				IsCreditable:   false,
+			},
+			{
+				PurchaseID:     purchaseID,
+				PurchaseItemID: 12,
+				PPNAmount:      5000,
+				IsCreditable:   true,
+			},
+		},
+	}
+
+	if err := service.CreatePurchaseJournal(purchase, nil); err != nil {
+		t.Fatalf("create component VAT purchase journal: %v", err)
+	}
+
+	sourceID := uint64(purchaseID)
+	var entry models.SSOTJournalEntry
+	if err := db.Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, sourceID).First(&entry).Error; err != nil {
+		t.Fatalf("load purchase journal entry: %v", err)
+	}
+	if got := entry.TotalDebit.Round(2).StringFixed(2); got != "112000.00" {
+		t.Fatalf("expected total debit 112000.00, got %s", got)
+	}
+	if got := entry.TotalCredit.Round(2).StringFixed(2); got != "112000.00" {
+		t.Fatalf("expected total credit 112000.00, got %s", got)
+	}
+
+	var lines []models.SSOTJournalLine
+	if err := db.Where("journal_id = ?", entry.ID).Find(&lines).Error; err != nil {
+		t.Fatalf("load purchase journal lines: %v", err)
+	}
+
+	nonCreditableLine := findSSOTLineByAccountID(lines, uint64(nonCreditableExpense.ID))
+	if nonCreditableLine == nil || nonCreditableLine.DebitAmount.Round(2).StringFixed(2) != "77000.00" {
+		t.Fatalf("expected non-creditable VAT to increase source expense debit to 77000.00, got %#v", nonCreditableLine)
+	}
+	creditableLine := findSSOTLineByAccountID(lines, uint64(creditableExpense.ID))
+	if creditableLine == nil || creditableLine.DebitAmount.Round(2).StringFixed(2) != "30000.00" {
+		t.Fatalf("expected creditable source expense debit 30000.00, got %#v", creditableLine)
+	}
+	ppnLine := findSSOTLineByAccountID(lines, uint64(ppnMasukan.ID))
+	if ppnLine == nil || ppnLine.DebitAmount.Round(2).StringFixed(2) != "5000.00" {
+		t.Fatalf("expected only creditable VAT in PPN Masukan (5000.00), got %#v", ppnLine)
+	}
+	payableLine := findSSOTLineByAccountID(lines, uint64(payable.ID))
+	if payableLine == nil || payableLine.CreditAmount.Round(2).StringFixed(2) != "112000.00" {
+		t.Fatalf("expected vendor payable credit 112000.00, got %#v", payableLine)
+	}
+}
+
+func TestCreatePurchaseJournalWithoutTaxAllocationsKeepsHeaderVATCreditable(t *testing.T) {
+	db := newPurchaseJournalSSOTTestDB(t)
+	service := NewPurchaseJournalServiceSSOT(db, nil, NewSettingsService(db))
+
+	expense := createSSOTTestAccount(t, db, "6101-001", "BEBAN JASA", models.AccountTypeExpense, models.CategoryAdministrativeExp)
+	ppnMasukan := createSSOTTestAccount(t, db, "1105-005", "PPN MASUKAN", models.AccountTypeAsset, models.CategoryCurrentAsset)
+	payable := createSSOTTestAccount(t, db, "2101-001", "HUTANG USAHA - LOKAL", models.AccountTypeLiability, models.CategoryCurrentLiability)
+
+	purchaseID := uint(91)
+	purchase := &models.Purchase{
+		ID:            purchaseID,
+		Code:          "PO/TEST/LEGACY-VAT",
+		VendorID:      1,
+		UserID:        1,
+		Date:          time.Now(),
+		NetBeforeTax:  100000,
+		PPNAmount:     11000,
+		TaxAmount:     11000,
+		TotalAmount:   111000,
+		PaymentMethod: models.PurchasePaymentCredit,
+		Status:        models.PurchaseStatusApproved,
+		Vendor:        models.Contact{Name: "PT Vendor Lama"},
+		PurchaseItems: []models.PurchaseItem{
+			{
+				ID:               13,
+				PurchaseID:       purchaseID,
+				ItemType:         models.PurchaseItemTypeExpense,
+				Description:      "Jasa lama",
+				Quantity:         1,
+				UnitPrice:        100000,
+				TotalPrice:       100000,
+				ExpenseAccountID: expense.ID,
+			},
+		},
+	}
+
+	if err := service.CreatePurchaseJournal(purchase, nil); err != nil {
+		t.Fatalf("create legacy VAT purchase journal: %v", err)
+	}
+
+	sourceID := uint64(purchaseID)
+	var entry models.SSOTJournalEntry
+	if err := db.Where("source_type = ? AND source_id = ?", models.SSOTSourceTypePurchase, sourceID).First(&entry).Error; err != nil {
+		t.Fatalf("load purchase journal entry: %v", err)
+	}
+	var lines []models.SSOTJournalLine
+	if err := db.Where("journal_id = ?", entry.ID).Find(&lines).Error; err != nil {
+		t.Fatalf("load purchase journal lines: %v", err)
+	}
+
+	expenseLine := findSSOTLineByAccountID(lines, uint64(expense.ID))
+	if expenseLine == nil || expenseLine.DebitAmount.Round(2).StringFixed(2) != "100000.00" {
+		t.Fatalf("expected legacy source expense debit 100000.00, got %#v", expenseLine)
+	}
+	ppnLine := findSSOTLineByAccountID(lines, uint64(ppnMasukan.ID))
+	if ppnLine == nil || ppnLine.DebitAmount.Round(2).StringFixed(2) != "11000.00" {
+		t.Fatalf("expected legacy header VAT 11000.00 in PPN Masukan, got %#v", ppnLine)
+	}
+	payableLine := findSSOTLineByAccountID(lines, uint64(payable.ID))
+	if payableLine == nil || payableLine.CreditAmount.Round(2).StringFixed(2) != "111000.00" {
+		t.Fatalf("expected legacy vendor payable credit 111000.00, got %#v", payableLine)
+	}
+}
+
+func TestCreatePurchaseJournalRejectsComponentVATWithoutAllocations(t *testing.T) {
+	db := newPurchaseJournalSSOTTestDB(t)
+	service := NewPurchaseJournalServiceSSOT(db, nil, NewSettingsService(db))
+	purchase := &models.Purchase{
+		ID:           92,
+		Code:         "PO/TEST/MISSING-VAT-ALLOCATION",
+		VATTreatment: "COMPONENT_DPP_NILAI_LAIN",
+		PPNAmount:    1000,
+		Status:       models.PurchaseStatusApproved,
+	}
+
+	if err := service.CreatePurchaseJournal(purchase, nil); err == nil {
+		t.Fatal("expected component VAT purchase without allocations to be rejected")
+	}
+}
+
+func findSSOTLineByAccountID(lines []models.SSOTJournalLine, accountID uint64) *models.SSOTJournalLine {
+	for index := range lines {
+		if lines[index].AccountID == accountID {
+			return &lines[index]
+		}
+	}
+	return nil
+}

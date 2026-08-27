@@ -86,12 +86,32 @@ func purchaseItemLandedTotal(purchase *models.Purchase, item *models.PurchaseIte
 	return sanitizeFloat(clampNonNegative(item.TotalPrice + purchaseItemFreightAllocation(purchase, item)))
 }
 
+// purchaseItemNonCreditableVATAllocation is intentionally separate from the
+// journal-facing landed total. The SSOT journal adds this amount to the debit
+// line explicitly, while stock, asset, prepaid, and backorder valuation need
+// the same amount in their cost basis.
+func purchaseItemNonCreditableVATAllocation(purchase *models.Purchase, item *models.PurchaseItem) float64 {
+	if purchase == nil || item == nil || item.ID == 0 {
+		return 0
+	}
+	return purchaseNonCreditableVATByItem(purchase)[item.ID]
+}
+
+func purchaseItemValuationTotal(purchase *models.Purchase, item *models.PurchaseItem) float64 {
+	if item == nil {
+		return 0
+	}
+	return sanitizeFloat(clampNonNegative(
+		purchaseItemLandedTotal(purchase, item) + purchaseItemNonCreditableVATAllocation(purchase, item),
+	))
+}
+
 func purchaseItemLandedUnitCost(purchase *models.Purchase, item *models.PurchaseItem) float64 {
 	if item == nil {
 		return 0
 	}
 	if item.Quantity > 0 {
-		landedTotal := purchaseItemLandedTotal(purchase, item)
+		landedTotal := purchaseItemValuationTotal(purchase, item)
 		if landedTotal > 0 {
 			return landedTotal / float64(item.Quantity)
 		}

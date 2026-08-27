@@ -214,6 +214,48 @@ func TestPurchasePrePostingRevisionRejectsFieldsOutsideApprovedScope(t *testing.
 	require.Contains(t, err.Error(), "pajak atau biaya")
 }
 
+func TestPurchasePrePostingRevisionTreatsTermRecalculationAsTaxCostConsequence(t *testing.T) {
+	vatTreatment := models.PurchaseVATTreatmentComponentDPPNilaiLain
+	itemID := uint(1)
+	dppAmount := 28695.0
+	ppnRate := 12.0
+	ppnAmount := 3443.0
+	isCreditable := true
+	request := models.PurchaseUpdateRequest{
+		VATTreatment: &vatTreatment,
+		TaxAllocations: []models.PurchaseTaxAllocationRequest{{
+			PurchaseItemID:   &itemID,
+			DPPAmount:        &dppAmount,
+			PPNRate:          &ppnRate,
+			PPNAmount:        &ppnAmount,
+			IsCreditable:     &isCreditable,
+			TaxInvoiceNumber: "010.001-26.00000001",
+		}},
+		PaymentTerms: []models.PurchasePaymentTermRequest{{
+			Sequence: 1,
+			Amount:   660819,
+		}},
+	}
+
+	scope := purchasePrePostingRevisionScopeFromRequest(request)
+	require.True(t, scope.TaxAndCost)
+	require.False(t, scope.PaymentConfiguration)
+
+	revision := &models.PurchasePrePostingRevision{
+		RevisionTypes: `["TAX_AND_COST"]`,
+	}
+	changed, err := validatePurchasePrePostingRevisionUpdateScope(revision, request)
+	require.NoError(t, err)
+	require.Equal(t, []string{"tax_and_cost"}, changed)
+
+	standaloneTermRequest := models.PurchaseUpdateRequest{
+		PaymentTerms: request.PaymentTerms,
+	}
+	standaloneScope := purchasePrePostingRevisionScopeFromRequest(standaloneTermRequest)
+	require.False(t, standaloneScope.TaxAndCost)
+	require.True(t, standaloneScope.PaymentConfiguration)
+}
+
 func TestPurchasePendingFinanceRevisionWithoutOpenRevisionRejectsUpdate(t *testing.T) {
 	fixture := newPurchaseWorkflowFixture(t)
 	purchase, _ := fixture.createDraftPurchase(t, "PO-REV-NO-ACTIVE-REVISION", 125000)

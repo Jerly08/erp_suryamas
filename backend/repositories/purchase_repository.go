@@ -37,6 +37,23 @@ func (r *PurchaseRepository) withPurchasePaymentPreloads(query *gorm.DB) *gorm.D
 	return query
 }
 
+// Component VAT was introduced after the original Purchase schema. Keep the
+// lookup optional so lightweight test databases and older read-only replicas
+// can still read historical purchases while the additive migration is rolling
+// out.
+func (r *PurchaseRepository) withPurchaseTaxAllocationPreloads(query *gorm.DB) *gorm.DB {
+	if !r.db.Migrator().HasTable(&models.PurchaseTaxAllocation{}) {
+		return query
+	}
+
+	return query.
+		Preload("TaxAllocations", func(db *gorm.DB) *gorm.DB {
+			return db.Order("purchase_item_id ASC, id ASC")
+		}).
+		Preload("TaxAllocations.PurchaseItem").
+		Preload("TaxAllocations.Verifier")
+}
+
 func isDateOnlyFilter(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -177,6 +194,12 @@ func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 		Preload("PurchaseRequest.Documents", "document_type = ?", models.PurchaseRequestDocumentRealization).
 		Preload("PurchaseRequest.Documents.Uploader").
 		Preload("Project").
+		// Component-VAT allocations may temporarily reference an incoming item
+		// index while a draft Purchase is being persisted. Keep the visible and
+		// server-side item order deterministic across all database engines.
+		Preload("PurchaseItems", func(db *gorm.DB) *gorm.DB {
+			return db.Order("id ASC")
+		}).
 		Preload("PurchaseItems.Product").
 		Preload("PurchaseItems.PurchaseRequestItem").
 		Preload("PurchaseItems.ExpenseAccount").
@@ -187,6 +210,7 @@ func (r *PurchaseRepository) FindByID(id uint) (*models.Purchase, error) {
 		Preload("ApprovalRequest.ApprovalSteps.Approver").
 		Preload("Approver")
 	query = r.withPurchasePaymentPreloads(query)
+	query = r.withPurchaseTaxAllocationPreloads(query)
 	err := query.First(&purchase, id).Error
 
 	if err != nil {
@@ -204,10 +228,13 @@ func (r *PurchaseRepository) FindAll() ([]models.Purchase, error) {
 		Preload("PurchaseRequest.Documents", "document_type = ?", models.PurchaseRequestDocumentRealization).
 		Preload("PurchaseRequest.Documents.Uploader").
 		Preload("Project").
-		Preload("PurchaseItems").
+		Preload("PurchaseItems", func(db *gorm.DB) *gorm.DB {
+			return db.Order("id ASC")
+		}).
 		Preload("OtherCostAccount").
 		Preload("ApprovalRequest")
 	query = r.withPurchasePaymentPreloads(query)
+	query = r.withPurchaseTaxAllocationPreloads(query)
 	err := query.Find(&purchases).Error
 
 	return purchases, err
@@ -225,6 +252,9 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("PurchaseRequest.Documents", "document_type = ?", models.PurchaseRequestDocumentRealization).
 		Preload("PurchaseRequest.Documents.Uploader").
 		Preload("Project").
+		Preload("PurchaseItems", func(db *gorm.DB) *gorm.DB {
+			return db.Order("id ASC")
+		}).
 		Preload("PurchaseItems.Product").
 		Preload("PurchaseItems.PurchaseRequestItem").
 		Preload("OtherCostAccount").
@@ -237,6 +267,7 @@ func (r *PurchaseRepository) FindWithFilter(filter models.PurchaseFilter) ([]mod
 		Preload("ApprovalRequest.ApprovalSteps.Approver").
 		Preload("Approver")
 	query = r.withPurchasePaymentPreloads(query)
+	query = r.withPurchaseTaxAllocationPreloads(query)
 
 	query = r.applyPurchaseFilter(query, filter)
 
@@ -371,6 +402,14 @@ func (r *PurchaseRepository) FindDocumentsByPurchaseID(purchaseID uint) ([]model
 		Find(&documents).Error
 
 	return documents, err
+}
+
+func (r *PurchaseRepository) FindDocumentByID(id uint) (*models.PurchaseDocument, error) {
+	var document models.PurchaseDocument
+	if err := r.db.First(&document, id).Error; err != nil {
+		return nil, err
+	}
+	return &document, nil
 }
 
 func (r *PurchaseRepository) DeleteDocument(id uint) error {

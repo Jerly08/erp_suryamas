@@ -21,6 +21,11 @@ type Purchase struct {
 	NetBeforeTax           float64 `json:"net_before_tax" gorm:"type:decimal(15,2);default:0"`
 
 	// Tax additions (Penambahan) - PPN, etc
+	// VATTreatment keeps the legacy/global PPN calculation separate from a
+	// purchase whose VAT is calculated from specific invoice components. It is
+	// intentionally optional for old records: STANDARD retains the existing
+	// whole-purchase PPN behaviour.
+	VATTreatment      string  `json:"vat_treatment" gorm:"column:vat_treatment;size:40;not null;default:'STANDARD'"`
 	PPNRate           float64 `json:"ppn_rate" gorm:"type:decimal(8,2);default:0"`             // PPN percentage
 	PPNAmount         float64 `json:"ppn_amount" gorm:"type:decimal(15,2);default:0"`          // Calculated PPN amount
 	OtherTaxAdditions float64 `json:"other_tax_additions" gorm:"type:decimal(15,2);default:0"` // Other tax additions
@@ -81,18 +86,19 @@ type Purchase struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Vendor           Contact               `json:"vendor" gorm:"foreignKey:VendorID"`
-	User             User                  `json:"user" gorm:"foreignKey:UserID"`
-	PurchaseItems    []PurchaseItem        `json:"purchase_items" gorm:"foreignKey:PurchaseID"`
-	PurchasePayments []PurchasePayment     `json:"purchase_payments,omitempty" gorm:"foreignKey:PurchaseID"`
-	PaymentTerms     []PurchasePaymentTerm `json:"payment_terms,omitempty" gorm:"foreignKey:PurchaseID"`
-	BankAccount      *CashBank             `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
-	CreditAccount    *Account              `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
-	OtherCostAccount *Account              `json:"other_cost_account,omitempty" gorm:"foreignKey:OtherCostAccountID"`
-	ApprovalRequest  *ApprovalRequest      `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
-	Approver         *User                 `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
-	PurchaseRequest  *PurchaseRequest      `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
-	Project          *Project              `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor           Contact                 `json:"vendor" gorm:"foreignKey:VendorID"`
+	User             User                    `json:"user" gorm:"foreignKey:UserID"`
+	PurchaseItems    []PurchaseItem          `json:"purchase_items" gorm:"foreignKey:PurchaseID"`
+	TaxAllocations   []PurchaseTaxAllocation `json:"tax_allocations,omitempty" gorm:"foreignKey:PurchaseID"`
+	PurchasePayments []PurchasePayment       `json:"purchase_payments,omitempty" gorm:"foreignKey:PurchaseID"`
+	PaymentTerms     []PurchasePaymentTerm   `json:"payment_terms,omitempty" gorm:"foreignKey:PurchaseID"`
+	BankAccount      *CashBank               `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
+	CreditAccount    *Account                `json:"credit_account,omitempty" gorm:"foreignKey:CreditAccountID"`
+	OtherCostAccount *Account                `json:"other_cost_account,omitempty" gorm:"foreignKey:OtherCostAccountID"`
+	ApprovalRequest  *ApprovalRequest        `json:"approval_request,omitempty" gorm:"foreignKey:ApprovalRequestID"`
+	Approver         *User                   `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	PurchaseRequest  *PurchaseRequest        `json:"purchase_request,omitempty" gorm:"foreignKey:PurchaseRequestID"`
+	Project          *Project                `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
 }
 
 type PurchasePaymentTerm struct {
@@ -139,6 +145,45 @@ type PurchaseItem struct {
 	ExpenseAccount      Account              `json:"expense_account" gorm:"foreignKey:ExpenseAccountID"`
 	AssetCategory       *AssetCategory       `json:"asset_category,omitempty" gorm:"foreignKey:AssetCategoryID"`
 	PurchaseRequestItem *PurchaseRequestItem `json:"purchase_request_item,omitempty" gorm:"foreignKey:PurchaseRequestItemID"`
+}
+
+// PurchaseTaxAllocation records invoice-level PPN that applies to one
+// purchase item. It is used only for the component-based VAT treatment, so
+// historical purchases continue to use the header PPN fields unchanged.
+// One purchase item may have several allocations when it is supported by
+// multiple tax invoices.
+type PurchaseTaxAllocation struct {
+	ID             uint   `json:"id" gorm:"primaryKey"`
+	PurchaseID     uint   `json:"purchase_id" gorm:"not null;index"`
+	PurchaseItemID uint   `json:"purchase_item_id" gorm:"not null;index"`
+	TaxTreatment   string `json:"tax_treatment" gorm:"size:40;not null;default:'DPP_NILAI_LAIN'"`
+
+	// SourceAmount is always derived by the server from the selected purchase
+	// item after discounts. DPP and PPN store the final invoice figures that are
+	// used by journals and tax reporting.
+	SourceAmount float64 `json:"source_amount" gorm:"type:decimal(15,2);default:0"`
+	DPPAmount    float64 `json:"dpp_amount" gorm:"type:decimal(15,2);default:0"`
+	PPNRate      float64 `json:"ppn_rate" gorm:"type:decimal(8,4);default:0"`
+	PPNAmount    float64 `json:"ppn_amount" gorm:"type:decimal(15,2);default:0"`
+	IsCreditable bool    `json:"is_creditable" gorm:"not null;default:true"`
+
+	TaxInvoiceNumber string         `json:"tax_invoice_number" gorm:"size:100"`
+	TaxInvoiceDate   *time.Time     `json:"tax_invoice_date"`
+	Notes            string         `json:"notes" gorm:"type:text"`
+	VerifiedBy       *uint          `json:"verified_by,omitempty" gorm:"index"`
+	VerifiedAt       *time.Time     `json:"verified_at,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `json:"-" gorm:"index"`
+
+	// PurchaseItemIndex is accepted only while a new Purchase is being
+	// created/replaced. It is never persisted and is resolved to a stable
+	// PurchaseItemID before the allocation is stored.
+	PurchaseItemIndex *int `json:"purchase_item_index,omitempty" gorm:"-"`
+
+	Purchase     Purchase     `json:"-" gorm:"foreignKey:PurchaseID"`
+	PurchaseItem PurchaseItem `json:"purchase_item,omitempty" gorm:"foreignKey:PurchaseItemID"`
+	Verifier     *User        `json:"verifier,omitempty" gorm:"foreignKey:VerifiedBy"`
 }
 
 // PurchasePayment represents payments made for purchases (cross-reference with payments table)
@@ -232,6 +277,19 @@ const (
 	PurchasePPhPaymentStatusPaid        = "PAID"
 )
 
+// Purchase VAT Treatment Constants
+const (
+	// PurchaseVATTreatmentStandard is the historical/default behaviour: PPN is
+	// calculated from the full net purchase amount using PPNRate.
+	PurchaseVATTreatmentStandard = "STANDARD"
+	PurchaseVATTreatmentNone     = "NONE"
+	// PurchaseVATTreatmentComponentDPPNilaiLain calculates PPN from one or
+	// more selected purchase components and the DPP stated on the tax invoice.
+	PurchaseVATTreatmentComponentDPPNilaiLain = "COMPONENT_DPP_NILAI_LAIN"
+
+	PurchaseTaxTreatmentDPPNilaiLain = "DPP_NILAI_LAIN"
+)
+
 // Purchase Payment Method Constants
 const (
 	PurchasePaymentCredit   = "CREDIT"        // Credit purchase - pay later (creates accounts payable)
@@ -298,6 +356,10 @@ type PurchaseCreateRequest struct {
 	// Tax additions (Penambahan) - using pointers to distinguish null vs zero
 	PPNRate           *float64 `json:"ppn_rate"` // nil = default to 11%, 0 = no VAT
 	OtherTaxAdditions float64  `json:"other_tax_additions"`
+	// VATTreatment is optional so existing clients keep the global PPN
+	// calculation. COMPONENT_DPP_NILAI_LAIN uses TaxAllocations instead.
+	VATTreatment   *string                        `json:"vat_treatment"`
+	TaxAllocations []PurchaseTaxAllocationRequest `json:"tax_allocations"`
 
 	// Tax deductions (Pemotongan) - using pointers to distinguish null vs zero
 	PPh21Rate          *float64 `json:"pph21_rate"` // nil = 0%, explicit value otherwise
@@ -338,8 +400,10 @@ type PurchaseUpdateRequest struct {
 	OtherCostAccountID   *uint    `json:"other_cost_account_id"`
 
 	// Tax additions (Penambahan) - pointers to distinguish null vs zero
-	PPNRate           **float64 `json:"ppn_rate"` // double pointer for update operations
-	OtherTaxAdditions *float64  `json:"other_tax_additions"`
+	PPNRate           **float64                      `json:"ppn_rate"` // double pointer for update operations
+	OtherTaxAdditions *float64                       `json:"other_tax_additions"`
+	VATTreatment      *string                        `json:"vat_treatment"`
+	TaxAllocations    []PurchaseTaxAllocationRequest `json:"tax_allocations"`
 
 	// Tax deductions (Pemotongan) - pointers to distinguish null vs zero
 	PPh21Rate          **float64 `json:"pph21_rate"` // double pointer for update operations
@@ -373,6 +437,23 @@ type PurchaseItemRequest struct {
 	ExpenseAccountID      uint    `json:"expense_account_id"`
 }
 
+// PurchaseTaxAllocationRequest deliberately does not accept source_amount.
+// The backend derives that value from the selected item to prevent a client
+// from claiming PPN against a different purchase value.
+type PurchaseTaxAllocationRequest struct {
+	ID                *uint      `json:"id"`
+	PurchaseItemID    *uint      `json:"purchase_item_id"`
+	PurchaseItemIndex *int       `json:"purchase_item_index"`
+	TaxTreatment      string     `json:"tax_treatment"`
+	DPPAmount         *float64   `json:"dpp_amount"`
+	PPNRate           *float64   `json:"ppn_rate"`
+	PPNAmount         *float64   `json:"ppn_amount"`
+	IsCreditable      *bool      `json:"is_creditable"`
+	TaxInvoiceNumber  string     `json:"tax_invoice_number"`
+	TaxInvoiceDate    *time.Time `json:"tax_invoice_date"`
+	Notes             string     `json:"notes"`
+}
+
 type PurchaseAccountingCOARequest struct {
 	CreditAccountID *uint                              `json:"credit_account_id"`
 	Items           []PurchaseAccountingCOAItemRequest `json:"items" binding:"required,min=1"`
@@ -384,16 +465,18 @@ type PurchaseFinalReviewConfigRequest struct {
 	CreditAccountID  *uint   `json:"credit_account_id"`
 	PaymentReference *string `json:"payment_reference"`
 
-	FreightCost          *float64 `json:"freight_cost"`
-	OtherCostAmount      *float64 `json:"other_cost_amount"`
-	OtherCostAccountID   *uint    `json:"other_cost_account_id"`
-	PPNRate              *float64 `json:"ppn_rate"`
-	OtherTaxAdditions    *float64 `json:"other_tax_additions"`
-	PPh21Rate            *float64 `json:"pph21_rate"`
-	PPh23Rate            *float64 `json:"pph23_rate"`
-	OtherTaxDeductions   *float64 `json:"other_tax_deductions"`
-	OtherCostDescription *string  `json:"other_cost_description"`
-	Notes                *string  `json:"notes"`
+	FreightCost          *float64                       `json:"freight_cost"`
+	OtherCostAmount      *float64                       `json:"other_cost_amount"`
+	OtherCostAccountID   *uint                          `json:"other_cost_account_id"`
+	PPNRate              *float64                       `json:"ppn_rate"`
+	VATTreatment         *string                        `json:"vat_treatment"`
+	TaxAllocations       []PurchaseTaxAllocationRequest `json:"tax_allocations"`
+	OtherTaxAdditions    *float64                       `json:"other_tax_additions"`
+	PPh21Rate            *float64                       `json:"pph21_rate"`
+	PPh23Rate            *float64                       `json:"pph23_rate"`
+	OtherTaxDeductions   *float64                       `json:"other_tax_deductions"`
+	OtherCostDescription *string                        `json:"other_cost_description"`
+	Notes                *string                        `json:"notes"`
 }
 
 type PurchasePPhPaymentRequest struct {
@@ -419,17 +502,21 @@ const (
 
 // Document Management
 type PurchaseDocument struct {
-	ID           uint           `json:"id" gorm:"primaryKey"`
-	PurchaseID   uint           `json:"purchase_id" gorm:"not null;index"`
-	DocumentType string         `json:"document_type" gorm:"size:50"`
-	FileName     string         `json:"file_name" gorm:"not null;size:255"`
-	FilePath     string         `json:"file_path" gorm:"not null;size:500"`
-	FileSize     int64          `json:"file_size"`
-	MimeType     string         `json:"mime_type" gorm:"size:100"`
-	UploadedBy   uint           `json:"uploaded_by" gorm:"not null;index"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
+	ID           uint   `json:"id" gorm:"primaryKey"`
+	PurchaseID   uint   `json:"purchase_id" gorm:"not null;index"`
+	DocumentType string `json:"document_type" gorm:"size:50"`
+	// ReferenceNumber binds a TAX_INVOICE document to the tax invoice number
+	// declared on a component VAT allocation. It remains optional for other
+	// purchase document types and historical attachments.
+	ReferenceNumber string         `json:"reference_number" gorm:"size:100;index"`
+	FileName        string         `json:"file_name" gorm:"not null;size:255"`
+	FilePath        string         `json:"file_path" gorm:"not null;size:500"`
+	FileSize        int64          `json:"file_size"`
+	MimeType        string         `json:"mime_type" gorm:"size:100"`
+	UploadedBy      uint           `json:"uploaded_by" gorm:"not null;index"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
 	Purchase Purchase `json:"purchase" gorm:"foreignKey:PurchaseID"`
@@ -565,6 +652,7 @@ const (
 // Document Type Constants
 const (
 	PurchaseDocumentInvoice       = "INVOICE"
+	PurchaseDocumentTaxInvoice    = "TAX_INVOICE"
 	PurchaseDocumentReceipt       = "RECEIPT"
 	PurchaseDocumentPurchaseOrder = "PURCHASE_ORDER"
 	PurchaseDocumentContract      = "CONTRACT"

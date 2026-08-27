@@ -19,6 +19,7 @@ set +a
 
 : "${DB_USER:?DB_USER is required in env file}"
 : "${DB_NAME:?DB_NAME is required in env file}"
+BACKUP_BRAND_NAME="${BACKUP_BRAND_NAME:-ERP Akuntansi}"
 
 DB_BACKUP_DIR="$BACKUP_ROOT/database"
 UPLOADS_BACKUP_DIR="$BACKUP_ROOT/uploads"
@@ -110,11 +111,11 @@ write_success_email_report() {
   offsite_status_label="$(format_offsite_status)"
 
   {
-    echo "Backup ERP Avery berhasil"
+    echo "Backup ${BACKUP_BRAND_NAME} berhasil"
     echo
     echo "Halo,"
     echo
-    echo "Backup harian ERP Avery sudah selesai dibuat dengan aman."
+    echo "Backup harian ${BACKUP_BRAND_NAME} sudah selesai dibuat dengan aman."
     echo
     echo "Ringkasan:"
     echo "- ID backup: $TIMESTAMP"
@@ -140,11 +141,11 @@ handle_exit() {
 
   if [[ "$exit_status" -ne 0 ]]; then
     {
-      echo "Backup ERP Avery gagal"
+      echo "Backup ${BACKUP_BRAND_NAME} gagal"
       echo
       echo "Halo,"
       echo
-      echo "Backup harian ERP Avery belum berhasil diselesaikan."
+      echo "Backup harian ${BACKUP_BRAND_NAME} belum berhasil diselesaikan."
       echo
       echo "Ringkasan:"
       echo "- ID backup: $TIMESTAMP"
@@ -185,7 +186,7 @@ mv "$UPLOADS_TMP_FILE" "$UPLOADS_BACKUP_FILE"
 
 CURRENT_STEP="writing local manifest"
 {
-  echo "ERP Akuntansi Daily Local Backup"
+  echo "${BACKUP_BRAND_NAME} Daily Local Backup"
   echo "Timestamp: $TIMESTAMP"
   echo "Created at: $(date --iso-8601=seconds)"
   echo "Env file: $ENV_FILE"

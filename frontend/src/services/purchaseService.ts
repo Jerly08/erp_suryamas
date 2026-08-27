@@ -17,6 +17,60 @@ export interface PurchaseItemRequest {
   amortization_month?: number;
 }
 
+/**
+ * How VAT is calculated for a purchase.  COMPONENT_DPP_NILAI_LAIN keeps the
+ * tax base separate from the purchase subtotal (for example, VAT on only a
+ * surcharge shown on a utility invoice).
+ */
+export type PurchaseVATTreatment =
+  | "STANDARD"
+  | "NONE"
+  | "COMPONENT_DPP_NILAI_LAIN";
+
+export interface PurchaseTaxAllocationRequest {
+  id?: number;
+  /** Use this for create/update requests which submit `items` in the same payload. */
+  purchase_item_index?: number;
+  /** Use this when the source purchase item already exists and `items` is omitted. */
+  purchase_item_id?: number;
+  /** The component-tax basis used by the API for this allocation. */
+  tax_treatment?: "DPP_NILAI_LAIN";
+  dpp_amount: number;
+  ppn_rate: number;
+  ppn_amount: number;
+  is_creditable: boolean;
+  tax_invoice_number: string;
+  /** ISO/RFC3339 date expected by the API. */
+  tax_invoice_date: string;
+  notes?: string;
+}
+
+export interface PurchaseTaxAllocation extends PurchaseTaxAllocationRequest {
+  id: number;
+  purchase_id?: number;
+  purchase_item_id?: number;
+  /** Derived by the server from the linked purchase item; never user-entered. */
+  source_amount?: number;
+  purchase_item?: PurchaseItem;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PurchaseDocument {
+  id: number;
+  purchase_id: number;
+  document_type: string;
+  /** TAX_INVOICE documents are bound to this normalized invoice number. */
+  reference_number?: string;
+  file_name: string;
+  file_path?: string;
+  file_size?: number;
+  mime_type?: string;
+  uploaded_by?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface PurchaseCreateRequest {
   vendor_id: number;
   purchase_request_id?: number;
@@ -29,6 +83,8 @@ export interface PurchaseCreateRequest {
   other_cost_amount?: number;
   other_cost_description?: string;
   other_cost_account_id?: number;
+  vat_treatment?: PurchaseVATTreatment;
+  tax_allocations?: PurchaseTaxAllocationRequest[];
   notes?: string;
   items: PurchaseItemRequest[]; // backend expects `items`
   payment_terms?: PurchasePaymentTermRequest[];
@@ -53,6 +109,8 @@ export interface PurchaseFinalReviewConfigRequest {
   pph21_rate?: number;
   pph23_rate?: number;
   other_tax_deductions?: number;
+  vat_treatment?: PurchaseVATTreatment;
+  tax_allocations?: PurchaseTaxAllocationRequest[];
   payment_method?: string;
   bank_account_id?: number;
   credit_account_id?: number;
@@ -245,6 +303,8 @@ export interface Purchase {
   net_before_tax: number;
   ppn_rate?: number;
   ppn_amount?: number;
+  vat_treatment?: PurchaseVATTreatment;
+  tax_allocations?: PurchaseTaxAllocation[];
   other_tax_additions?: number;
   total_tax_additions?: number;
   pph21_rate?: number;
@@ -298,6 +358,7 @@ export interface Purchase {
   purchase_request?: PurchaseRequestSummary | null;
   project?: ProjectSummary | null;
   purchase_items?: PurchaseItem[];
+  documents?: PurchaseDocument[];
   purchase_payments?: PurchasePayment[];
   payment_terms?: PurchasePaymentTerm[];
   approval_request?: {
@@ -794,6 +855,50 @@ class PurchaseService {
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
+  }
+
+  async listDocuments(purchaseId: number): Promise<PurchaseDocument[]> {
+    const response = await api.get(
+      `${API_ENDPOINTS.PURCHASES_BY_ID(purchaseId)}/documents`,
+    );
+    return response.data?.documents ?? response.data ?? [];
+  }
+
+  async uploadDocument(
+    purchaseId: number,
+    file: File,
+    documentType = "INVOICE",
+    referenceNumber?: string,
+  ): Promise<{ message?: string }> {
+    const formData = new FormData();
+    formData.append("document", file);
+    formData.append("document_type", documentType);
+    if (referenceNumber?.trim()) {
+      formData.append("reference_number", referenceNumber.trim());
+    }
+
+    const response = await api.post(
+      `${API_ENDPOINTS.PURCHASES_BY_ID(purchaseId)}/documents`,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 30000,
+      },
+    );
+    return response.data;
+  }
+
+  async uploadTaxInvoice(
+    purchaseId: number,
+    file: File,
+    referenceNumber: string,
+  ): Promise<{ message?: string }> {
+    return this.uploadDocument(
+      purchaseId,
+      file,
+      "TAX_INVOICE",
+      referenceNumber.trim().toUpperCase(),
+    );
   }
 
   // Helper method to check if purchase can receive payment

@@ -19,6 +19,7 @@ fi
 set -a
 source "$ENV_FILE"
 set +a
+BACKUP_BRAND_NAME="${BACKUP_BRAND_NAME:-ERP Akuntansi}"
 
 DB_BACKUP_DIR="$BACKUP_ROOT/database"
 UPLOADS_BACKUP_DIR="$BACKUP_ROOT/uploads"
@@ -89,7 +90,7 @@ if [[ -z "$restored_table_count" || "$restored_table_count" -le 0 ]]; then
 fi
 
 {
-  echo "ERP Akuntansi Restore Test"
+  echo "${BACKUP_BRAND_NAME} Restore Test"
   echo "Timestamp: $TIMESTAMP"
   echo "Created at: $(date --iso-8601=seconds)"
   echo "Env file: $ENV_FILE"
