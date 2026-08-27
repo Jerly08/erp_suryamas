@@ -159,9 +159,9 @@ func main() {
 	// Repair known legacy IDR cash/bank rows before recalculating balances.
 	database.CashBankBookAmountRepairMigration(db)
 
-	// Re-sync every cash/bank balance from transaction history so startup heals
-	// stale native/book balances even for accounts that are not touched today.
-	{
+	// Rebuilding cash/bank balances writes financial data. It must be an explicit
+	// maintenance action, never an implicit side effect of restarting the API.
+	if os.Getenv("RUN_CASHBANK_STARTUP_SYNC") == "true" {
 		cashBankSyncSvc := services.NewCashBankCOASyncService(db)
 		synced, err := cashBankSyncSvc.SyncAllAssets()
 		if err != nil {
@@ -169,6 +169,8 @@ func main() {
 		} else {
 			log.Printf("✅ Cash/bank startup sync completed for %d accounts", synced)
 		}
+	} else {
+		log.Println("⏭️ Skipping cash/bank startup sync; set RUN_CASHBANK_STARTUP_SYNC=true only for approved maintenance.")
 	}
 
 	// Initialize and start session cleanup service
