@@ -70,9 +70,11 @@ import SearchableSelect from "@/components/common/SearchableSelect";
 import {
   purchaseRequestService,
   PurchaseRequest,
+  PurchaseRequestApprovalEvent,
   PurchaseRequestCreatePayload,
   PurchaseRequestDocument,
   PurchaseRequestItem,
+  PurchaseRequestRevisionSnapshot,
 } from "@/services/purchaseRequestService";
 import { projectService, Project } from "@/services/projectService";
 import searchableSelectService, {
@@ -189,6 +191,11 @@ type FinalizedPaymentReceipt = {
   date?: string;
   method?: string;
   reference?: string;
+};
+
+type PurchaseRequestApprovalEventRound = {
+  approvalRevision: number;
+  events: PurchaseRequestApprovalEvent[];
 };
 
 const createEmptyPurchaseRequestItem = (): PurchaseRequestFormItem => ({
@@ -3243,6 +3250,312 @@ export default function PurchaseRequestsPage() {
     }
   };
 
+  const getPurchaseRequestApprovalEventTime = (
+    event: PurchaseRequestApprovalEvent,
+  ) => event.occurred_at || event.created_at || "";
+
+  const getPurchaseRequestApprovalRevision = (
+    event: PurchaseRequestApprovalEvent,
+  ) => {
+    const revision = event.approval_revision || 1;
+    return revision > 0 ? revision : 1;
+  };
+
+  const getApprovalActionFromRevisionSnapshot = (
+    snapshot: PurchaseRequestRevisionSnapshot,
+    stage: string,
+  ) => {
+    const decisionFieldByStage: Record<string, string> = {
+      FINANCE_STAFF: "finance_staff_decision",
+      FINANCE_MANAGER: "finance_manager_decision",
+      DIRECTOR: "director_decision",
+    };
+    const decisionField = decisionFieldByStage[stage];
+    let approvedCount = 0;
+    let rejectedCount = 0;
+
+    if (decisionField && snapshot.item_snapshot) {
+      try {
+        const parsedSnapshot: unknown = JSON.parse(snapshot.item_snapshot);
+        if (Array.isArray(parsedSnapshot)) {
+          parsedSnapshot.forEach((item) => {
+            if (!item || typeof item !== "object") return;
+            const decision = (item as Record<string, unknown>)[decisionField];
+            if (typeof decision !== "string") return;
+            if (decision.toUpperCase() === "APPROVED") approvedCount += 1;
+            if (decision.toUpperCase() === "REJECTED") rejectedCount += 1;
+          });
+        }
+      } catch {
+        // Legacy snapshots may not contain an item JSON payload. Fall back to
+        // their PR status rather than inventing a per-item decision.
+      }
+    }
+
+    if (approvedCount > 0 && rejectedCount > 0) return "PARTIALLY_APPROVED";
+    if (rejectedCount > 0 && approvedCount === 0) return "REJECTED";
+    if ((snapshot.previous_status || "").toUpperCase() === "REJECTED") {
+      return "REJECTED";
+    }
+    return "APPROVED";
+  };
+
+  const getApprovalEventsFromRevisionSnapshot = (
+    snapshot: PurchaseRequestRevisionSnapshot,
+  ): PurchaseRequestApprovalEvent[] => {
+    const approvalRevision = Math.max(snapshot.revision_number || 1, 1);
+    const baseEvent = {
+      id: 0,
+      purchase_request_id: snapshot.purchase_request_id,
+      approval_revision: approvalRevision,
+      event_type: "APPROVAL_ACTION",
+      reapproval_reason: snapshot.reapproval_reason,
+      status_before: "",
+      status_after: snapshot.previous_status || "",
+      approval_stage_before: "",
+      approval_stage_after: snapshot.previous_approval_stage || "",
+      source: "REVISION_SNAPSHOT",
+    };
+    const events: PurchaseRequestApprovalEvent[] = [];
+
+    const addApprovalEvent = (
+      stage: string,
+      actorId?: number | null,
+      actor?: PurchaseRequestApprovalEvent["actor"],
+      occurredAt?: string | null,
+      notes?: string,
+    ) => {
+      if (!actorId && !occurredAt) return;
+      events.push({
+        ...baseEvent,
+        stage,
+        action: getApprovalActionFromRevisionSnapshot(snapshot, stage),
+        actor_id: actorId,
+        actor,
+        occurred_at:
+          occurredAt || snapshot.opened_at || snapshot.created_at || "",
+        notes: notes || "",
+      });
+    };
+
+    addApprovalEvent(
+      "FINANCE_STAFF",
+      snapshot.finance_staff_approved_by,
+      snapshot.finance_staff_approver,
+      snapshot.finance_staff_approved_at,
+      snapshot.finance_staff_review_notes,
+    );
+    addApprovalEvent(
+      "FINANCE_MANAGER",
+      snapshot.finance_manager_approved_by,
+      snapshot.finance_manager_approver,
+      snapshot.finance_manager_approved_at,
+      snapshot.finance_manager_review_notes,
+    );
+    addApprovalEvent(
+      "DIRECTOR",
+      snapshot.director_approved_by,
+      snapshot.director_approver,
+      snapshot.director_approved_at,
+    );
+
+    const hasMatchingFinalApproval = events.some(
+      (event) =>
+        event.actor_id === snapshot.approved_by &&
+        event.occurred_at === snapshot.approved_at,
+    );
+    if (
+      (snapshot.approved_by || snapshot.approved_at) &&
+      !hasMatchingFinalApproval
+    ) {
+      addApprovalEvent(
+        "FINALIZED",
+        snapshot.approved_by,
+        snapshot.approver,
+        snapshot.approved_at,
+      );
+    }
+
+    return events;
+  };
+
+  const getPurchaseRequestApprovalEvents = (
+    pr?: PurchaseRequest | null,
+  ): PurchaseRequestApprovalEvent[] => {
+    if (!pr) return [];
+
+    // A legacy revision snapshot can contain an earlier round while the new
+    // audit table only has events from a later round. Merge both so the first
+    // approval does not disappear during the transition. API events are first
+    // and win when their semantic audit data overlaps a snapshot.
+    const eventCandidates = [
+      ...(pr.approval_events || []),
+      ...(pr.revision_snapshots || []).flatMap(
+        getApprovalEventsFromRevisionSnapshot,
+      ),
+    ];
+    const seen = new Set<string>();
+    return eventCandidates
+      .filter((event) => {
+        const key = [
+          getPurchaseRequestApprovalRevision(event),
+          event.event_type,
+          event.stage,
+          event.action,
+          event.actor_id || "",
+          getPurchaseRequestApprovalEventTime(event),
+        ].join("|");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((left, right) => {
+        const revisionDifference =
+          getPurchaseRequestApprovalRevision(left) -
+          getPurchaseRequestApprovalRevision(right);
+        if (revisionDifference !== 0) return revisionDifference;
+
+        const leftTime = Date.parse(getPurchaseRequestApprovalEventTime(left));
+        const rightTime = Date.parse(getPurchaseRequestApprovalEventTime(right));
+        if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) return 0;
+        return leftTime - rightTime;
+      });
+  };
+
+  const getPurchaseRequestApprovalEventRounds = (
+    pr?: PurchaseRequest | null,
+  ): PurchaseRequestApprovalEventRound[] => {
+    const rounds = new Map<number, PurchaseRequestApprovalEvent[]>();
+    getPurchaseRequestApprovalEvents(pr).forEach((event) => {
+      const revision = getPurchaseRequestApprovalRevision(event);
+      const events = rounds.get(revision) || [];
+      events.push(event);
+      rounds.set(revision, events);
+    });
+
+    return Array.from(rounds.entries())
+      .sort(([leftRevision], [rightRevision]) => leftRevision - rightRevision)
+      .map(([approvalRevision, events]) => ({ approvalRevision, events }));
+  };
+
+  const getPurchaseRequestApprovalStageLabel = (stage?: string) => {
+    switch ((stage || "").toUpperCase()) {
+      case "FINANCE_STAFF":
+        return "Review Finance Staff/Accounting";
+      case "FINANCE_MANAGER":
+        return "Review Finance Manager";
+      case "DIRECTOR":
+        return "Review Director";
+      case "FINALIZED":
+        return "Approval Akhir PR";
+      default:
+        return "Approval PR";
+    }
+  };
+
+  const getPurchaseRequestApprovalEventTitle = (
+    event: PurchaseRequestApprovalEvent,
+  ) => {
+    switch ((event.event_type || "").toUpperCase()) {
+      case "REAPPROVAL_STARTED":
+        return "Approval ulang dimulai";
+      case "REQUESTER_REVISION_OPENED":
+        return "Revisi PR dibuka";
+      case "REQUESTER_REVISION_SUBMITTED":
+        return "Revisi PR dikirim";
+      default:
+        return getPurchaseRequestApprovalStageLabel(event.stage);
+    }
+  };
+
+  const getPurchaseRequestApprovalActionLabel = (
+    event: PurchaseRequestApprovalEvent,
+  ) => {
+    const action = event.action.toUpperCase();
+    switch (action) {
+      case "APPROVED":
+        return "Disetujui";
+      case "PARTIALLY_APPROVED":
+        return "Disetujui Sebagian";
+      case "REJECTED":
+        return "Ditolak";
+      case "REOPENED":
+        return "Dirouting Ulang";
+      case "OPENED":
+        return "Dibuka";
+      case "SUBMITTED":
+        return "Dikirim";
+      case "PENDING":
+        return "Menunggu Review";
+      default:
+        return action
+          ? action
+              .toLowerCase()
+              .split("_")
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(" ")
+          : "Tercatat";
+    }
+  };
+
+  const getPurchaseRequestApprovalActionColor = (
+    event: PurchaseRequestApprovalEvent,
+  ) => {
+    const action = event.action.toUpperCase();
+    if (action.includes("REJECT") || action.includes("CLARIFICATION")) {
+      return "red";
+    }
+    if (action.includes("APPROV") || action.includes("FINAL")) {
+      return "green";
+    }
+    if (action.includes("REOPEN") || action.includes("OPEN")) {
+      return "purple";
+    }
+    if (action.includes("SUBMIT")) return "blue";
+    if (action.includes("PENDING")) return "orange";
+    return "gray";
+  };
+
+  const getPurchaseRequestApprovalActorLabel = (
+    event: PurchaseRequestApprovalEvent,
+  ) =>
+    getUserDisplayName(event.actor) ||
+    (event.actor_id ? "Pengguna tercatat" : "Sistem");
+
+  const getPurchaseRequestReapprovalReasonLabel = (reason?: string) => {
+    switch ((reason || "").toUpperCase()) {
+      case "ADDITIONAL_DOCUMENTS":
+        return "Dokumen tambahan";
+      case "INVOICE_REVISION":
+        return "Revisi invoice";
+      case "REQUESTER_REVISION":
+        return "Revisi PIC";
+      default:
+        return reason || "";
+    }
+  };
+
+  const getPurchaseRequestApprovalStatusLabel = (status?: string) => {
+    switch ((status || "").toUpperCase()) {
+      case "DRAFT":
+        return "Draft";
+      case "PENDING_APPROVAL":
+        return "Menunggu Approval";
+      case "AWAITING_REVISION":
+        return "Menunggu Revisi PIC";
+      case "APPROVED":
+        return "Approved";
+      case "REJECTED":
+        return "Rejected";
+      case "COMPLETED":
+        return "Selesai";
+      case "CANCELLED":
+        return "Dibatalkan";
+      default:
+        return status || "-";
+    }
+  };
+
   const getDocumentTypeBadge = (documentType?: string) => {
     if ((documentType || "").toUpperCase() === "VENDOR_INVOICE") {
       return (
@@ -3277,6 +3590,18 @@ export default function PurchaseRequestsPage() {
     }
     return null;
   };
+
+  const selectedRequestApprovalEventRounds =
+    getPurchaseRequestApprovalEventRounds(selectedRequest);
+  const selectedRequestHasUnavailableApprovalHistory = Boolean(
+    selectedRequest &&
+      selectedRequestApprovalEventRounds.length === 0 &&
+      ((selectedRequest.approval_revision || 1) > 1 ||
+        selectedRequest.approved_at ||
+        selectedRequest.finance_staff_approved_at ||
+        selectedRequest.finance_manager_approved_at ||
+        selectedRequest.director_approved_at),
+  );
 
   return (
     <ProtectedModule module="purchase_requests">
@@ -4700,6 +5025,201 @@ export default function PurchaseRequestsPage() {
                     </Box>
                   )}
                 </Grid>
+              )}
+
+              {selectedRequestApprovalEventRounds.length > 0 && (
+                <Box
+                  mb={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={infoPanelBg}
+                >
+                  <Flex
+                    justify="space-between"
+                    align={{ base: "flex-start", md: "center" }}
+                    direction={{ base: "column", md: "row" }}
+                    gap={2}
+                    mb={2}
+                  >
+                    <Flex align="center" gap={2}>
+                      <Icon as={FiFileText} color="purple.500" />
+                      <Text fontWeight="bold">Riwayat Approval PR</Text>
+                      <Badge colorScheme="purple">
+                        {selectedRequestApprovalEventRounds.reduce(
+                          (total, round) => total + round.events.length,
+                          0,
+                        )} aktivitas
+                      </Badge>
+                    </Flex>
+                    <Badge colorScheme="blue" variant="subtle">
+                      Approval aktif terpisah
+                    </Badge>
+                  </Flex>
+                  <Text fontSize="xs" color={mutedTextColor} mb={4}>
+                    Catatan audit ini tetap tersimpan saat PR direvisi atau
+                    dirouting ulang. Status approval yang sedang berjalan
+                    ditampilkan pada ringkasan PR di atas.
+                  </Text>
+
+                  <Flex direction="column" gap={4}>
+                    {selectedRequestApprovalEventRounds.map((round) => {
+                      const reapprovalReason = round.events.find(
+                        (event) => event.reapproval_reason,
+                      )?.reapproval_reason;
+                      const isInitialApproval = round.approvalRevision === 1;
+
+                      return (
+                        <Box
+                          key={`approval-round-${round.approvalRevision}`}
+                          borderWidth="1px"
+                          borderColor={borderColor}
+                          rounded="md"
+                          p={3}
+                          bg={notePanelBg}
+                        >
+                          <Flex
+                            justify="space-between"
+                            align={{ base: "flex-start", md: "center" }}
+                            direction={{ base: "column", md: "row" }}
+                            gap={2}
+                            mb={3}
+                          >
+                            <Box>
+                              <Text fontSize="sm" fontWeight="semibold">
+                                {isInitialApproval
+                                  ? "Putaran 1 — Approval Awal"
+                                  : `Putaran ${round.approvalRevision} — Approval Ulang`}
+                              </Text>
+                              {!isInitialApproval && reapprovalReason && (
+                                <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                                  Dasar routing ulang: {" "}
+                                  {getPurchaseRequestReapprovalReasonLabel(
+                                    reapprovalReason,
+                                  )}
+                                </Text>
+                              )}
+                            </Box>
+                            <Badge colorScheme={isInitialApproval ? "blue" : "purple"}>
+                              {round.events.length} aktivitas
+                            </Badge>
+                          </Flex>
+
+                          <Flex direction="column" gap={3}>
+                            {round.events.map((event, eventIndex) => {
+                              const timestamp = formatDocumentUploadTime(
+                                getPurchaseRequestApprovalEventTime(event),
+                              );
+                              const beforeStatus =
+                                getPurchaseRequestApprovalStatusLabel(
+                                  event.status_before,
+                                );
+                              const afterStatus =
+                                getPurchaseRequestApprovalStatusLabel(
+                                  event.status_after,
+                                );
+                              const hasStatusTransition = Boolean(
+                                event.status_before || event.status_after,
+                              );
+                              const statusTransitionText = event.status_before
+                                ? event.status_after
+                                  ? `Status PR: ${beforeStatus} → ${afterStatus}`
+                                  : `Status PR sebelumnya: ${beforeStatus}`
+                                : `Status PR: ${afterStatus}`;
+                              const actionColor =
+                                getPurchaseRequestApprovalActionColor(event);
+
+                              return (
+                                <Box
+                                  key={`approval-event-${event.id || `${round.approvalRevision}-${eventIndex}`}`}
+                                  position="relative"
+                                  pl={4}
+                                  borderLeftWidth="2px"
+                                  borderColor={`${actionColor}.300`}
+                                >
+                                  <Box
+                                    position="absolute"
+                                    left="-5px"
+                                    top="7px"
+                                    boxSize="8px"
+                                    rounded="full"
+                                    bg={`${actionColor}.500`}
+                                  />
+                                  <Flex
+                                    justify="space-between"
+                                    align={{ base: "flex-start", md: "center" }}
+                                    direction={{ base: "column", md: "row" }}
+                                    gap={2}
+                                  >
+                                    <Box>
+                                      <Text fontSize="sm" fontWeight="medium">
+                                        {getPurchaseRequestApprovalEventTitle(event)}
+                                      </Text>
+                                      <Text fontSize="xs" color={mutedTextColor} mt={1}>
+                                        {getPurchaseRequestApprovalActorLabel(event)}
+                                        {timestamp ? ` pada ${timestamp}` : ""}
+                                      </Text>
+                                    </Box>
+                                    <Flex gap={2} wrap="wrap">
+                                      {(event.source === "ACTIVE_STATE_SNAPSHOT" ||
+                                        event.source === "REVISION_SNAPSHOT") && (
+                                        <Badge colorScheme="gray" variant="outline">
+                                          Riwayat sebelumnya
+                                        </Badge>
+                                      )}
+                                      <Badge colorScheme={actionColor}>
+                                        {getPurchaseRequestApprovalActionLabel(event)}
+                                      </Badge>
+                                    </Flex>
+                                  </Flex>
+                                  {hasStatusTransition && (
+                                    <Text fontSize="xs" color={mutedTextColor} mt={2}>
+                                      {statusTransitionText}
+                                    </Text>
+                                  )}
+                                  {event.notes && (
+                                    <Text
+                                      fontSize="sm"
+                                      color={mutedTextColor}
+                                      mt={2}
+                                      whiteSpace="pre-wrap"
+                                    >
+                                      Catatan: {event.notes}
+                                    </Text>
+                                  )}
+                                </Box>
+                              );
+                            })}
+                          </Flex>
+                        </Box>
+                      );
+                    })}
+                  </Flex>
+                </Box>
+              )}
+
+              {selectedRequestHasUnavailableApprovalHistory && (
+                <Box
+                  mb={4}
+                  borderWidth="1px"
+                  borderColor={borderColor}
+                  rounded="md"
+                  p={4}
+                  bg={notePanelBg}
+                >
+                  <Flex align="center" gap={2}>
+                    <Icon as={FiFileText} color="gray.500" />
+                    <Text fontWeight="bold">Riwayat Approval PR</Text>
+                    <Badge colorScheme="gray">Belum tersedia</Badge>
+                  </Flex>
+                  <Text fontSize="sm" color={mutedTextColor} mt={2}>
+                    Riwayat putaran sebelumnya belum tersimpan sebagai audit
+                    trail pada PR ini. Sistem tidak membuat ulang riwayat dari
+                    data yang tidak lengkap; approval aktif/terakhir tetap
+                    terlihat pada ringkasan di atas.
+                  </Text>
+                </Box>
               )}
 
               <Flex

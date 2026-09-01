@@ -37,6 +37,7 @@ func newPurchaseRequestTestDB(t *testing.T) *gorm.DB {
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
 		&models.PurchaseRequestRevisionSnapshot{},
+		&models.PurchaseRequestApprovalEvent{},
 		&models.PurchaseRequestRealizationReview{},
 		&models.Notification{},
 		&models.NotificationPreference{},
@@ -142,6 +143,9 @@ func TestPurchaseRequestRealizationWorkflowKeepsOriginalApproval(t *testing.T) {
 	service := NewPurchaseRequestService(db, repo, nil)
 
 	approved, requester, financeStaff, financeManager, _ := seedApprovedPurchaseRequestForCancelTest(t, db, service, "REALIZATION")
+	require.Len(t, approved.ApprovalEvents, 2)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, approved.ApprovalEvents[0].EventType)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, approved.ApprovalEvents[1].EventType)
 	now := time.Now()
 	require.NoError(t, db.Model(&models.PurchaseRequest{}).Where("id = ?", approved.ID).Updates(map[string]interface{}{
 		"requires_realization_document": true,
@@ -182,6 +186,9 @@ func TestPurchaseRequestRealizationWorkflowKeepsOriginalApproval(t *testing.T) {
 	require.Equal(t, models.PRRealizationReviewDecisionSubmitted, verified.RealizationReviews[0].Decision)
 	require.Equal(t, models.PRRealizationReviewDecisionApproved, verified.RealizationReviews[1].Decision)
 	require.Equal(t, models.PRRealizationReviewDecisionVerified, verified.RealizationReviews[2].Decision)
+	// Billing/realisasi is deliberately a separate workflow and must never
+	// append to or reset the original PR approval audit trail.
+	require.Len(t, verified.ApprovalEvents, 2)
 }
 
 func TestCreatePurchaseRequestCalculatesDueDateFromVendorInvoiceDate(t *testing.T) {
@@ -518,6 +525,14 @@ func TestAdditionalDocumentsAfterApprovalRestartWorkflowAndNotifyReviewers(t *te
 	require.Equal(t, 1, approved.ApprovalRevision)
 	require.Equal(t, "Dokumen pendukung awal sudah sesuai", approved.FinanceStaffReviewNotes)
 	require.Equal(t, "Disetujui finance manager", approved.FinanceManagerReviewNotes)
+	require.Len(t, approved.ApprovalEvents, 2)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, approved.ApprovalEvents[0].Stage)
+	require.Equal(t, financeStaff.ID, *approved.ApprovalEvents[0].ActorID)
+	require.Equal(t, models.PRApprovalEventActionApproved, approved.ApprovalEvents[0].Action)
+	require.Equal(t, "Dokumen pendukung awal sudah sesuai", approved.ApprovalEvents[0].Notes)
+	require.Equal(t, models.PRApprovalStageFinanceManager, approved.ApprovalEvents[1].Stage)
+	require.Equal(t, financeManager.ID, *approved.ApprovalEvents[1].ActorID)
+	require.Equal(t, "Disetujui finance manager", approved.ApprovalEvents[1].Notes)
 
 	require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.Notification{}).Error)
 
@@ -551,6 +566,22 @@ func TestAdditionalDocumentsAfterApprovalRestartWorkflowAndNotifyReviewers(t *te
 	require.Empty(t, reopened.FinanceManagerReviewNotes)
 	require.Equal(t, models.PRItemDecisionApproved, reopened.Items[0].FinanceStaffDecision)
 	require.Equal(t, models.PRItemDecisionApproved, reopened.Items[0].FinanceManagerDecision)
+	// The current approval columns are reset, but the full prior round and the
+	// reason for the new round remain visible in the append-only audit trail.
+	require.Len(t, reopened.ApprovalEvents, 3)
+	require.Equal(t, 1, reopened.ApprovalEvents[0].ApprovalRevision)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, reopened.ApprovalEvents[0].EventType)
+	require.Equal(t, models.PRApprovalEventSourceLiveAction, reopened.ApprovalEvents[0].Source)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, reopened.ApprovalEvents[0].Stage)
+	require.Equal(t, models.PRApprovalStageFinanceManager, reopened.ApprovalEvents[1].Stage)
+	require.Equal(t, 2, reopened.ApprovalEvents[2].ApprovalRevision)
+	require.Equal(t, models.PRApprovalEventTypeReapprovalStarted, reopened.ApprovalEvents[2].EventType)
+	require.Equal(t, models.PRApprovalEventActionReopened, reopened.ApprovalEvents[2].Action)
+	require.Equal(t, models.PRReapprovalReasonAdditionalDocuments, reopened.ApprovalEvents[2].ReapprovalReason)
+	require.Len(t, reopened.RevisionSnapshots, 1)
+	require.Equal(t, models.PRReapprovalReasonAdditionalDocuments, reopened.RevisionSnapshots[0].ReapprovalReason)
+	require.Equal(t, "Dokumen pendukung awal sudah sesuai", reopened.RevisionSnapshots[0].FinanceStaffReviewNotes)
+	require.Equal(t, "Disetujui finance manager", reopened.RevisionSnapshots[0].FinanceManagerReviewNotes)
 
 	var staffNotifications []models.Notification
 	require.NoError(t, db.Where("user_id = ?", financeStaff.ID).Find(&staffNotifications).Error)
@@ -617,6 +648,7 @@ func TestVendorInvoiceRevisionRestartsApprovalWhenMarkedByFinanceStaff(t *testin
 	require.NoError(t, err)
 	require.Equal(t, models.PRStatusApproved, approved.Status)
 	require.Equal(t, models.PRVendorInvoiceStatusAwaitingInvoice, approved.VendorInvoiceStatus)
+	require.Len(t, approved.ApprovalEvents, 2)
 
 	revised, err := service.SubmitPurchaseRequestInvoiceRevision(
 		pr.ID,
@@ -654,6 +686,20 @@ func TestVendorInvoiceRevisionRestartsApprovalWhenMarkedByFinanceStaff(t *testin
 	require.Len(t, revised.Documents, 1)
 	require.Equal(t, models.PurchaseRequestDocumentVendorInvoice, revised.Documents[0].DocumentType)
 	require.Equal(t, 2, revised.Documents[0].ApprovalRevision)
+	require.Len(t, revised.ApprovalEvents, 3)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, revised.ApprovalEvents[0].Stage)
+	require.Equal(t, financeStaff.ID, *revised.ApprovalEvents[0].ActorID)
+	require.Equal(t, "Butuh invoice asli", revised.ApprovalEvents[0].Notes)
+	require.Equal(t, models.PRApprovalStageFinanceManager, revised.ApprovalEvents[1].Stage)
+	require.Equal(t, financeManager.ID, *revised.ApprovalEvents[1].ActorID)
+	require.Equal(t, 2, revised.ApprovalEvents[2].ApprovalRevision)
+	require.Equal(t, models.PRApprovalEventTypeReapprovalStarted, revised.ApprovalEvents[2].EventType)
+	require.Equal(t, models.PRReapprovalReasonInvoiceRevision, revised.ApprovalEvents[2].ReapprovalReason)
+	require.Equal(t, "Invoice aktual lebih tinggi", revised.ApprovalEvents[2].Notes)
+	require.Len(t, revised.RevisionSnapshots, 1)
+	require.Equal(t, models.PRReapprovalReasonInvoiceRevision, revised.RevisionSnapshots[0].ReapprovalReason)
+	require.Equal(t, "Butuh invoice asli", revised.RevisionSnapshots[0].FinanceStaffReviewNotes)
+	require.Equal(t, "Approved sambil tunggu invoice", revised.RevisionSnapshots[0].FinanceManagerReviewNotes)
 
 	_, err = service.ReviewPurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
 		Items: approveItems,
@@ -914,6 +960,17 @@ func TestFinanceTeamCanUpdatePurchaseRequestProject(t *testing.T) {
 	}, requester.ID, requester.Role)
 	require.NoError(t, err)
 	require.Nil(t, pr.ProjectID)
+	approvalEventTime := time.Now().Add(-time.Minute)
+	require.NoError(t, db.Create(&models.PurchaseRequestApprovalEvent{
+		PurchaseRequestID: pr.ID,
+		ApprovalRevision:  1,
+		EventType:         models.PRApprovalEventTypeApprovalAction,
+		Stage:             models.PRApprovalStageFinanceStaff,
+		Action:            models.PRApprovalEventActionApproved,
+		ActorID:           &financeStaff.ID,
+		OccurredAt:        approvalEventTime,
+		Source:            models.PRApprovalEventSourceLiveAction,
+	}).Error)
 
 	linkedPurchase := models.Purchase{
 		Code:              "PO-PRJ-EDIT",
@@ -932,6 +989,9 @@ func TestFinanceTeamCanUpdatePurchaseRequestProject(t *testing.T) {
 	require.Equal(t, project.ID, *updated.ProjectID)
 	require.NotNil(t, updated.Project)
 	require.Equal(t, project.Name, updated.Project.Name)
+	require.Len(t, updated.ApprovalEvents, 1)
+	require.Equal(t, models.PRApprovalEventActionApproved, updated.ApprovalEvents[0].Action)
+	require.WithinDuration(t, approvalEventTime, updated.ApprovalEvents[0].OccurredAt, time.Second)
 
 	var syncedPurchase models.Purchase
 	require.NoError(t, db.First(&syncedPurchase, linkedPurchase.ID).Error)
@@ -1258,6 +1318,14 @@ func TestRequesterRevisionPreservesApprovedSnapshotAndRestartsApproval(t *testin
 	require.Nil(t, opened.RevisionSnapshots[0].NewTotalEstimatedAmount)
 	require.Contains(t, opened.RevisionSnapshots[0].ItemSnapshot, `"estimated_price":100000`)
 	require.NotNil(t, opened.RevisionSnapshots[0].FinanceManagerApprovedBy)
+	// Round one remains fully visible when Finance opens a requester revision.
+	require.Len(t, opened.ApprovalEvents, 3)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, opened.ApprovalEvents[0].EventType)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, opened.ApprovalEvents[0].Stage)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, opened.ApprovalEvents[1].EventType)
+	require.Equal(t, models.PRApprovalStageFinanceManager, opened.ApprovalEvents[1].Stage)
+	require.Equal(t, models.PRApprovalEventTypeRequesterRevisionOpened, opened.ApprovalEvents[2].EventType)
+	require.Equal(t, models.PRApprovalEventActionOpened, opened.ApprovalEvents[2].Action)
 
 	revised, err := service.SubmitPurchaseRequestRequesterRevision(
 		opened.ID,
@@ -1301,6 +1369,10 @@ func TestRequesterRevisionPreservesApprovedSnapshotAndRestartsApproval(t *testin
 	require.InDelta(t, 200000, *revised.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
 	require.Equal(t, "Nominal naik sesuai dokumen baru", revised.RevisionSnapshots[0].SubmittedNotes)
 	require.Contains(t, revised.RevisionSnapshots[0].NewItemSnapshot, `"estimated_price":200000`)
+	require.Len(t, revised.ApprovalEvents, 4)
+	require.Equal(t, 2, revised.ApprovalEvents[3].ApprovalRevision)
+	require.Equal(t, models.PRApprovalEventTypeRequesterRevisionSubmitted, revised.ApprovalEvents[3].EventType)
+	require.Equal(t, models.PRApprovalEventActionSubmitted, revised.ApprovalEvents[3].Action)
 
 	_, err = service.ReviewPurchaseRequest(revised.ID, financeStaff.ID, financeStaff.Role, models.PurchaseRequestReviewPayload{
 		Items: []models.PurchaseRequestReviewItemPayload{
@@ -1328,6 +1400,47 @@ func TestRequesterRevisionPreservesApprovedSnapshotAndRestartsApproval(t *testin
 	require.InDelta(t, 100000, final.RevisionSnapshots[0].PreviousTotalEstimatedAmount, 0.01)
 	require.NotNil(t, final.RevisionSnapshots[0].NewTotalEstimatedAmount)
 	require.InDelta(t, 200000, *final.RevisionSnapshots[0].NewTotalEstimatedAmount, 0.01)
+	// Detail preload is ordered by revision, time, then id. This proves that
+	// both the original and reapproval rounds remain renderable as one timeline.
+	require.Len(t, final.ApprovalEvents, 6)
+	require.Equal(t, []string{
+		models.PRApprovalEventTypeApprovalAction,
+		models.PRApprovalEventTypeApprovalAction,
+		models.PRApprovalEventTypeRequesterRevisionOpened,
+		models.PRApprovalEventTypeRequesterRevisionSubmitted,
+		models.PRApprovalEventTypeApprovalAction,
+		models.PRApprovalEventTypeApprovalAction,
+	}, []string{
+		final.ApprovalEvents[0].EventType,
+		final.ApprovalEvents[1].EventType,
+		final.ApprovalEvents[2].EventType,
+		final.ApprovalEvents[3].EventType,
+		final.ApprovalEvents[4].EventType,
+		final.ApprovalEvents[5].EventType,
+	})
+	require.Equal(t, []int{1, 1, 1, 2, 2, 2}, []int{
+		final.ApprovalEvents[0].ApprovalRevision,
+		final.ApprovalEvents[1].ApprovalRevision,
+		final.ApprovalEvents[2].ApprovalRevision,
+		final.ApprovalEvents[3].ApprovalRevision,
+		final.ApprovalEvents[4].ApprovalRevision,
+		final.ApprovalEvents[5].ApprovalRevision,
+	})
+	require.Equal(t, []string{
+		models.PRApprovalStageFinanceStaff,
+		models.PRApprovalStageFinanceManager,
+		models.PRApprovalStageFinalized,
+		models.PRApprovalStageFinanceStaff,
+		models.PRApprovalStageFinanceStaff,
+		models.PRApprovalStageFinanceManager,
+	}, []string{
+		final.ApprovalEvents[0].Stage,
+		final.ApprovalEvents[1].Stage,
+		final.ApprovalEvents[2].Stage,
+		final.ApprovalEvents[3].Stage,
+		final.ApprovalEvents[4].Stage,
+		final.ApprovalEvents[5].Stage,
+	})
 }
 
 func TestRequesterRevisionAllowsItemAddRemoveWithoutNewDocument(t *testing.T) {
@@ -1821,4 +1934,128 @@ func TestDirectorReviewFinalizesEscalatedPurchaseRequest(t *testing.T) {
 	require.Len(t, updated.Items, 1)
 	require.Equal(t, models.PRItemDecisionApproved, updated.Items[0].DirectorDecision)
 	require.Equal(t, models.PRItemDecisionApproved, updated.Items[0].ApprovalStatus)
+}
+
+func TestAdditionalDocumentsSnapshotsLegacyApprovalRoundBeforeReset(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "legacy-history-requester", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "legacy-history-staff", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "legacy-history-manager", models.RoleFinanceManager)
+	product := seedPurchaseRequestTestProduct(t, db, "LEGACY-HISTORY")
+	staffReviewedAt := time.Now().Add(-2 * time.Hour).UTC()
+	managerReviewedAt := time.Now().Add(-time.Hour).UTC()
+
+	// This intentionally represents a PR approved before approval_events was
+	// introduced: only the historical mutable header columns exist.
+	legacy := models.PurchaseRequest{
+		PRNumber:                  "PR-LEGACY-HISTORY",
+		RequesterID:               requester.ID,
+		Department:                "Operations",
+		Status:                    models.PRStatusApproved,
+		CurrentApprovalStage:      models.PRApprovalStageFinalized,
+		ApprovalRevision:          1,
+		TotalEstimatedAmount:      100000,
+		ApprovedBy:                &financeManager.ID,
+		ApprovedAt:                &managerReviewedAt,
+		FinanceStaffApprovedBy:    &financeStaff.ID,
+		FinanceStaffApprovedAt:    &staffReviewedAt,
+		FinanceStaffReviewNotes:   "Approval awal Finance Staff",
+		FinanceManagerApprovedBy:  &financeManager.ID,
+		FinanceManagerApprovedAt:  &managerReviewedAt,
+		FinanceManagerReviewNotes: "Approval awal Finance Manager",
+		Items: []models.PurchaseRequestItem{
+			{
+				ProductID:              &product.ID,
+				ItemName:               product.Name,
+				Quantity:               1,
+				EstimatedPrice:         100000,
+				TotalEstimatedPrice:    100000,
+				ApprovalStatus:         models.PRItemDecisionApproved,
+				FinanceStaffDecision:   models.PRItemDecisionApproved,
+				FinanceManagerDecision: models.PRItemDecisionApproved,
+				DirectorDecision:       models.PRItemDecisionPending,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&legacy).Error)
+
+	document, err := service.UploadPurchaseRequestDocument(
+		legacy.ID,
+		models.PurchaseRequestDocumentSupporting,
+		"dokumen-tambahan.pdf",
+		"/uploads/purchase-requests/dokumen-tambahan.pdf",
+		1024,
+		"application/pdf",
+		requester.ID,
+		requester.Role,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2, document.ApprovalRevision)
+
+	reapprovalStarted, err := service.SubmitAdditionalDocumentsForApproval(legacy.ID, requester.ID, requester.Role, 1)
+	require.NoError(t, err)
+	require.True(t, reapprovalStarted)
+
+	reopened, err := service.GetPurchaseRequestByID(legacy.ID, requester.ID, requester.Role)
+	require.NoError(t, err)
+	require.Nil(t, reopened.FinanceStaffApprovedBy)
+	require.Nil(t, reopened.FinanceManagerApprovedBy)
+	require.Len(t, reopened.ApprovalEvents, 3)
+	require.Equal(t, models.PRApprovalEventSourceStateSnapshot, reopened.ApprovalEvents[0].Source)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, reopened.ApprovalEvents[0].Stage)
+	require.Equal(t, financeStaff.ID, *reopened.ApprovalEvents[0].ActorID)
+	require.Equal(t, "Approval awal Finance Staff", reopened.ApprovalEvents[0].Notes)
+	require.WithinDuration(t, staffReviewedAt, reopened.ApprovalEvents[0].OccurredAt, time.Second)
+	require.Equal(t, models.PRApprovalEventSourceStateSnapshot, reopened.ApprovalEvents[1].Source)
+	require.Equal(t, models.PRApprovalStageFinanceManager, reopened.ApprovalEvents[1].Stage)
+	require.Equal(t, financeManager.ID, *reopened.ApprovalEvents[1].ActorID)
+	require.Equal(t, "Approval awal Finance Manager", reopened.ApprovalEvents[1].Notes)
+	require.Equal(t, models.PRApprovalEventTypeReapprovalStarted, reopened.ApprovalEvents[2].EventType)
+	require.Equal(t, models.PRApprovalEventActionReopened, reopened.ApprovalEvents[2].Action)
+	require.Equal(t, 2, reopened.ApprovalEvents[2].ApprovalRevision)
+	require.Len(t, reopened.RevisionSnapshots, 1)
+	require.Equal(t, models.PRReapprovalReasonAdditionalDocuments, reopened.RevisionSnapshots[0].ReapprovalReason)
+	require.Equal(t, "Approval awal Finance Staff", reopened.RevisionSnapshots[0].FinanceStaffReviewNotes)
+	require.Equal(t, "Approval awal Finance Manager", reopened.RevisionSnapshots[0].FinanceManagerReviewNotes)
+}
+
+func TestApproveAndRejectPurchaseRequestRecordOneEventPerStage(t *testing.T) {
+	db := newPurchaseRequestTestDB(t)
+	repo := repositories.NewPurchaseRequestRepository(db)
+	service := NewPurchaseRequestService(db, repo, nil)
+
+	requester := seedPurchaseRequestTestUser(t, db, "approval-event-requester", models.RoleEmployee)
+	financeStaff := seedPurchaseRequestTestUser(t, db, "approval-event-staff", models.RoleFinanceStaff)
+	financeManager := seedPurchaseRequestTestUser(t, db, "approval-event-manager", models.RoleFinanceManager)
+	product := seedPurchaseRequestTestProduct(t, db, "APPROVAL-EVENT")
+
+	pr, err := service.CreatePurchaseRequest(models.PurchaseRequestCreatePayload{
+		Department: "Operations",
+		Items: []models.PurchaseRequestItemPayload{
+			{ProductID: product.ID, Quantity: 1, EstimatedPrice: 100000},
+		},
+	}, requester.ID, requester.Role)
+	require.NoError(t, err)
+
+	_, err = service.ApprovePurchaseRequest(pr.ID, financeStaff.ID, financeStaff.Role)
+	require.NoError(t, err)
+	_, err = service.RejectPurchaseRequest(pr.ID, financeManager.ID, financeManager.Role, "Anggaran belum tersedia")
+	require.NoError(t, err)
+
+	updated, err := service.GetPurchaseRequestByID(pr.ID, financeManager.ID, financeManager.Role)
+	require.NoError(t, err)
+	require.Equal(t, models.PRStatusRejected, updated.Status)
+	require.Len(t, updated.ApprovalEvents, 2)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, updated.ApprovalEvents[0].EventType)
+	require.Equal(t, models.PRApprovalStageFinanceStaff, updated.ApprovalEvents[0].Stage)
+	require.Equal(t, models.PRApprovalEventActionApproved, updated.ApprovalEvents[0].Action)
+	require.Equal(t, financeStaff.ID, *updated.ApprovalEvents[0].ActorID)
+	require.Equal(t, models.PRApprovalEventTypeApprovalAction, updated.ApprovalEvents[1].EventType)
+	require.Equal(t, models.PRApprovalStageFinanceManager, updated.ApprovalEvents[1].Stage)
+	require.Equal(t, models.PRApprovalEventActionRejected, updated.ApprovalEvents[1].Action)
+	require.Equal(t, "Anggaran belum tersedia", updated.ApprovalEvents[1].Notes)
+	require.Equal(t, financeManager.ID, *updated.ApprovalEvents[1].ActorID)
 }

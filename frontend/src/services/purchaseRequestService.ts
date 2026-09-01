@@ -135,6 +135,27 @@ export interface PurchaseRequestRealizationReview {
   actor?: User;
 }
 
+/** Immutable, append-only audit entry for a Purchase Request approval round. */
+export interface PurchaseRequestApprovalEvent {
+  id: number;
+  purchase_request_id: number;
+  approval_revision: number;
+  event_type: string;
+  stage: string;
+  action: string;
+  notes: string;
+  reapproval_reason: string;
+  status_before: string;
+  status_after: string;
+  approval_stage_before: string;
+  approval_stage_after: string;
+  source: string;
+  actor_id?: number | null;
+  occurred_at: string;
+  created_at?: string;
+  actor?: User;
+}
+
 export interface PurchaseRequestRevisionSnapshot {
   id: number;
   purchase_request_id: number;
@@ -156,13 +177,22 @@ export interface PurchaseRequestRevisionSnapshot {
   approved_at?: string | null;
   finance_staff_approved_by?: number | null;
   finance_staff_approved_at?: string | null;
+  finance_staff_review_notes?: string;
   finance_manager_approved_by?: number | null;
   finance_manager_approved_at?: string | null;
+  finance_manager_review_notes?: string;
   director_approved_by?: number | null;
   director_approved_at?: string | null;
+  rejection_reason?: string;
+  created_at?: string;
+  updated_at?: string;
   uploader?: User;
   opener?: User;
   submitter?: User;
+  approver?: User;
+  finance_staff_approver?: User;
+  finance_manager_approver?: User;
+  director_approver?: User;
 }
 
 export interface PurchaseRequest {
@@ -258,6 +288,7 @@ export interface PurchaseRequest {
   vendor_invoice_submitter?: User;
   vendor_invoice_reviewer?: User;
   realization_reviews?: PurchaseRequestRealizationReview[];
+  approval_events?: PurchaseRequestApprovalEvent[];
   realization_requester?: User;
   realization_submitter?: User;
   realization_reviewer?: User;

@@ -70,9 +70,24 @@ func (r *purchaseRequestRepository) withDefaultPreloads(query *gorm.DB) *gorm.DB
 	return query
 }
 
+// withApprovalEventPreloads is intentionally used only for the detail endpoint.
+// Approval events are append-only audit records and can grow over time, so they
+// should not be loaded for the purchase-request list page.
+func (r *purchaseRequestRepository) withApprovalEventPreloads(query *gorm.DB) *gorm.DB {
+	return query.
+		Preload("RevisionSnapshots.Approver").
+		Preload("RevisionSnapshots.FinanceStaffApprover").
+		Preload("RevisionSnapshots.FinanceManagerApprover").
+		Preload("RevisionSnapshots.DirectorApprover").
+		Preload("ApprovalEvents", func(db *gorm.DB) *gorm.DB {
+			return db.Order("approval_revision asc").Order("occurred_at asc").Order("id asc")
+		}).
+		Preload("ApprovalEvents.Actor")
+}
+
 func (r *purchaseRequestRepository) GetByID(id uint) (*models.PurchaseRequest, error) {
 	var pr models.PurchaseRequest
-	err := r.withDefaultPreloads(r.db).First(&pr, id).Error
+	err := r.withApprovalEventPreloads(r.withDefaultPreloads(r.db)).First(&pr, id).Error
 	return &pr, err
 }
 
@@ -135,7 +150,12 @@ func (r *purchaseRequestRepository) GetAll(department string, status string, req
 }
 
 func (r *purchaseRequestRepository) Update(pr *models.PurchaseRequest) error {
-	return r.db.Session(&gorm.Session{FullSaveAssociations: true}).Save(pr).Error
+	// These relations are append-only audit trails. Mutable PR updates (for
+	// example project, invoice terms, or cancellation) must never rewrite them
+	// merely because GetByID preloaded the detail response.
+	return r.db.Omit("ApprovalEvents", "RevisionSnapshots", "RealizationReviews").
+		Session(&gorm.Session{FullSaveAssociations: true}).
+		Save(pr).Error
 }
 
 func (r *purchaseRequestRepository) Delete(id uint) error {

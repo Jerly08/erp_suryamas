@@ -43,6 +43,8 @@ func newDocumentUploadTestDB(t *testing.T) *gorm.DB {
 		&models.PurchaseRequestItem{},
 		&models.PurchaseRequestDocument{},
 		&models.PurchaseRequestRevisionSnapshot{},
+		&models.PurchaseRequestApprovalEvent{},
+		&models.PurchaseRequestRealizationReview{},
 		&models.PayrollRun{},
 		&models.PayrollItem{},
 		&models.PayrollDocument{},

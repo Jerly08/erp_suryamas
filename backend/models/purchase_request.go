@@ -78,12 +78,16 @@ type PurchaseRequest struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relations
-	Requester              User                               `json:"requester" gorm:"foreignKey:RequesterID"`
-	Project                *Project                           `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
-	Vendor                 *Contact                           `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
-	Items                  []PurchaseRequestItem              `json:"items" gorm:"foreignKey:PurchaseRequestID"`
-	Documents              []PurchaseRequestDocument          `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
-	RevisionSnapshots      []PurchaseRequestRevisionSnapshot  `json:"revision_snapshots" gorm:"foreignKey:PurchaseRequestID"`
+	Requester         User                              `json:"requester" gorm:"foreignKey:RequesterID"`
+	Project           *Project                          `json:"project,omitempty" gorm:"foreignKey:ProjectID"`
+	Vendor            *Contact                          `json:"vendor,omitempty" gorm:"foreignKey:VendorID"`
+	Items             []PurchaseRequestItem             `json:"items" gorm:"foreignKey:PurchaseRequestID"`
+	Documents         []PurchaseRequestDocument         `json:"documents" gorm:"foreignKey:PurchaseRequestID"`
+	RevisionSnapshots []PurchaseRequestRevisionSnapshot `json:"revision_snapshots" gorm:"foreignKey:PurchaseRequestID"`
+	// ApprovalEvents is an append-only audit trail for every approval round.
+	// It is intentionally separate from the mutable current approval columns
+	// above, which are reset when a PR is routed for approval again.
+	ApprovalEvents         []PurchaseRequestApprovalEvent     `json:"approval_events" gorm:"foreignKey:PurchaseRequestID"`
 	RealizationReviews     []PurchaseRequestRealizationReview `json:"realization_reviews" gorm:"foreignKey:PurchaseRequestID"`
 	Approver               *User                              `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
 	FinanceStaffApprover   *User                              `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
@@ -170,15 +174,48 @@ type PurchaseRequestRevisionSnapshot struct {
 	FinanceStaffApprovedAt       *time.Time     `json:"finance_staff_approved_at"`
 	FinanceManagerApprovedBy     *uint          `json:"finance_manager_approved_by" gorm:"index"`
 	FinanceManagerApprovedAt     *time.Time     `json:"finance_manager_approved_at"`
+	FinanceStaffReviewNotes      string         `json:"finance_staff_review_notes" gorm:"type:text"`
+	FinanceManagerReviewNotes    string         `json:"finance_manager_review_notes" gorm:"type:text"`
+	RejectionReason              string         `json:"rejection_reason" gorm:"type:text"`
 	DirectorApprovedBy           *uint          `json:"director_approved_by" gorm:"index"`
 	DirectorApprovedAt           *time.Time     `json:"director_approved_at"`
 	CreatedAt                    time.Time      `json:"created_at"`
 	UpdatedAt                    time.Time      `json:"updated_at"`
 	DeletedAt                    gorm.DeletedAt `json:"-" gorm:"index"`
 
+	PurchaseRequest        PurchaseRequest `json:"-" gorm:"foreignKey:PurchaseRequestID"`
+	Opener                 User            `json:"opener" gorm:"foreignKey:OpenedBy"`
+	Submitter              *User           `json:"submitter,omitempty" gorm:"foreignKey:SubmittedBy"`
+	Approver               *User           `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	FinanceStaffApprover   *User           `json:"finance_staff_approver,omitempty" gorm:"foreignKey:FinanceStaffApprovedBy"`
+	FinanceManagerApprover *User           `json:"finance_manager_approver,omitempty" gorm:"foreignKey:FinanceManagerApprovedBy"`
+	DirectorApprover       *User           `json:"director_approver,omitempty" gorm:"foreignKey:DirectorApprovedBy"`
+}
+
+// PurchaseRequestApprovalEvent is the immutable, append-only approval audit
+// trail for a PR. Current approval columns on PurchaseRequest intentionally
+// remain mutable to drive the active workflow; this table preserves every
+// reviewer action and every reroute that starts a new approval round.
+type PurchaseRequestApprovalEvent struct {
+	ID                  uint      `json:"id" gorm:"primaryKey"`
+	PurchaseRequestID   uint      `json:"purchase_request_id" gorm:"not null;index"`
+	ApprovalRevision    int       `json:"approval_revision" gorm:"not null;default:1;index"`
+	EventType           string    `json:"event_type" gorm:"not null;size:50"`
+	Stage               string    `json:"stage" gorm:"size:40"`
+	Action              string    `json:"action" gorm:"not null;size:50"`
+	Notes               string    `json:"notes" gorm:"type:text"`
+	ReapprovalReason    string    `json:"reapproval_reason" gorm:"size:50"`
+	ActorID             *uint     `json:"actor_id,omitempty" gorm:"index"`
+	StatusBefore        string    `json:"status_before" gorm:"size:30"`
+	StatusAfter         string    `json:"status_after" gorm:"size:30"`
+	ApprovalStageBefore string    `json:"approval_stage_before" gorm:"size:40"`
+	ApprovalStageAfter  string    `json:"approval_stage_after" gorm:"size:40"`
+	OccurredAt          time.Time `json:"occurred_at" gorm:"not null;index"`
+	Source              string    `json:"source" gorm:"not null;size:40;default:'LIVE_ACTION'"`
+	CreatedAt           time.Time `json:"created_at"`
+
 	PurchaseRequest PurchaseRequest `json:"-" gorm:"foreignKey:PurchaseRequestID"`
-	Opener          User            `json:"opener" gorm:"foreignKey:OpenedBy"`
-	Submitter       *User           `json:"submitter,omitempty" gorm:"foreignKey:SubmittedBy"`
+	Actor           *User           `json:"actor,omitempty" gorm:"foreignKey:ActorID"`
 }
 
 // PurchaseRequestRealizationReview records every post-approval billing/realisasi
@@ -239,6 +276,25 @@ const (
 	PRReapprovalReasonAdditionalDocuments = "ADDITIONAL_DOCUMENTS"
 	PRReapprovalReasonInvoiceRevision     = "INVOICE_REVISION"
 	PRReapprovalReasonRequesterRevision   = "REQUESTER_REVISION"
+)
+
+// Purchase request approval event constants. These values are deliberately
+// explicit because they are returned to the client as an audit API contract.
+const (
+	PRApprovalEventTypeApprovalAction             = "APPROVAL_ACTION"
+	PRApprovalEventTypeReapprovalStarted          = "REAPPROVAL_STARTED"
+	PRApprovalEventTypeRequesterRevisionOpened    = "REQUESTER_REVISION_OPENED"
+	PRApprovalEventTypeRequesterRevisionSubmitted = "REQUESTER_REVISION_SUBMITTED"
+
+	PRApprovalEventActionApproved          = "APPROVED"
+	PRApprovalEventActionRejected          = "REJECTED"
+	PRApprovalEventActionPartiallyApproved = "PARTIALLY_APPROVED"
+	PRApprovalEventActionReopened          = "REOPENED"
+	PRApprovalEventActionOpened            = "OPENED"
+	PRApprovalEventActionSubmitted         = "SUBMITTED"
+
+	PRApprovalEventSourceLiveAction    = "LIVE_ACTION"
+	PRApprovalEventSourceStateSnapshot = "ACTIVE_STATE_SNAPSHOT"
 )
 
 // Purchase request vendor invoice status constants

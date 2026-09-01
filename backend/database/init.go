@@ -123,6 +123,7 @@ func RunMigrations(db *gorm.DB) {
 		&models.ProductUnit{},
 		&models.Product{},
 		&models.Inventory{},
+		&models.Project{},
 
 		// Contact models
 		&models.Contact{},
@@ -143,6 +144,14 @@ func RunMigrations(db *gorm.DB) {
 		&models.PurchaseCOARevision{},
 		&models.PurchasePrePostingRevision{},
 		&models.PurchasePrePostingRevisionChange{},
+
+		// Purchase Requests
+		&models.PurchaseRequest{},
+		&models.PurchaseRequestItem{},
+		&models.PurchaseRequestDocument{},
+		&models.PurchaseRequestRevisionSnapshot{},
+		&models.PurchaseRequestApprovalEvent{},
+		&models.PurchaseRequestRealizationReview{},
 
 		// Payment & Cash Bank models
 		&models.Payment{},

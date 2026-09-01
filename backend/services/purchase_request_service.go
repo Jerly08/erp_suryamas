@@ -383,11 +383,40 @@ func (s *purchaseRequestService) OpenPurchaseRequestRequesterRevision(id uint, u
 			return fmt.Errorf("only the active purchase request reviewer can open requester revision")
 		}
 
-		snapshot, err := buildPurchaseRequestRevisionSnapshot(&current, userID, reason, now)
+		snapshot, err := buildPurchaseRequestRevisionSnapshot(
+			&current,
+			userID,
+			models.PRReapprovalReasonRequesterRevision,
+			reason,
+			now,
+		)
 		if err != nil {
 			return err
 		}
 		if err := tx.Create(snapshot).Error; err != nil {
+			return err
+		}
+		if err := s.snapshotPurchaseRequestApprovalEvents(tx, &current); err != nil {
+			return err
+		}
+
+		actorID := userID
+		if err := s.createPurchaseRequestApprovalEvent(tx, &models.PurchaseRequestApprovalEvent{
+			PurchaseRequestID:   current.ID,
+			ApprovalRevision:    normalizedPurchaseRequestApprovalRevision(current.ApprovalRevision),
+			EventType:           models.PRApprovalEventTypeRequesterRevisionOpened,
+			Stage:               current.CurrentApprovalStage,
+			Action:              models.PRApprovalEventActionOpened,
+			Notes:               reason,
+			ReapprovalReason:    models.PRReapprovalReasonRequesterRevision,
+			ActorID:             &actorID,
+			StatusBefore:        current.Status,
+			StatusAfter:         models.PRStatusAwaitingRevision,
+			ApprovalStageBefore: current.CurrentApprovalStage,
+			ApprovalStageAfter:  models.PRApprovalStageFinalized,
+			OccurredAt:          now,
+			Source:              models.PRApprovalEventSourceLiveAction,
+		}); err != nil {
 			return err
 		}
 
@@ -441,7 +470,7 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 	}
 
 	now := time.Now()
-	previousRevision := pr.ApprovalRevision
+	previousRevision := normalizedPurchaseRequestApprovalRevision(pr.ApprovalRevision)
 	nextRevision := previousRevision + 1
 	if nextRevision < 2 {
 		nextRevision = 2
@@ -455,6 +484,12 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 		}
 		if current.Status != models.PRStatusAwaitingRevision || current.ReapprovalReason != models.PRReapprovalReasonRequesterRevision {
 			return fmt.Errorf("purchase request %s is not waiting for requester revision", current.PRNumber)
+		}
+		// A requester revision keeps the old approver columns until this point.
+		// Capture them immediately before item/approval state is reset so a
+		// partially migrated or legacy revision cannot lose its prior round.
+		if err := s.snapshotPurchaseRequestApprovalEvents(tx, &current); err != nil {
+			return err
 		}
 
 		itemPlans, retainedItemIDs, err := buildPurchaseRequestRequesterRevisionPlan(payload.Items, current.Items)
@@ -576,6 +611,26 @@ func (s *purchaseRequestService) SubmitPurchaseRequestRequesterRevision(id uint,
 			return err
 		}
 
+		actorID := userID
+		if err := s.createPurchaseRequestApprovalEvent(tx, &models.PurchaseRequestApprovalEvent{
+			PurchaseRequestID:   current.ID,
+			ApprovalRevision:    nextRevision,
+			EventType:           models.PRApprovalEventTypeRequesterRevisionSubmitted,
+			Stage:               models.PRApprovalStageFinanceStaff,
+			Action:              models.PRApprovalEventActionSubmitted,
+			Notes:               revisionNotes,
+			ReapprovalReason:    models.PRReapprovalReasonRequesterRevision,
+			ActorID:             &actorID,
+			StatusBefore:        current.Status,
+			StatusAfter:         models.PRStatusPendingApproval,
+			ApprovalStageBefore: current.CurrentApprovalStage,
+			ApprovalStageAfter:  models.PRApprovalStageFinanceStaff,
+			OccurredAt:          now,
+			Source:              models.PRApprovalEventSourceLiveAction,
+		}); err != nil {
+			return err
+		}
+
 		return tx.Model(&models.PurchaseRequest{}).
 			Where("id = ?", current.ID).
 			Updates(map[string]interface{}{
@@ -665,9 +720,36 @@ func (s *purchaseRequestService) SubmitPurchaseRequestInvoiceRevision(id uint, u
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var current models.PurchaseRequest
-		if err := tx.Preload("Items").First(&current, pr.ID).Error; err != nil {
+		if err := tx.Preload("Items.Product").First(&current, pr.ID).Error; err != nil {
 			return err
 		}
+
+		// Preserve the complete approved round before this invoice revision
+		// resets mutable approval columns and item decisions.
+		snapshot, err := buildPurchaseRequestRevisionSnapshot(
+			&current,
+			userID,
+			models.PRReapprovalReasonInvoiceRevision,
+			revisionNotes,
+			now,
+		)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(snapshot).Error; err != nil {
+			return err
+		}
+		if err := s.snapshotPurchaseRequestApprovalEvents(tx, &current); err != nil {
+			return err
+		}
+		rerouteEvent := buildPurchaseRequestRerouteEvent(
+			&current,
+			userID,
+			nextRevision,
+			models.PRReapprovalReasonInvoiceRevision,
+			revisionNotes,
+			now,
+		)
 
 		var totalEstimatedAmount float64
 		for index := range current.Items {
@@ -722,8 +804,13 @@ func (s *purchaseRequestService) SubmitPurchaseRequestInvoiceRevision(id uint, u
 		if err := tx.Create(&documents).Error; err != nil {
 			return err
 		}
+		if err := s.createPurchaseRequestApprovalEvent(tx, rerouteEvent); err != nil {
+			return err
+		}
 
-		return tx.Session(&gorm.Session{FullSaveAssociations: true}).Save(&current).Error
+		return tx.Omit("ApprovalEvents", "RevisionSnapshots", "RealizationReviews").
+			Session(&gorm.Session{FullSaveAssociations: true}).
+			Save(&current).Error
 	})
 	if err != nil {
 		return nil, err
@@ -927,6 +1014,8 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 	if err != nil {
 		return "", err
 	}
+	statusBefore := pr.Status
+	approvalStageBefore := pr.CurrentApprovalStage
 
 	decisionByItemID, err := buildPurchaseRequestDecisionMap(payload.Items)
 	if err != nil {
@@ -971,7 +1060,19 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.RealizationStatus = models.PRRealizationStatusNotRequired
 		}
 
-		if err := s.repo.Update(pr); err != nil {
+		action := purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+			return item.FinanceStaffDecision
+		})
+		if err := s.savePurchaseRequestReviewWithApprovalEvent(pr, buildPurchaseRequestApprovalActionEvent(
+			pr,
+			reviewerID,
+			stage,
+			action,
+			reviewNotes,
+			statusBefore,
+			approvalStageBefore,
+			now,
+		)); err != nil {
 			return "", err
 		}
 
@@ -1016,7 +1117,19 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 			pr.ApprovedAt = nil
 			pr.RejectionReason = ""
 
-			if err := s.repo.Update(pr); err != nil {
+			action := purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+				return item.FinanceManagerDecision
+			})
+			if err := s.savePurchaseRequestReviewWithApprovalEvent(pr, buildPurchaseRequestApprovalActionEvent(
+				pr,
+				reviewerID,
+				stage,
+				action,
+				reviewNotes,
+				statusBefore,
+				approvalStageBefore,
+				now,
+			)); err != nil {
 				return "", err
 			}
 
@@ -1046,7 +1159,19 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 
 		pr.TotalEstimatedAmount = calculateFinalPurchaseRequestTotal(pr.Items)
 
-		if err := s.repo.Update(pr); err != nil {
+		action := purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+			return item.FinanceManagerDecision
+		})
+		if err := s.savePurchaseRequestReviewWithApprovalEvent(pr, buildPurchaseRequestApprovalActionEvent(
+			pr,
+			reviewerID,
+			stage,
+			action,
+			reviewNotes,
+			statusBefore,
+			approvalStageBefore,
+			now,
+		)); err != nil {
 			return "", err
 		}
 
@@ -1110,7 +1235,19 @@ func (s *purchaseRequestService) ReviewPurchaseRequest(id uint, reviewerID uint,
 
 		pr.TotalEstimatedAmount = calculateFinalPurchaseRequestTotal(pr.Items)
 
-		if err := s.repo.Update(pr); err != nil {
+		action := purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+			return item.DirectorDecision
+		})
+		if err := s.savePurchaseRequestReviewWithApprovalEvent(pr, buildPurchaseRequestApprovalActionEvent(
+			pr,
+			reviewerID,
+			stage,
+			action,
+			reviewNotes,
+			statusBefore,
+			approvalStageBefore,
+			now,
+		)); err != nil {
 			return "", err
 		}
 
@@ -1503,6 +1640,8 @@ func (s *purchaseRequestService) ReviewPurchaseRequestRealization(id uint, userI
 // are added after Finance Staff or Finance Manager has already reviewed it.
 // The existing item decisions are retained as the reviewers' starting point,
 // while all approval identities/timestamps are reset for a fresh sign-off.
+// Before that reset, the active approval round is copied to immutable audit
+// records in the same database transaction.
 func (s *purchaseRequestService) SubmitAdditionalDocumentsForApproval(purchaseRequestID uint, userID uint, userRole string, documentCount int) (bool, error) {
 	if documentCount < 1 {
 		return false, fmt.Errorf("at least one supporting document is required")
@@ -1528,37 +1667,91 @@ func (s *purchaseRequestService) SubmitAdditionalDocumentsForApproval(purchaseRe
 		return false, fmt.Errorf("additional documents have already been submitted and are awaiting approval")
 	}
 
-	reapprovalStarted := purchaseRequestApprovalHasProgressed(pr)
-	if pr.ApprovalRevision < 1 {
-		pr.ApprovalRevision = 1
-	}
-	if reapprovalStarted {
-		pr.ApprovalRevision++
-		pr.Status = models.PRStatusPendingApproval
-		pr.CurrentApprovalStage = models.PRApprovalStageFinanceStaff
-		pr.ApprovedBy = nil
-		pr.ApprovedAt = nil
-		pr.Approver = nil
-		pr.FinanceStaffApprovedBy = nil
-		pr.FinanceStaffApprovedAt = nil
-		pr.FinanceStaffReviewNotes = ""
-		pr.FinanceStaffApprover = nil
-		pr.FinanceManagerApprovedBy = nil
-		pr.FinanceManagerApprovedAt = nil
-		pr.FinanceManagerReviewNotes = ""
-		pr.FinanceManagerApprover = nil
-		pr.DirectorApprovedBy = nil
-		pr.DirectorApprovedAt = nil
-		pr.DirectorApprover = nil
-		pr.RejectionReason = ""
-	}
-	pr.ReapprovalReason = models.PRReapprovalReasonAdditionalDocuments
+	reapprovalStarted := false
+	now := time.Now()
+	reapprovalNotes := fmt.Sprintf("%d dokumen pendukung tambahan diajukan untuk review ulang", documentCount)
 
-	if err := s.repo.Update(pr); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		var current models.PurchaseRequest
+		if err := tx.Preload("Items").First(&current, purchaseRequestID).Error; err != nil {
+			return err
+		}
+		if current.Status == models.PRStatusCompleted || current.Status == models.PRStatusRejected || current.Status == models.PRStatusCancelled || current.Status == models.PRStatusAwaitingRevision {
+			return fmt.Errorf("supporting documents cannot be submitted for purchase request in current status: %s", current.Status)
+		}
+		if current.Status == models.PRStatusPendingApproval && current.ReapprovalReason == models.PRReapprovalReasonAdditionalDocuments {
+			return fmt.Errorf("additional documents have already been submitted and are awaiting approval")
+		}
+
+		current.ApprovalRevision = normalizedPurchaseRequestApprovalRevision(current.ApprovalRevision)
+		reapprovalStarted = purchaseRequestApprovalHasProgressed(&current)
+		if !reapprovalStarted {
+			return tx.Model(&models.PurchaseRequest{}).
+				Where("id = ?", current.ID).
+				Updates(map[string]interface{}{
+					"approval_revision": current.ApprovalRevision,
+					"reapproval_reason": models.PRReapprovalReasonAdditionalDocuments,
+				}).Error
+		}
+
+		nextRevision := current.ApprovalRevision + 1
+		snapshot, err := buildPurchaseRequestRevisionSnapshot(
+			&current,
+			userID,
+			models.PRReapprovalReasonAdditionalDocuments,
+			reapprovalNotes,
+			now,
+		)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(snapshot).Error; err != nil {
+			return err
+		}
+		if err := s.snapshotPurchaseRequestApprovalEvents(tx, &current); err != nil {
+			return err
+		}
+		rerouteEvent := buildPurchaseRequestRerouteEvent(
+			&current,
+			userID,
+			nextRevision,
+			models.PRReapprovalReasonAdditionalDocuments,
+			reapprovalNotes,
+			now,
+		)
+
+		if err := tx.Model(&models.PurchaseRequest{}).
+			Where("id = ?", current.ID).
+			Updates(map[string]interface{}{
+				"approval_revision":            nextRevision,
+				"status":                       models.PRStatusPendingApproval,
+				"current_approval_stage":       models.PRApprovalStageFinanceStaff,
+				"reapproval_reason":            models.PRReapprovalReasonAdditionalDocuments,
+				"approved_by":                  nil,
+				"approved_at":                  nil,
+				"finance_staff_approved_by":    nil,
+				"finance_staff_approved_at":    nil,
+				"finance_staff_review_notes":   "",
+				"finance_manager_approved_by":  nil,
+				"finance_manager_approved_at":  nil,
+				"finance_manager_review_notes": "",
+				"director_approved_by":         nil,
+				"director_approved_at":         nil,
+				"rejection_reason":             "",
+			}).Error; err != nil {
+			return err
+		}
+
+		return s.createPurchaseRequestApprovalEvent(tx, rerouteEvent)
+	}); err != nil {
 		return false, err
 	}
 
-	s.notifyAdditionalPurchaseRequestDocuments(pr, documentCount, reapprovalStarted)
+	updated, err := s.repo.GetByID(pr.ID)
+	if err != nil {
+		return false, err
+	}
+	s.notifyAdditionalPurchaseRequestDocuments(updated, documentCount, reapprovalStarted)
 	return reapprovalStarted, nil
 }
 
@@ -1861,7 +2054,10 @@ func buildPurchaseRequestRevisionItemSnapshot(items []models.PurchaseRequestItem
 	return string(itemSnapshot), nil
 }
 
-func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy uint, reason string, openedAt time.Time) (*models.PurchaseRequestRevisionSnapshot, error) {
+// buildPurchaseRequestRevisionSnapshot preserves the full state of the active
+// approval round before a PR is routed again. It is used for every reroute
+// reason, not only requester-originated revisions.
+func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy uint, reapprovalReason string, reason string, openedAt time.Time) (*models.PurchaseRequestRevisionSnapshot, error) {
 	if pr == nil {
 		return nil, fmt.Errorf("purchase request is required")
 	}
@@ -1879,7 +2075,7 @@ func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy u
 	return &models.PurchaseRequestRevisionSnapshot{
 		PurchaseRequestID:            pr.ID,
 		RevisionNumber:               revisionNumber,
-		ReapprovalReason:             models.PRReapprovalReasonRequesterRevision,
+		ReapprovalReason:             reapprovalReason,
 		PreviousStatus:               pr.Status,
 		PreviousApprovalStage:        pr.CurrentApprovalStage,
 		PreviousTotalEstimatedAmount: pr.TotalEstimatedAmount,
@@ -1893,9 +2089,206 @@ func buildPurchaseRequestRevisionSnapshot(pr *models.PurchaseRequest, openedBy u
 		FinanceStaffApprovedAt:       pr.FinanceStaffApprovedAt,
 		FinanceManagerApprovedBy:     pr.FinanceManagerApprovedBy,
 		FinanceManagerApprovedAt:     pr.FinanceManagerApprovedAt,
+		FinanceStaffReviewNotes:      pr.FinanceStaffReviewNotes,
+		FinanceManagerReviewNotes:    pr.FinanceManagerReviewNotes,
+		RejectionReason:              pr.RejectionReason,
 		DirectorApprovedBy:           pr.DirectorApprovedBy,
 		DirectorApprovedAt:           pr.DirectorApprovedAt,
 	}, nil
+}
+
+func normalizedPurchaseRequestApprovalRevision(revision int) int {
+	if revision < 1 {
+		return 1
+	}
+	return revision
+}
+
+func purchaseRequestApprovalEventActionFromDecisions(items []models.PurchaseRequestItem, decisionFor func(models.PurchaseRequestItem) string) string {
+	approvedCount := 0
+	rejectedCount := 0
+	for _, item := range items {
+		switch decisionFor(item) {
+		case models.PRItemDecisionApproved:
+			approvedCount++
+		case models.PRItemDecisionRejected:
+			rejectedCount++
+		}
+	}
+
+	// Legacy records occasionally have approver columns but no per-item
+	// decision. The approver column is still reliable evidence of a completed
+	// review, so preserve it as approved rather than dropping the audit entry.
+	if rejectedCount == 0 {
+		return models.PRApprovalEventActionApproved
+	}
+	if approvedCount == 0 {
+		return models.PRApprovalEventActionRejected
+	}
+	return models.PRApprovalEventActionPartiallyApproved
+}
+
+func (s *purchaseRequestService) createPurchaseRequestApprovalEvent(tx *gorm.DB, event *models.PurchaseRequestApprovalEvent) error {
+	if event == nil {
+		return fmt.Errorf("purchase request approval event is required")
+	}
+	if event.PurchaseRequestID == 0 {
+		return fmt.Errorf("purchase request approval event requires purchase request id")
+	}
+	if event.ApprovalRevision < 1 {
+		event.ApprovalRevision = 1
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now()
+	}
+	if strings.TrimSpace(event.Source) == "" {
+		event.Source = models.PRApprovalEventSourceLiveAction
+	}
+	return tx.Create(event).Error
+}
+
+// snapshotPurchaseRequestApprovalEvents captures approvals which happened
+// before this audit table existed. It is called in the same transaction before
+// active approval columns are cleared by a reroute. Newer rounds already have
+// live events, so each stage is deduplicated by PR, revision, stage, and actor.
+func (s *purchaseRequestService) snapshotPurchaseRequestApprovalEvents(tx *gorm.DB, pr *models.PurchaseRequest) error {
+	if pr == nil {
+		return fmt.Errorf("purchase request is required")
+	}
+
+	type historicalApproval struct {
+		stage      string
+		actorID    *uint
+		occurredAt *time.Time
+		notes      string
+		action     string
+	}
+
+	historicalApprovals := []historicalApproval{
+		{
+			stage:      models.PRApprovalStageFinanceStaff,
+			actorID:    pr.FinanceStaffApprovedBy,
+			occurredAt: pr.FinanceStaffApprovedAt,
+			notes:      pr.FinanceStaffReviewNotes,
+			action: purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+				return item.FinanceStaffDecision
+			}),
+		},
+		{
+			stage:      models.PRApprovalStageFinanceManager,
+			actorID:    pr.FinanceManagerApprovedBy,
+			occurredAt: pr.FinanceManagerApprovedAt,
+			notes:      pr.FinanceManagerReviewNotes,
+			action: purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+				return item.FinanceManagerDecision
+			}),
+		},
+		{
+			stage:      models.PRApprovalStageDirector,
+			actorID:    pr.DirectorApprovedBy,
+			occurredAt: pr.DirectorApprovedAt,
+			notes:      pr.RejectionReason,
+			action: purchaseRequestApprovalEventActionFromDecisions(pr.Items, func(item models.PurchaseRequestItem) string {
+				return item.DirectorDecision
+			}),
+		},
+	}
+
+	revision := normalizedPurchaseRequestApprovalRevision(pr.ApprovalRevision)
+	for _, approval := range historicalApprovals {
+		if approval.actorID == nil || approval.occurredAt == nil || approval.occurredAt.IsZero() {
+			continue
+		}
+
+		var existingCount int64
+		if err := tx.Model(&models.PurchaseRequestApprovalEvent{}).
+			Where("purchase_request_id = ? AND approval_revision = ? AND event_type = ? AND stage = ? AND actor_id = ?",
+				pr.ID,
+				revision,
+				models.PRApprovalEventTypeApprovalAction,
+				approval.stage,
+				*approval.actorID,
+			).
+			Count(&existingCount).Error; err != nil {
+			return err
+		}
+		if existingCount > 0 {
+			continue
+		}
+
+		actorID := *approval.actorID
+		if err := s.createPurchaseRequestApprovalEvent(tx, &models.PurchaseRequestApprovalEvent{
+			PurchaseRequestID:  pr.ID,
+			ApprovalRevision:   revision,
+			EventType:          models.PRApprovalEventTypeApprovalAction,
+			Stage:              approval.stage,
+			Action:             approval.action,
+			Notes:              approval.notes,
+			ReapprovalReason:   pr.ReapprovalReason,
+			ActorID:            &actorID,
+			StatusAfter:        pr.Status,
+			ApprovalStageAfter: pr.CurrentApprovalStage,
+			OccurredAt:         *approval.occurredAt,
+			Source:             models.PRApprovalEventSourceStateSnapshot,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func buildPurchaseRequestRerouteEvent(pr *models.PurchaseRequest, actorID uint, nextRevision int, reapprovalReason string, notes string, now time.Time) *models.PurchaseRequestApprovalEvent {
+	actor := actorID
+	return &models.PurchaseRequestApprovalEvent{
+		PurchaseRequestID:   pr.ID,
+		ApprovalRevision:    normalizedPurchaseRequestApprovalRevision(nextRevision),
+		EventType:           models.PRApprovalEventTypeReapprovalStarted,
+		Stage:               models.PRApprovalStageFinanceStaff,
+		Action:              models.PRApprovalEventActionReopened,
+		Notes:               strings.TrimSpace(notes),
+		ReapprovalReason:    reapprovalReason,
+		ActorID:             &actor,
+		StatusBefore:        pr.Status,
+		StatusAfter:         models.PRStatusPendingApproval,
+		ApprovalStageBefore: pr.CurrentApprovalStage,
+		ApprovalStageAfter:  models.PRApprovalStageFinanceStaff,
+		OccurredAt:          now,
+		Source:              models.PRApprovalEventSourceLiveAction,
+	}
+}
+
+func buildPurchaseRequestApprovalActionEvent(pr *models.PurchaseRequest, reviewerID uint, stage string, action string, notes string, statusBefore string, approvalStageBefore string, now time.Time) *models.PurchaseRequestApprovalEvent {
+	actorID := reviewerID
+	return &models.PurchaseRequestApprovalEvent{
+		PurchaseRequestID:   pr.ID,
+		ApprovalRevision:    normalizedPurchaseRequestApprovalRevision(pr.ApprovalRevision),
+		EventType:           models.PRApprovalEventTypeApprovalAction,
+		Stage:               stage,
+		Action:              action,
+		Notes:               strings.TrimSpace(notes),
+		ReapprovalReason:    pr.ReapprovalReason,
+		ActorID:             &actorID,
+		StatusBefore:        statusBefore,
+		StatusAfter:         pr.Status,
+		ApprovalStageBefore: approvalStageBefore,
+		ApprovalStageAfter:  pr.CurrentApprovalStage,
+		OccurredAt:          now,
+		Source:              models.PRApprovalEventSourceLiveAction,
+	}
+}
+
+func (s *purchaseRequestService) savePurchaseRequestReviewWithApprovalEvent(pr *models.PurchaseRequest, event *models.PurchaseRequestApprovalEvent) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// Keep the audit relation out of FullSaveAssociations so an existing
+		// append-only event is never written back as part of a PR update.
+		if err := tx.Omit("ApprovalEvents", "RevisionSnapshots", "RealizationReviews").
+			Session(&gorm.Session{FullSaveAssociations: true}).
+			Save(pr).Error; err != nil {
+			return err
+		}
+		return s.createPurchaseRequestApprovalEvent(tx, event)
+	})
 }
 
 func buildPurchaseRequestInvoiceRevisionMap(items []models.PurchaseRequestInvoiceRevisionItemPayload, existingItems []models.PurchaseRequestItem) (map[uint]purchaseRequestInvoiceRevisionItemUpdate, error) {
