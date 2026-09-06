@@ -48,6 +48,11 @@ func (r *PaymentRepository) FindByID(id uint) (*models.Payment, error) {
 		Preload("ExpenseAccount").
 		Preload("CashBank").
 		Preload("CashBank.Account").
+		Preload("Documents", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC, id ASC") }).
+		Preload("Documents.Uploader").
+		Preload("Documents.Invalidator").
+		Preload("Documents.Events", func(db *gorm.DB) *gorm.DB { return db.Order("occurred_at ASC, id ASC") }).
+		Preload("Documents.Events.Actor").
 		First(&payment, id).Error
 	if err != nil {
 		return nil, err

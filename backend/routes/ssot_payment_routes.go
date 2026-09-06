@@ -39,6 +39,8 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 
 	// Initialize SSOT Payment Controller
 	ssotPaymentController := controllers.NewSSOTPaymentController(enhancedPaymentService)
+	paymentDocumentService := services.NewPaymentDocumentService(db)
+	paymentDocumentController := controllers.NewPaymentDocumentController(paymentDocumentService)
 
 	// Initialize Tax Payment Service and Controller
 	taxPaymentService := services.NewTaxPaymentService(db)
@@ -73,6 +75,21 @@ func SetupSSOTPaymentRoutes(router *gin.RouterGroup, db *gorm.DB, jwtManager *mi
 
 		// Legacy compatibility (deprecated - returns guidance)
 		ssotPayments.GET("", permissionMiddleware.CanView("payments"), ssotPaymentController.GetPayments)
+	}
+
+	// Supporting payment documents are not financial postings and therefore must
+	// not be blocked by a closed-period date check. The service still enforces
+	// ownership and payment status before it accepts any multipart upload.
+	paymentDocuments := router.Group("/payments/ssot")
+	paymentDocuments.Use(middleware.PaymentRateLimit())
+	if middleware.GlobalAuditLogger != nil {
+		paymentDocuments.Use(middleware.GlobalAuditLogger.PaymentAuditMiddleware())
+	}
+	{
+		paymentDocuments.GET("/:id/documents", permissionMiddleware.CanView("payments"), paymentDocumentController.ListDocuments)
+		paymentDocuments.POST("/:id/documents", permissionMiddleware.CanCreate("payments"), paymentDocumentController.UploadDocuments)
+		paymentDocuments.GET("/documents/:document_id/download", permissionMiddleware.CanView("payments"), paymentDocumentController.DownloadDocument)
+		paymentDocuments.PUT("/documents/:document_id/invalidate", permissionMiddleware.CanEdit("payments"), paymentDocumentController.InvalidateDocument)
 	}
 
 	// Tax Payment routes (PPN Masukan & Keluaran)

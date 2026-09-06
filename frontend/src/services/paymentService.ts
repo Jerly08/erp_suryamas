@@ -1,5 +1,6 @@
 import api from './api';
 import { API_ENDPOINTS } from '../config/api';
+import { getDownloadFilename } from '@/utils/downloadFilename';
 
 // Types - Updated to match backend Go struct
 export interface PaymentActor {
@@ -22,6 +23,50 @@ export interface PaymentAccountSummary {
     code?: string;
     name: string;
   };
+}
+
+export type PaymentDocumentType =
+  | 'VENDOR_INVOICE'
+  | 'PAYMENT_PROOF'
+  | 'TAX_INVOICE'
+  | 'SUPPORTING_DOCUMENT'
+  | 'OTHER';
+
+export interface PaymentDocumentUploader {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+}
+
+/**
+ * Immutable supporting-document record for a payment. Document status is
+ * managed by the server so a correction retains the original audit trail.
+ */
+export interface PaymentDocument {
+  id: number;
+  payment_id: number;
+  document_type: PaymentDocumentType | string;
+  reference_number?: string;
+  file_name: string;
+  file_path?: string;
+  file_size?: number;
+  mime_type?: string;
+  notes?: string;
+  status?: string;
+  uploaded_by?: number;
+  created_at: string;
+  updated_at?: string;
+  uploader?: PaymentDocumentUploader | null;
+  events?: Array<{
+    id?: number;
+    action?: string;
+    notes?: string;
+    actor_id?: number;
+    occurred_at?: string;
+    created_at?: string;
+  }>;
 }
 
 export interface CustomerPaymentSettlement {
@@ -98,6 +143,7 @@ export interface Payment {
   approver?: PaymentActor | null;
   rejector?: PaymentActor | null;
   notes: string;
+  documents?: PaymentDocument[];
   created_at: string;
   updated_at: string;
 }
@@ -630,6 +676,77 @@ class PaymentService {
       console.error('Error downloading payment detail PDF:', error);
       throw error;
     }
+  }
+
+  // Payment supporting documents are uploaded only after the payment has been
+  // created. Keeping this API separate prevents a retry of a failed upload
+  // from ever creating a second payment.
+  async listPaymentDocuments(paymentId: number): Promise<PaymentDocument[]> {
+    const response = await api.get(API_ENDPOINTS.PAYMENTS.SSOT.DOCUMENTS(paymentId));
+    const body = response.data;
+
+    if (Array.isArray(body?.data)) return body.data as PaymentDocument[];
+    if (Array.isArray(body?.documents)) return body.documents as PaymentDocument[];
+    if (Array.isArray(body)) return body as PaymentDocument[];
+    return [];
+  }
+
+  async uploadPaymentDocument(
+    paymentId: number,
+    file: File,
+    options: {
+      documentType?: PaymentDocumentType | string;
+      referenceNumber?: string;
+      notes?: string;
+    } = {},
+  ): Promise<PaymentDocument[]> {
+    const formData = new FormData();
+    // The endpoint accepts a multi-file field. Uploading one staged file at a
+    // time lets each attachment retain its own type and note.
+    formData.append('documents', file);
+    formData.append('document_type', options.documentType || 'SUPPORTING_DOCUMENT');
+    if (options.referenceNumber?.trim()) {
+      formData.append('reference_number', options.referenceNumber.trim());
+    }
+    if (options.notes?.trim()) {
+      formData.append('notes', options.notes.trim());
+    }
+
+    const response = await api.post(
+      API_ENDPOINTS.PAYMENTS.SSOT.DOCUMENTS(paymentId),
+      formData,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 60000,
+      },
+    );
+    const body = response.data;
+    if (Array.isArray(body?.data)) return body.data as PaymentDocument[];
+    if (Array.isArray(body?.documents)) return body.documents as PaymentDocument[];
+    if (Array.isArray(body)) return body as PaymentDocument[];
+    return [];
+  }
+
+  async downloadPaymentDocument(
+    documentId: number,
+    fallbackName = 'dokumen-pembayaran',
+  ): Promise<void> {
+    const response = await api.get(
+      API_ENDPOINTS.PAYMENTS.SSOT.DOCUMENT_DOWNLOAD(documentId),
+      { responseType: 'blob' },
+    );
+    const filename = getDownloadFilename(
+      response.headers?.['content-disposition'],
+      fallbackName,
+    );
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   }
 
   // Download payment report Excel

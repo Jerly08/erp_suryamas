@@ -156,6 +156,8 @@ func RunMigrations(db *gorm.DB) {
 		// Payment & Cash Bank models
 		&models.Payment{},
 		&models.PaymentAllocation{},
+		&models.PaymentDocument{},
+		&models.PaymentDocumentEvent{},
 		&models.CustomerAdvance{},
 		&models.CashBank{},
 		&models.CashBankTransaction{},

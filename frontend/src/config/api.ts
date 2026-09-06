@@ -290,6 +290,11 @@ export const API_ENDPOINTS = {
       PREVIEW_JOURNAL: "/api/v1/payments/ssot/preview-journal",
       BALANCE_UPDATES: (id: number) =>
         `/api/v1/payments/ssot/${id}/balance-updates`,
+      // Supporting documents are kept on the payment itself so uploads do not
+      // alter the payment amount, allocation, or journal workflow.
+      DOCUMENTS: (id: number) => `/api/v1/payments/ssot/${id}/documents`,
+      DOCUMENT_DOWNLOAD: (documentId: number) =>
+        `/api/v1/payments/ssot/documents/${documentId}/download`,
     },
   },
   // Legacy flat endpoints for backward compatibility

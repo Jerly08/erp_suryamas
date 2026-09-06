@@ -18,29 +18,29 @@ import (
 
 // AuditLog represents an audit log entry
 type AuditLog struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	UserID      *uint     `json:"user_id" gorm:"index"` // Nullable for anonymous users
-	Username    string    `json:"username" gorm:"size:100"`
-	Action      string    `json:"action" gorm:"size:50"`          // CREATE, UPDATE, DELETE, VIEW, LOGIN, LOGOUT
-	TableName   string    `json:"table_name" gorm:"size:100"`     // Table name for database compatibility
-	Resource    string    `json:"resource" gorm:"size:50"`        // payment, user, product, etc.
-	ResourceID  string    `json:"resource_id" gorm:"size:100"`    // ID of the affected resource
-	RecordID    uint      `json:"record_id" gorm:"index"`         // For database compatibility
-	Method      string    `json:"method" gorm:"size:10"`          // HTTP method
-	Endpoint    string    `json:"endpoint" gorm:"size:255"`       // API endpoint
-	IPAddress   string    `json:"ip_address" gorm:"size:45"`
-	UserAgent   string    `json:"user_agent" gorm:"type:text"`
-	RequestData string    `json:"request_data" gorm:"type:text"`  // JSON string of request body
-	OldValues   string    `json:"old_values" gorm:"type:text"`    // For database compatibility
-	NewValues   string    `json:"new_values" gorm:"type:text"`    // For database compatibility
-	ResponseCode int      `json:"response_code"`
-	Duration    int64     `json:"duration"` // Response time in milliseconds
-	Success     bool      `json:"success"`
-	ErrorMessage string   `json:"error_message" gorm:"type:text"`
-	Notes       string    `json:"notes" gorm:"type:text"` // For SQL trigger compatibility
-	Timestamp   time.Time `json:"timestamp"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	UserID       *uint     `json:"user_id" gorm:"index"` // Nullable for anonymous users
+	Username     string    `json:"username" gorm:"size:100"`
+	Action       string    `json:"action" gorm:"size:50"`       // CREATE, UPDATE, DELETE, VIEW, LOGIN, LOGOUT
+	TableName    string    `json:"table_name" gorm:"size:100"`  // Table name for database compatibility
+	Resource     string    `json:"resource" gorm:"size:50"`     // payment, user, product, etc.
+	ResourceID   string    `json:"resource_id" gorm:"size:100"` // ID of the affected resource
+	RecordID     uint      `json:"record_id" gorm:"index"`      // For database compatibility
+	Method       string    `json:"method" gorm:"size:10"`       // HTTP method
+	Endpoint     string    `json:"endpoint" gorm:"size:255"`    // API endpoint
+	IPAddress    string    `json:"ip_address" gorm:"size:45"`
+	UserAgent    string    `json:"user_agent" gorm:"type:text"`
+	RequestData  string    `json:"request_data" gorm:"type:text"` // JSON string of request body
+	OldValues    string    `json:"old_values" gorm:"type:text"`   // For database compatibility
+	NewValues    string    `json:"new_values" gorm:"type:text"`   // For database compatibility
+	ResponseCode int       `json:"response_code"`
+	Duration     int64     `json:"duration"` // Response time in milliseconds
+	Success      bool      `json:"success"`
+	ErrorMessage string    `json:"error_message" gorm:"type:text"`
+	Notes        string    `json:"notes" gorm:"type:text"` // For SQL trigger compatibility
+	Timestamp    time.Time `json:"timestamp"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // AuditLogger manages audit logging
@@ -103,19 +103,18 @@ func (al *AuditLogger) AuditMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		// Only audit financial transactions (sales, purchases, payments, cash_bank)
 		if !isFinancialTransaction(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
 
-		// Capture request body
-		var requestBody []byte
-		if c.Request.Body != nil {
-			requestBody, _ = io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-		}
+		// Multipart uploads must remain unread until their handler parses them.
+		// Reading file bodies here both duplicates large data in memory and can
+		// break multipart parsing in downstream handlers. Audit only metadata for
+		// uploads; JSON/form payloads retain the existing sanitized audit trail.
+		requestData := captureAuditRequestData(c.Request, sanitizeRequestData)
 
 		// Wrap response writer to capture response
 		respWriter := &responseWriter{
@@ -134,13 +133,13 @@ func (al *AuditLogger) AuditMiddleware() gin.HandlerFunc {
 		// Create audit log entry
 		resource := getResourceFromPath(c.Request.URL.Path)
 		resourceID := getResourceID(c.Request.URL.Path, c.Params)
-		
+
 		// Get user ID, set to nil if 0 (anonymous user)
 		var userID *uint
 		if uid := c.GetUint("user_id"); uid > 0 {
 			userID = &uid
 		}
-		
+
 		auditLog := &AuditLog{
 			UserID:       userID,
 			Username:     c.GetString("username"),
@@ -153,7 +152,7 @@ func (al *AuditLogger) AuditMiddleware() gin.HandlerFunc {
 			Endpoint:     c.Request.URL.Path,
 			IPAddress:    c.ClientIP(),
 			UserAgent:    c.Request.UserAgent(),
-			RequestData:  sanitizeRequestData(string(requestBody)),
+			RequestData:  requestData,
 			OldValues:    "", // Empty for API audit logs
 			NewValues:    "", // Empty for API audit logs
 			ResponseCode: respWriter.statusCode,
@@ -176,12 +175,10 @@ func (al *AuditLogger) PaymentAuditMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startTime := time.Now()
 
-		// Capture request body for payment operations
-		var requestBody []byte
-		if c.Request.Body != nil {
-			requestBody, _ = io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-		}
+		// Payment document uploads use multipart/form-data. Keep their stream
+		// untouched so the document controller can validate and save the file;
+		// only metadata is retained in the audit record.
+		requestData := captureAuditRequestData(c.Request, sanitizePaymentData)
 
 		// Process request
 		c.Next()
@@ -191,13 +188,13 @@ func (al *AuditLogger) PaymentAuditMiddleware() gin.HandlerFunc {
 
 		// Create detailed payment audit log
 		resourceID := getResourceID(c.Request.URL.Path, c.Params)
-		
+
 		// Get user ID, set to nil if 0 (anonymous user)
 		var userID *uint
 		if uid := c.GetUint("user_id"); uid > 0 {
 			userID = &uid
 		}
-		
+
 		auditLog := &AuditLog{
 			UserID:       userID,
 			Username:     c.GetString("username"),
@@ -210,7 +207,7 @@ func (al *AuditLogger) PaymentAuditMiddleware() gin.HandlerFunc {
 			Endpoint:     c.Request.URL.Path,
 			IPAddress:    c.ClientIP(),
 			UserAgent:    c.Request.UserAgent(),
-			RequestData:  sanitizePaymentData(string(requestBody)),
+			RequestData:  requestData,
 			OldValues:    "", // Empty for API audit logs
 			NewValues:    "", // Empty for API audit logs
 			ResponseCode: c.Writer.Status(),
@@ -243,19 +240,19 @@ func (al *AuditLogger) logToDatabase(auditLog *AuditLog) {
 func (al *AuditLogger) logToFile(auditLog *AuditLog) {
 	// Format timestamp: YY-MM-DD HH:MM:SS.mmm
 	timestamp := auditLog.Timestamp.Format("06-01-02 15:04:05.000")
-	
+
 	// Determine status indicator
 	statusIcon := "✓"
 	if !auditLog.Success {
 		statusIcon = "✗"
 	}
-	
+
 	// Build resource identifier
 	resourceInfo := strings.ToUpper(auditLog.Resource)
 	if auditLog.ResourceID != "" {
 		resourceInfo = fmt.Sprintf("%s#%s", resourceInfo, auditLog.ResourceID)
 	}
-	
+
 	// Format user info - handle nil UserID for anonymous users
 	userInfo := "anonymous"
 	if auditLog.UserID != nil {
@@ -263,7 +260,7 @@ func (al *AuditLogger) logToFile(auditLog *AuditLog) {
 	} else if auditLog.Username != "" {
 		userInfo = auditLog.Username
 	}
-	
+
 	// Format: [YY-MM-DD HH:MM:SS.mmm >> RESOURCE::ACTION] ✓ User: username (ID:123) | Method /endpoint | Status: 200 | 45ms | IP: 192.168.1.100
 	logLine := fmt.Sprintf("[%s >> %s::%s] %s User: %s | %s %s | Status: %d | %dms | IP: %s",
 		timestamp,
@@ -277,12 +274,12 @@ func (al *AuditLogger) logToFile(auditLog *AuditLog) {
 		auditLog.Duration,
 		auditLog.IPAddress,
 	)
-	
+
 	// Add error message if present
 	if !auditLog.Success && auditLog.ErrorMessage != "" {
 		logLine += fmt.Sprintf("\n    ⚠️  Error: %s", auditLog.ErrorMessage)
 	}
-	
+
 	// Add request data for CREATE/UPDATE operations (truncated)
 	if (auditLog.Action == "CREATE" || auditLog.Action == "UPDATE") && auditLog.RequestData != "" && len(auditLog.RequestData) > 0 {
 		requestData := auditLog.RequestData
@@ -291,9 +288,9 @@ func (al *AuditLogger) logToFile(auditLog *AuditLog) {
 		}
 		logLine += fmt.Sprintf("\n    📝 Data: %s", requestData)
 	}
-	
+
 	logLine += "\n"
-	
+
 	// Write to file (remove [AUDIT] prefix since we already have nice format)
 	al.logger.SetPrefix("")
 	al.logger.SetFlags(0)
@@ -309,7 +306,7 @@ func (al *AuditLogger) logSecurityEvent(auditLog *AuditLog) {
 	} else if auditLog.Username != "" {
 		userInfo = auditLog.Username
 	}
-	
+
 	securityEvent := fmt.Sprintf("SECURITY_ALERT: Failed %s attempt on %s by user %s from %s - Response: %d",
 		auditLog.Action,
 		auditLog.Resource,
@@ -319,6 +316,32 @@ func (al *AuditLogger) logSecurityEvent(auditLog *AuditLog) {
 	)
 
 	al.logger.Printf("SECURITY: %s\n", securityEvent)
+}
+
+// captureAuditRequestData captures ordinary request bodies while preserving a
+// multipart stream for the actual upload handler. File content is neither read
+// nor logged. This is shared by global and payment-specific audit middleware
+// because both run for /api/v1/payments/* routes.
+func captureAuditRequestData(request *http.Request, sanitize func(string) string) string {
+	if request == nil || request.Body == nil {
+		return ""
+	}
+	if isMultipartAuditRequest(request) {
+		metadata, _ := json.Marshal(map[string]interface{}{
+			"file_upload":    true,
+			"content_type":   request.Header.Get("Content-Type"),
+			"content_length": request.ContentLength,
+		})
+		return string(metadata)
+	}
+
+	requestBody, _ := io.ReadAll(request.Body)
+	request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+	return sanitize(string(requestBody))
+}
+
+func isMultipartAuditRequest(request *http.Request) bool {
+	return strings.Contains(strings.ToLower(request.Header.Get("Content-Type")), "multipart/form-data")
 }
 
 // Helper functions
@@ -350,13 +373,13 @@ func isFinancialTransaction(path string) bool {
 		"/api/v1/cashbank",
 		"/api/v1/cash-bank",
 	}
-	
+
 	for _, resource := range financialResources {
 		if strings.HasPrefix(path, resource) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -447,13 +470,13 @@ func parseRecordID(resourceID string) uint {
 	if resourceID == "" {
 		return 0
 	}
-	
+
 	// Try to parse as uint
 	var id uint
 	if n, err := fmt.Sscanf(resourceID, "%d", &id); n == 1 && err == nil {
 		return id
 	}
-	
+
 	return 0
 }
 
@@ -547,7 +570,7 @@ var GlobalAuditLogger *AuditLogger
 // InitAuditLogger initializes the global audit logger
 func InitAuditLogger(db *gorm.DB) {
 	GlobalAuditLogger = NewAuditLogger(db)
-	
+
 	// Safe auto-migrate audit log table with conflict handling
 	if err := safeAuditLogMigration(db); err != nil {
 		log.Printf("Failed to migrate audit log table: %v", err)
@@ -571,7 +594,7 @@ func safeAuditLogMigration(db *gorm.DB) error {
 
 	// Table exists, check if we need to add any missing columns
 	log.Println("Audit logs table exists, checking for missing columns...")
-	
+
 	// Check for missing columns and add them if needed
 	if err := addMissingAuditColumns(db); err != nil {
 		return fmt.Errorf("failed to add missing audit columns: %w", err)

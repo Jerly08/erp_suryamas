@@ -714,6 +714,8 @@ func AutoMigrate(db *gorm.DB) {
 		&models.CashBankFrozenHistory{},
 		&models.Payment{},
 		&models.PaymentAllocation{},
+		&models.PaymentDocument{},
+		&models.PaymentDocumentEvent{},
 		&models.CustomerAdvance{},
 		&models.PurchasePayment{},
 		&models.PostedTransactionCorrection{},

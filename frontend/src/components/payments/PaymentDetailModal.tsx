@@ -29,6 +29,9 @@ import { Payment, stripInternalPaymentReference } from '@/services/paymentServic
 import paymentService from '@/services/paymentService';
 import { getPaymentPPhStatus } from '@/utils/taxPaymentStatus';
 import { PostedTransactionCorrectionsPanel } from '@/components/corrections/PostedTransactionCorrections';
+import PaymentDocumentsPanel from './PaymentDocumentsPanel';
+import { useAuth } from '@/contexts/AuthContext';
+import { isFinanceTeamRole, normalizeRole } from '@/utils/roles';
 
 interface PaymentDetailModalProps {
   payment: Payment | null;
@@ -41,6 +44,7 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const { user } = useAuth();
   // Theme colors for dark mode support
   const modalBg = useColorModeValue('white', 'gray.800');
   const headerBg = useColorModeValue('gray.50', 'gray.700');
@@ -103,9 +107,20 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
     cashBankGLLabel ||
     payment.accounting_reviewed_at,
   );
+  const isFinalizedForDocuments = ['FAILED', 'REJECTED', 'REVERSED', 'CANCELLED'].includes(
+    (payment.status || '').toUpperCase(),
+  );
+  const viewerOwnsPayment = Number(user?.id) === payment.user_id;
+  const viewerCanManageSupportingDocuments = viewerOwnsPayment ||
+    normalizeRole(user?.role) === 'admin' ||
+    isFinanceTeamRole(user?.role);
+  const canAddSupportingDocuments = !isFinalizedForDocuments && viewerCanManageSupportingDocuments;
+  const supportingDocumentDisabledMessage = isFinalizedForDocuments
+    ? 'Dokumen baru tidak dapat ditambahkan karena pembayaran ini sudah dibatalkan, ditolak, atau dibalik.'
+    : 'Dokumen dapat ditambahkan oleh pembuat pembayaran, Accounting, Finance Staff, atau Finance Manager.';
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="xl">
+    <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
       <ModalOverlay />
       <ModalContent bg={modalBg}>
         <ModalHeader bg={headerBg} borderBottomWidth={1} borderColor={borderColor}>
@@ -287,6 +302,16 @@ const PaymentDetailModal: React.FC<PaymentDetailModalProps> = ({
                 <Divider />
               </>
             )}
+
+            <Divider />
+
+            <PaymentDocumentsPanel
+              paymentId={payment.id}
+              initialDocuments={payment.documents}
+              isActive={isOpen}
+              canAddDocuments={canAddSupportingDocuments}
+              addDocumentsDisabledMessage={supportingDocumentDisabledMessage}
+            />
 
             <>
               <Divider />

@@ -58,7 +58,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation';
 import { useForm, Controller, useWatch } from 'react-hook-form';
 
-import { FiCreditCard, FiDollarSign, FiCalendar, FiUser, FiFileText, FiInfo } from 'react-icons/fi';
+import { FiCreditCard, FiDollarSign, FiCalendar, FiUser, FiFileText, FiInfo, FiUpload } from 'react-icons/fi';
 import paymentService, {
   PaymentCreateRequest,
   PaymentAllocation,
@@ -74,6 +74,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { isFinanceManagerRole, normalizeRole } from '@/utils/roles';
 import { roundUsdIdrRate } from '@/utils/exchangeRate';
 import { filterOperationalCashBankAccounts } from '@/utils/accountFilters';
+import {
+  PaymentDocumentStagingPanel,
+  StagedPaymentDocument,
+} from './PaymentDocumentsPanel';
 
 interface AdvancedPaymentFormProps {
   isOpen: boolean;
@@ -393,6 +397,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
   const [exchangeRateEdited, setExchangeRateEdited] = useState(false);
   const [settlementTreatment, setSettlementTreatment] = useState<CustomerSettlementTreatment>('OPEN_BALANCE');
   const [settlementReason, setSettlementReason] = useState('');
+  const [stagedDocuments, setStagedDocuments] = useState<StagedPaymentDocument[]>([]);
+  const [createdPayment, setCreatedPayment] = useState<{ id: number; code?: string } | null>(null);
+  const [uploadingDocuments, setUploadingDocuments] = useState(false);
   const { user } = useAuth();
 
   // Color mode values
@@ -492,6 +499,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     ? selectedCashBankCurrency === 'USD'
     : selectedCashBankCurrency === 'USD' || hasUsdReceivableSelection;
   const shouldHideForm = !userRole && !!user;
+  const isAttachmentRetryMode = type === 'payable' && !!createdPayment?.id;
 
   useEffect(() => {
     if (!isOpen || type !== 'receivable') {
@@ -533,6 +541,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         (initialData?.settlement_treatment as CustomerSettlementTreatment) || 'OPEN_BALANCE',
       );
       setSettlementReason(initialData?.settlement_reason || '');
+      setStagedDocuments([]);
+      setCreatedPayment(null);
+      setUploadingDocuments(false);
 
       if (initialData) {
         // Editing an existing payment: populate form fields
@@ -568,6 +579,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
       setAllocations([]);
       setSettlementTreatment('OPEN_BALANCE');
       setSettlementReason('');
+      setStagedDocuments([]);
+      setCreatedPayment(null);
+      setUploadingDocuments(false);
       reset(); // Reset form values
     }
   }, [isOpen, preSelectedContact?.id, initialData?.id, setValue, reset]);
@@ -800,8 +814,109 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     }
   }, [allocations]);
 
+  const getDocumentUploadErrorMessage = (error: unknown) => {
+    const uploadError = error as {
+      message?: string;
+      response?: { data?: { error?: string; message?: string; details?: string } };
+    };
+    return uploadError.response?.data?.error ||
+      uploadError.response?.data?.message ||
+      uploadError.response?.data?.details ||
+      uploadError.message ||
+      'Upload dokumen gagal. Coba lagi.';
+  };
+
+  /**
+   * This deliberately runs only after a payment ID exists. Successful files
+   * are removed from the retry queue; failed files remain staged, so a retry
+   * never submits the payment endpoint a second time.
+   */
+  const uploadStagedPaymentDocuments = async (paymentId: number) => {
+    const uploadableDocuments = stagedDocuments.filter(
+      (document) => document.uploadState !== 'UPLOADING',
+    );
+    if (uploadableDocuments.length === 0) {
+      return { uploaded: 0, failed: 0 };
+    }
+
+    setUploadingDocuments(true);
+    const uploadedIds: string[] = [];
+    let failed = 0;
+
+    for (const document of uploadableDocuments) {
+      setStagedDocuments((current) => current.map((item) => item.clientId === document.clientId
+        ? { ...item, uploadState: 'UPLOADING', uploadError: undefined }
+        : item,
+      ));
+      try {
+        await paymentService.uploadPaymentDocument(paymentId, document.file, {
+          documentType: document.documentType,
+          referenceNumber: document.referenceNumber,
+          notes: document.notes,
+        });
+        uploadedIds.push(document.clientId);
+      } catch (error) {
+        failed += 1;
+        setStagedDocuments((current) => current.map((item) => item.clientId === document.clientId
+          ? {
+            ...item,
+            uploadState: 'FAILED',
+            uploadError: getDocumentUploadErrorMessage(error),
+          }
+          : item,
+        ));
+      }
+    }
+
+    if (uploadedIds.length > 0) {
+      setStagedDocuments((current) => current.filter(
+        (document) => !uploadedIds.includes(document.clientId),
+      ));
+    }
+    setUploadingDocuments(false);
+    return { uploaded: uploadedIds.length, failed };
+  };
+
+  const completePaymentSubmission = (refreshPaymentList = true) => {
+    reset();
+    setAllocations([]);
+    setOutstandingItems([]);
+    setStagedDocuments([]);
+    setCreatedPayment(null);
+    onClose();
+    if (refreshPaymentList) {
+      onSuccess?.();
+    }
+  };
+
   const onSubmit = async (data: PaymentFormData) => {
     try {
+      // A payment already exists if a previous document upload failed. Retry
+      // only the attachment queue instead of calling the payment API again.
+      if (createdPayment?.id) {
+        const uploadResult = await uploadStagedPaymentDocuments(createdPayment.id);
+        if (uploadResult.failed > 0) {
+          toast({
+            title: 'Pembayaran sudah tersimpan',
+            description: `Dokumen untuk ${createdPayment.code || `payment #${createdPayment.id}`} belum seluruhnya terunggah. Periksa file yang gagal lalu unggah ulang.`,
+            status: 'warning',
+            duration: 8000,
+            isClosable: true,
+          });
+          return;
+        }
+        toast({
+          title: 'Dokumen pendukung berhasil diunggah',
+          description: uploadResult.uploaded > 0
+            ? `Lampiran untuk ${createdPayment.code || `payment #${createdPayment.id}`} sudah tersimpan.`
+            : `Pembayaran ${createdPayment.code || `#${createdPayment.id}`} sudah tersimpan.`,
+          status: 'success',
+          duration: 4000,
+        });
+        completePaymentSubmission();
+        return;
+      }
+
       // ===== Period closing validation =====
       // Cegah pembuatan payment pada tanggal yang sudah ditutup buku.
       if (data.date) {
@@ -960,6 +1075,28 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         result?.status === 'PENDING_ACCOUNTING' &&
         result?.settlement?.treatment === 'ROUNDING';
       const customerAdvanceAmount = result?.settlement?.customer_advance_amount || 0;
+
+      // Supporting documents are intentionally submitted after the payment has
+      // a durable ID. If an upload fails, keep only the failed files staged and
+      // switch to a retry-only mode; the payment endpoint is never called again.
+      if (type === 'payable' && stagedDocuments.length > 0 && result?.id) {
+        const persistedPayment = { id: result.id as number, code: result.code as string | undefined };
+        setCreatedPayment(persistedPayment);
+        setActiveTab(2);
+
+        const uploadResult = await uploadStagedPaymentDocuments(persistedPayment.id);
+        if (uploadResult.failed > 0) {
+          toast({
+            title: 'Pembayaran berhasil disimpan',
+            description: `Pembayaran ${persistedPayment.code || `#${persistedPayment.id}`} sudah tercatat, tetapi sebagian dokumen belum terunggah. Periksa file yang gagal lalu klik Unggah Ulang Dokumen.`,
+            status: 'warning',
+            duration: 9000,
+            isClosable: true,
+          });
+          return;
+        }
+      }
+
       toast({
         title: 'Success',
         description: isPendingRounding
@@ -977,11 +1114,7 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
         duration: 3000,
       });
 
-      reset();
-      setAllocations([]);
-      setOutstandingItems([]);
-      onClose();
-      onSuccess?.();
+      completePaymentSubmission();
 
     } catch (error: any) {
       console.error('AdvancedPaymentForm - Error creating payment:', error);
@@ -1032,6 +1165,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
     reset();
     setAllocations([]);
     setOutstandingItems([]);
+    setStagedDocuments([]);
+    setCreatedPayment(null);
+    setUploadingDocuments(false);
     onClose();
   };
 
@@ -1120,10 +1256,15 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
             >
               <Tabs index={activeTab} onChange={setActiveTab}>
                 <TabList>
-                  <Tab>{t('payments.form.paymentDetails')}</Tab>
-                  <Tab isDisabled={!watchedContactId}>
+                  <Tab isDisabled={isAttachmentRetryMode}>{t('payments.form.paymentDetails')}</Tab>
+                  <Tab isDisabled={isAttachmentRetryMode || !watchedContactId}>
                     {t('payments.form.allocation')} ({outstandingItems.length})
                   </Tab>
+                  {type === 'payable' && (
+                    <Tab>
+                      Dokumen Pendukung{stagedDocuments.length > 0 ? ` (${stagedDocuments.length})` : ''}
+                    </Tab>
+                  )}
                 </TabList>
 
                 <TabPanels>
@@ -1616,6 +1757,33 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                       />
                     )}
                   </TabPanel>
+
+                  {type === 'payable' && (
+                    <TabPanel px={0}>
+                      <VStack align="stretch" spacing={4}>
+                        {isAttachmentRetryMode && (
+                          <Alert status="warning" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription fontSize="sm">
+                              Pembayaran <strong>{createdPayment?.code || `#${createdPayment?.id}`}</strong> sudah tersimpan. Hanya dokumen yang belum terunggah yang akan diproses saat Anda klik Unggah Ulang Dokumen.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <PaymentDocumentStagingPanel
+                          documents={stagedDocuments}
+                          onDocumentsChange={setStagedDocuments}
+                          isDisabled={uploadingDocuments}
+                          retryPaymentCode={isAttachmentRetryMode ? createdPayment?.code : undefined}
+                        />
+                        <Alert status="info" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription fontSize="sm">
+                            Lampiran bersifat opsional. Pembayaran dibuat terlebih dahulu, lalu tiap dokumen dicatat sebagai riwayat terpisah tanpa mengubah nominal, alokasi, atau jurnal.
+                          </AlertDescription>
+                        </Alert>
+                      </VStack>
+                    </TabPanel>
+                  )}
                 </TabPanels>
               </Tabs>
             </ModalBody>
@@ -1661,9 +1829,9 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                 <Button
                   type="submit"
                   colorScheme="blue"
-                  isLoading={isSubmitting || loading}
-                  loadingText="Creating..."
-                  isDisabled={!watchedContactId || !watchedAmount || (() => {
+                  isLoading={isSubmitting || loading || uploadingDocuments}
+                  loadingText={isAttachmentRetryMode ? 'Mengunggah...' : 'Menyimpan...'}
+                  isDisabled={isAttachmentRetryMode ? uploadingDocuments : (!watchedContactId || !watchedAmount || (() => {
                     // Only enforce balance checks for payable (outgoing) payments
                     if (type !== 'payable') return false;
                     if (!watchedCashBankId || !watchedAmount) return false;
@@ -1677,13 +1845,19 @@ const AdvancedPaymentForm: React.FC<AdvancedPaymentFormProps> = ({
                     }
 
                     return false;
-                  })()}
+                  })())}
                   size={{ base: 'sm', md: 'md' }}
                   minW="140px"
-                  leftIcon={<FiDollarSign />}
+                  leftIcon={isAttachmentRetryMode ? <FiUpload /> : <FiDollarSign />}
                 >
                   {(() => {
-                    if (isSubmitting || loading) return 'Creating...';
+                    if (isSubmitting || loading || uploadingDocuments) {
+                      return isAttachmentRetryMode ? 'Mengunggah...' : 'Menyimpan...';
+                    }
+
+                    if (isAttachmentRetryMode) {
+                      return stagedDocuments.length > 0 ? 'Unggah Ulang Dokumen' : 'Selesai';
+                    }
 
                     // Only show balance warnings for payable payments
                     if (type === 'payable') {

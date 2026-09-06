@@ -913,6 +913,11 @@ func (eps *EnhancedPaymentServiceWithJournal) completeExpensePaymentAccountingRe
 		Preload("ExpenseAccount").
 		Preload("CashBank").
 		Preload("CashBank.Account").
+		Preload("Documents", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC, id ASC") }).
+		Preload("Documents.Uploader").
+		Preload("Documents.Invalidator").
+		Preload("Documents.Events", func(db *gorm.DB) *gorm.DB { return db.Order("occurred_at ASC, id ASC") }).
+		Preload("Documents.Events.Actor").
 		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("failed to reload accounting-reviewed payment: %w", err)
 	}
@@ -2067,6 +2072,11 @@ func (eps *EnhancedPaymentServiceWithJournal) GetPaymentWithJournal(paymentID ui
 		Preload("ExpenseAccount").
 		Preload("CashBank").
 		Preload("CashBank.Account").
+		Preload("Documents", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC, id ASC") }).
+		Preload("Documents.Uploader").
+		Preload("Documents.Invalidator").
+		Preload("Documents.Events", func(db *gorm.DB) *gorm.DB { return db.Order("occurred_at ASC, id ASC") }).
+		Preload("Documents.Events.Actor").
 		First(&payment, paymentID).Error; err != nil {
 		return nil, fmt.Errorf("payment not found: %w", err)
 	}

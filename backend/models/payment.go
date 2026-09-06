@@ -78,6 +78,10 @@ type Payment struct {
 	ExpenseAccount         *Account          `json:"expense_account,omitempty" gorm:"foreignKey:ExpenseAccountID"`
 	CashBank               *CashBank         `json:"cash_bank,omitempty" gorm:"foreignKey:CashBankID"`
 	CustomerAdvances       []CustomerAdvance `json:"customer_advances,omitempty" gorm:"foreignKey:PaymentID"`
+	// Documents are append-only supporting attachments for this payment. They
+	// are intentionally separate from purchase/PO documents so non-invoice
+	// payments retain their own audit history.
+	Documents []PaymentDocument `json:"documents,omitempty" gorm:"foreignKey:PaymentID"`
 }
 
 // PaymentAllocation represents payment allocation to invoices or bills

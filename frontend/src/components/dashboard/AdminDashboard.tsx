@@ -290,6 +290,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ analytics }) => 
                   axisLine={{ stroke: chartColors.gridColor }}
                 />
                 <YAxis 
+                  width="auto"
+                  tickMargin={8}
                   tick={{ fill: chartColors.textColor, fontSize: 12 }}
                   axisLine={{ stroke: chartColors.gridColor }}
                   tickFormatter={formatThousands}
@@ -376,6 +378,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ analytics }) => 
                 axisLine={{ stroke: chartColors.gridColor }}
               />
               <YAxis 
+                width="auto"
+                tickMargin={8}
                 tick={{ fill: chartColors.textColor, fontSize: 12 }}
                 axisLine={{ stroke: chartColors.gridColor }}
                 tickFormatter={formatThousands}
@@ -404,4 +408,3 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ analytics }) => 
     </Box>
   );
 };
-
