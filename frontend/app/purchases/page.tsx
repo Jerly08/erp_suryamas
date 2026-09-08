@@ -478,6 +478,13 @@ const parsePurchaseNumericInput = (value: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const parsePurchaseRateInput = (value: string, fallback = 0): number => {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return fallback;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const roundPurchaseAmount = (value: number): number => {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value * 100) / 100;
@@ -498,7 +505,7 @@ const getPurchaseFormItemTaxSourceAmount = (
   data: PurchaseFormData,
   item?: PurchaseItemFormData,
 ): number => {
-  const orderDiscountRate = parsePurchaseNumericInput(data.discount) / 100;
+  const orderDiscountRate = parsePurchaseRateInput(data.discount) / 100;
   return roundPurchaseAmount(
     getPurchaseItemFormAmount(item) * (1 - orderDiscountRate),
   );
@@ -519,7 +526,7 @@ const calculatePurchaseFormPPNAmount = (
     );
   }
   return roundPurchaseAmount(
-    netBeforeTax * (parsePurchaseNumericInput(data.ppn_rate) / 100),
+    netBeforeTax * (parsePurchaseRateInput(data.ppn_rate) / 100),
   );
 };
 
@@ -530,7 +537,7 @@ const calculatePurchaseFormGrandTotal = (data: PurchaseFormData): number => {
     const discount = parsePurchaseNumericInput(item.discount);
     return total + Math.max(qty * price - discount, 0);
   }, 0);
-  const orderDiscountRate = parsePurchaseNumericInput(data.discount) / 100;
+  const orderDiscountRate = parsePurchaseRateInput(data.discount) / 100;
   const discountedSubtotal = subtotal * (1 - orderDiscountRate);
   const ppnAmount = calculatePurchaseFormPPNAmount(
     data,
@@ -542,9 +549,9 @@ const calculatePurchaseFormGrandTotal = (data: PurchaseFormData): number => {
   const freightCost = parsePurchaseNumericInput(data.freight_cost);
   const otherCostAmount = parsePurchaseNumericInput(data.other_cost_amount);
   const pph21Amount =
-    discountedSubtotal * (parsePurchaseNumericInput(data.pph21_rate) / 100);
+    discountedSubtotal * (parsePurchaseRateInput(data.pph21_rate) / 100);
   const pph23Amount =
-    discountedSubtotal * (parsePurchaseNumericInput(data.pph23_rate) / 100);
+    discountedSubtotal * (parsePurchaseRateInput(data.pph23_rate) / 100);
   const otherDeductions =
     discountedSubtotal *
     (parsePurchaseNumericInput(data.other_tax_deductions) / 100);
@@ -4622,7 +4629,7 @@ const PurchasesPage: React.FC = () => {
       const allocation = formData.tax_allocations[index];
       const itemIndex = Number(allocation.purchase_item_index);
       const dppAmount = parsePurchaseNumericInput(allocation.dpp_amount);
-      const ppnRate = parsePurchaseNumericInput(allocation.ppn_rate);
+      const ppnRate = parsePurchaseRateInput(allocation.ppn_rate);
       const ppnAmount = parsePurchaseNumericInput(allocation.ppn_amount);
 
       if (
@@ -4692,7 +4699,7 @@ const PurchasesPage: React.FC = () => {
         ...(allocation.id ? { id: allocation.id } : {}),
         tax_treatment: "DPP_NILAI_LAIN" as const,
         dpp_amount: parsePurchaseNumericInput(allocation.dpp_amount),
-        ppn_rate: parsePurchaseNumericInput(allocation.ppn_rate),
+        ppn_rate: parsePurchaseRateInput(allocation.ppn_rate),
         ppn_amount: parsePurchaseNumericInput(allocation.ppn_amount),
         is_creditable: allocation.is_creditable,
         tax_invoice_number: normalizeTaxInvoiceReference(
@@ -4772,7 +4779,7 @@ const PurchasesPage: React.FC = () => {
               : 0;
             const expectedPPN =
               parsePurchaseNumericInput(allocation.dpp_amount) *
-              (parsePurchaseNumericInput(allocation.ppn_rate) / 100);
+              (parsePurchaseRateInput(allocation.ppn_rate) / 100);
             const ppnDifference =
               parsePurchaseNumericInput(allocation.ppn_amount) - expectedPPN;
             const taxInvoiceReference = normalizeTaxInvoiceReference(
@@ -5273,13 +5280,13 @@ const PurchasesPage: React.FC = () => {
     if (!financeTaxPurchase) return 0;
     const netBeforeTax =
       financeTaxPurchase.net_before_tax || financeTaxPurchase.total_amount || 0;
-    const ppnRate = parseFloat(financeTaxForm.ppn_rate) || 0;
+    const ppnRate = parsePurchaseRateInput(financeTaxForm.ppn_rate);
     const otherTaxAdditions =
       parseFloat(financeTaxForm.other_tax_additions) || 0;
     const freightCost = parseFloat(financeTaxForm.freight_cost) || 0;
     const otherCostAmount = parseFloat(financeTaxForm.other_cost_amount) || 0;
-    const pph21Rate = parseFloat(financeTaxForm.pph21_rate) || 0;
-    const pph23Rate = parseFloat(financeTaxForm.pph23_rate) || 0;
+    const pph21Rate = parsePurchaseRateInput(financeTaxForm.pph21_rate);
+    const pph23Rate = parsePurchaseRateInput(financeTaxForm.pph23_rate);
     const otherTaxDeductions =
       parseFloat(financeTaxForm.other_tax_deductions) || 0;
 
@@ -5359,14 +5366,14 @@ const PurchasesPage: React.FC = () => {
       accountingCOAPurchase.net_before_tax ||
       accountingCOAPurchase.total_amount ||
       0;
-    const ppnRate = parseFloat(accountingCOAForm.ppn_rate) || 0;
+    const ppnRate = parsePurchaseRateInput(accountingCOAForm.ppn_rate);
     const otherTaxAdditions =
       parseFloat(accountingCOAForm.other_tax_additions) || 0;
     const freightCost = parseFloat(accountingCOAForm.freight_cost) || 0;
     const otherCostAmount =
       parseFloat(accountingCOAForm.other_cost_amount) || 0;
-    const pph21Rate = parseFloat(accountingCOAForm.pph21_rate) || 0;
-    const pph23Rate = parseFloat(accountingCOAForm.pph23_rate) || 0;
+    const pph21Rate = parsePurchaseRateInput(accountingCOAForm.pph21_rate);
+    const pph23Rate = parsePurchaseRateInput(accountingCOAForm.pph23_rate);
     const otherTaxDeductions =
       parseFloat(accountingCOAForm.other_tax_deductions) || 0;
 
@@ -5585,9 +5592,10 @@ const PurchasesPage: React.FC = () => {
         ...(financeTaxPurchase.vat_treatment === "COMPONENT_DPP_NILAI_LAIN"
           ? { vat_treatment: financeTaxPurchase.vat_treatment }
           : {
-              ppn_rate: !isNaN(parseFloat(financeTaxForm.ppn_rate))
-                ? parseFloat(financeTaxForm.ppn_rate)
-                : defaultTaxRate,
+              ppn_rate: parsePurchaseRateInput(
+                financeTaxForm.ppn_rate,
+                defaultTaxRate,
+              ),
             }),
         other_tax_additions:
           parseFloat(financeTaxForm.other_tax_additions) || 0,
@@ -5599,8 +5607,8 @@ const PurchasesPage: React.FC = () => {
           canSelectAccountFromCOA && financeTaxForm.other_cost_account_id
             ? parseInt(financeTaxForm.other_cost_account_id, 10)
             : undefined,
-        pph21_rate: parseFloat(financeTaxForm.pph21_rate) || 0,
-        pph23_rate: parseFloat(financeTaxForm.pph23_rate) || 0,
+        pph21_rate: parsePurchaseRateInput(financeTaxForm.pph21_rate),
+        pph23_rate: parsePurchaseRateInput(financeTaxForm.pph23_rate),
         other_tax_deductions:
           parseFloat(financeTaxForm.other_tax_deductions) || 0,
         payment_method: financeTaxForm.payment_method,
@@ -5769,9 +5777,10 @@ const PurchasesPage: React.FC = () => {
           "COMPONENT_DPP_NILAI_LAIN"
             ? { vat_treatment: accountingCOAPurchase.vat_treatment }
             : {
-                ppn_rate: !isNaN(parseFloat(accountingCOAForm.ppn_rate))
-                  ? parseFloat(accountingCOAForm.ppn_rate)
-                  : defaultTaxRate,
+                ppn_rate: parsePurchaseRateInput(
+                  accountingCOAForm.ppn_rate,
+                  defaultTaxRate,
+                ),
               }),
           other_tax_additions:
             parseFloat(accountingCOAForm.other_tax_additions) || 0,
@@ -5784,8 +5793,8 @@ const PurchasesPage: React.FC = () => {
             accountingCOAForm.other_cost_account_id
               ? parseInt(accountingCOAForm.other_cost_account_id, 10)
               : undefined,
-          pph21_rate: parseFloat(accountingCOAForm.pph21_rate) || 0,
-          pph23_rate: parseFloat(accountingCOAForm.pph23_rate) || 0,
+          pph21_rate: parsePurchaseRateInput(accountingCOAForm.pph21_rate),
+          pph23_rate: parsePurchaseRateInput(accountingCOAForm.pph23_rate),
           other_tax_deductions:
             parseFloat(accountingCOAForm.other_tax_deductions) || 0,
           payment_method: accountingPaymentMethod,
@@ -6514,7 +6523,7 @@ const PurchasesPage: React.FC = () => {
       }
 
       if (shouldUpdateItems) {
-        payload.discount = parseFloat(formData.discount) || 0;
+        payload.discount = parsePurchaseRateInput(formData.discount);
         payload.items = formData.items.map((item) => ({
           item_type: item.item_type || "INVENTORY",
           is_fixed_asset: item.item_type === "ASSET",
@@ -6554,9 +6563,7 @@ const PurchasesPage: React.FC = () => {
           payload.ppn_rate =
             formData.vat_treatment === "NONE"
               ? 0
-              : !isNaN(parseFloat(formData.ppn_rate))
-                ? parseFloat(formData.ppn_rate)
-                : defaultTaxRate;
+              : parsePurchaseRateInput(formData.ppn_rate, defaultTaxRate);
         }
         payload.other_tax_additions =
           parseFloat(formData.other_tax_additions) || 0;
@@ -6569,8 +6576,8 @@ const PurchasesPage: React.FC = () => {
           canSelectAccountFromCOA && formData.other_cost_account_id
             ? parseInt(formData.other_cost_account_id, 10)
             : undefined;
-        payload.pph21_rate = parseFloat(formData.pph21_rate) || 0;
-        payload.pph23_rate = parseFloat(formData.pph23_rate) || 0;
+        payload.pph21_rate = parsePurchaseRateInput(formData.pph21_rate);
+        payload.pph23_rate = parsePurchaseRateInput(formData.pph23_rate);
         payload.other_tax_deductions =
           parseFloat(formData.other_tax_deductions) || 0;
       }
@@ -10403,8 +10410,9 @@ const PurchasesPage: React.FC = () => {
                                     );
 
                                     const discount =
-                                      (parseFloat(formData.discount) || 0) /
-                                      100;
+                                      parsePurchaseRateInput(
+                                        formData.discount,
+                                      ) / 100;
                                     const discountedSubtotal =
                                       subtotal * (1 - discount);
 
@@ -10429,13 +10437,15 @@ const PurchasesPage: React.FC = () => {
 
                                     const pph21Amount =
                                       (discountedSubtotal *
-                                        (parseFloat(formData.pph21_rate) ||
-                                          0)) /
+                                        parsePurchaseRateInput(
+                                          formData.pph21_rate,
+                                        )) /
                                       100;
                                     const pph23Amount =
                                       (discountedSubtotal *
-                                        (parseFloat(formData.pph23_rate) ||
-                                          0)) /
+                                        parsePurchaseRateInput(
+                                          formData.pph23_rate,
+                                        )) /
                                       100;
                                     const otherDeductions =
                                       (discountedSubtotal *
@@ -10514,14 +10524,18 @@ const PurchasesPage: React.FC = () => {
                                               {formatCurrency(otherCostAmount)}
                                             </Text>
                                           )}
-                                          {parseFloat(formData.pph21_rate) >
+                                          {parsePurchaseRateInput(
+                                            formData.pph21_rate,
+                                          ) >
                                             0 && (
                                             <Text color={statColors.red}>
                                               - PPh 21 ({formData.pph21_rate}%):{" "}
                                               {formatCurrency(pph21Amount)}
                                             </Text>
                                           )}
-                                          {parseFloat(formData.pph23_rate) >
+                                          {parsePurchaseRateInput(
+                                            formData.pph23_rate,
+                                          ) >
                                             0 && (
                                             <Text color={statColors.red}>
                                               - PPh 23 ({formData.pph23_rate}%):{" "}
@@ -12606,8 +12620,9 @@ const PurchasesPage: React.FC = () => {
                                       );
 
                                       const discount =
-                                        (parseFloat(formData.discount) || 0) /
-                                        100;
+                                        parsePurchaseRateInput(
+                                          formData.discount,
+                                        ) / 100;
                                       const discountedSubtotal =
                                         subtotal * (1 - discount);
 
@@ -12633,13 +12648,15 @@ const PurchasesPage: React.FC = () => {
 
                                       const pph21Amount =
                                         (discountedSubtotal *
-                                          (parseFloat(formData.pph21_rate) ||
-                                            0)) /
+                                          parsePurchaseRateInput(
+                                            formData.pph21_rate,
+                                          )) /
                                         100;
                                       const pph23Amount =
                                         (discountedSubtotal *
-                                          (parseFloat(formData.pph23_rate) ||
-                                            0)) /
+                                          parsePurchaseRateInput(
+                                            formData.pph23_rate,
+                                          )) /
                                         100;
                                       const otherDeductions =
                                         (discountedSubtotal *
@@ -12726,7 +12743,9 @@ const PurchasesPage: React.FC = () => {
                                                 )}
                                               </Text>
                                             )}
-                                            {parseFloat(formData.pph21_rate) >
+                                            {parsePurchaseRateInput(
+                                              formData.pph21_rate,
+                                            ) >
                                               0 && (
                                               <Text color={statColors.red}>
                                                 - PPh 21 ({formData.pph21_rate}
@@ -12734,7 +12753,9 @@ const PurchasesPage: React.FC = () => {
                                                 {formatCurrency(pph21Amount)}
                                               </Text>
                                             )}
-                                            {parseFloat(formData.pph23_rate) >
+                                            {parsePurchaseRateInput(
+                                              formData.pph23_rate,
+                                            ) >
                                               0 && (
                                               <Text color={statColors.red}>
                                                 - PPh 23 ({formData.pph23_rate}
