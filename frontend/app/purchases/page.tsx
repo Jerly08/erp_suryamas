@@ -1362,6 +1362,9 @@ const PurchasesPage: React.FC = () => {
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(false);
   const [loadingCreditAccounts, setLoadingCreditAccounts] = useState(false); // New loading state
   const [defaultTaxRate, setDefaultTaxRate] = useState<number>(0);
+  // The default rate is only a starting value for a new Purchase. Keep the
+  // user's explicit tax choice intact if the settings request finishes later.
+  const shouldHydrateCreatePpnRateRef = useRef(true);
   const [formData, setFormData] = useState<PurchaseFormData>({
     vendor_id: "",
     purchase_request_id: "",
@@ -1740,14 +1743,32 @@ const PurchasesPage: React.FC = () => {
         const api = (await import("@/services/api")).default;
         const response = await api.get("/api/v1/settings/public");
         if (response.data?.data?.default_tax_rate !== undefined) {
-          const rate = response.data.data.default_tax_rate;
+          const rate = Number(response.data.data.default_tax_rate);
+          if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+            console.warn(
+              "PurchasesPage: Ignoring invalid default tax rate from settings:",
+              response.data.data.default_tax_rate,
+            );
+            return;
+          }
           console.log(
             "PurchasesPage: Using default tax rate from settings:",
             rate,
           );
           setDefaultTaxRate(rate);
-          // Set initial form ppn_rate to match settings
-          setFormData((prev) => ({ ...prev, ppn_rate: rate.toString() }));
+          // The settings response can resolve after the user opens the form.
+          // It may hydrate a pristine create form, but must never replace an
+          // entered rate, an existing Purchase, or the explicit "Tanpa PPN"
+          // treatment.
+          setFormData((previous) => {
+            if (
+              !shouldHydrateCreatePpnRateRef.current ||
+              previous.vat_treatment !== "STANDARD"
+            ) {
+              return previous;
+            }
+            return { ...previous, ppn_rate: rate.toString() };
+          });
         }
       } catch (err) {
         console.warn(
@@ -1757,6 +1778,11 @@ const PurchasesPage: React.FC = () => {
     };
     if (token) fetchSettings();
   }, [token]);
+
+  const handlePpnRateChange = (value: string) => {
+    shouldHydrateCreatePpnRateRef.current = false;
+    setFormData((previous) => ({ ...previous, ppn_rate: value }));
+  };
 
   // Helper function to notify directors
   const notifyDirectors = async (purchase: Purchase) => {
@@ -5158,6 +5184,7 @@ const PurchasesPage: React.FC = () => {
       setPaymentProofFile(null);
       setTaxInvoiceFiles([]);
       setConfirmProvisionalPaymentProof(false);
+      shouldHydrateCreatePpnRateRef.current = false;
 
       // Set form data for editing
       setFormData({
@@ -5915,6 +5942,7 @@ const PurchasesPage: React.FC = () => {
   // Handle create new purchase
   const handleCreate = async () => {
     // Reset form data
+    shouldHydrateCreatePpnRateRef.current = true;
     setFormData({
       vendor_id: "",
       purchase_request_id: "",
@@ -6735,6 +6763,9 @@ const PurchasesPage: React.FC = () => {
       // Fetch detailed purchase data for duplication
       const detailResponse = await purchaseService.getById(purchase.id);
 
+      // A duplicated purchase carries its own rate, so it must not be
+      // replaced by a late-arriving default setting.
+      shouldHydrateCreatePpnRateRef.current = false;
       // Set form data for NEW purchase (cleared ID, cleared status-related fields)
       setFormData({
         vendor_id: detailResponse.vendor_id?.toString() || "",
@@ -10117,12 +10148,7 @@ const PurchasesPage: React.FC = () => {
                                     isDisabled={
                                       formData.vat_treatment !== "STANDARD"
                                     }
-                                    onChange={(value) =>
-                                      setFormData({
-                                        ...formData,
-                                        ppn_rate: value,
-                                      })
-                                    }
+                                    onChange={handlePpnRateChange}
                                     size="sm"
                                     min={0}
                                     max={100}
@@ -12223,12 +12249,7 @@ const PurchasesPage: React.FC = () => {
                                       isDisabled={
                                         formData.vat_treatment !== "STANDARD"
                                       }
-                                      onChange={(value) =>
-                                        setFormData({
-                                          ...formData,
-                                          ppn_rate: value,
-                                        })
-                                      }
+                                      onChange={handlePpnRateChange}
                                       size="sm"
                                       min={0}
                                       max={100}
